@@ -85,22 +85,28 @@ function enemyMove(enemy) {
 }
 
 // ── initial state ─────────────────────────────────────────────────────────────
-function newGame(starterSpecies = 'pikachu') {
+const STARTERS = {
+  bulbasaur:  { species:'bulbasaur',  name:'BULBASAUR',  type:'Grass/Poison', desc:'A strange seed was planted on its back at birth.' },
+  charmander: { species:'charmander', name:'CHARMANDER', type:'Fire',          desc:'The flame at the tip of its tail makes a sound as it burns.' },
+  squirtle:   { species:'squirtle',   name:'SQUIRTLE',   type:'Water',         desc:'After birth, its back swells and hardens into a shell.' },
+};
+
+function newGame() {
   return {
-    screen: 'overworld',
+    screen: 'starter_select',
     areaId: 'pallet_town',
     player: {
-      x: 8, y: 14,
-      party: [makePokemon(starterSpecies, 5)],
-      bag: { pokeball:5, potion:3 },
-      money: 500,
+      x: 8, y: 9,    // standing in front of Oak's table
+      party: [],
+      bag: { pokeball:5, potion:1 },
+      money: 3000,
       badges: 0,
       steps: 0,
-      flags: {},   // story flags: oak_parcel_delivered, got_free_potion, etc.
+      flags: {},
     },
     battle: null,
-    dialogue: null,   // active dialogue: { lines:[], index:0, npcId }
-    message: 'Welcome to PALLET TOWN!',
+    dialogue: null,
+    message: "OAK: Hello there! Welcome to the world of POKéMON! My name is OAK — people call me the POKéMON PROF! This world is inhabited far and wide by creatures called POKéMON! Here, I have 3 POKéMON. Which one will you choose?",
     log: [],
     turn: 0,
   };
@@ -116,6 +122,26 @@ function processAction(state, action) {
   if (!area) { state.message = `Unknown area: ${state.areaId}`; return state; }
 
   const { type } = action;
+
+  // ── STARTER SELECT ───────────────────────────────────────────────────────
+  if (state.screen === 'starter_select') {
+    if (type !== 'choose_starter') {
+      state.message = "OAK: Choose your POKéMON! Use {\"type\":\"choose_starter\", \"species\":\"bulbasaur|charmander|squirtle\"}";
+      return state;
+    }
+    const sp = (action.species || '').toLowerCase();
+    if (!STARTERS[sp]) {
+      state.message = `OAK: Hmm, that's not one of the choices. Choose bulbasaur, charmander, or squirtle.`;
+      return state;
+    }
+    const starter = makePokemon(sp, 5);
+    state.player.party = [starter];
+    state.screen = 'overworld';
+    state.player.flags.chose_starter = sp;
+    state.message = `OAK: So, you chose ${starter.name}! It's a fine choice! Take good care of it. Now, ${starter.name} — your new trainer awaits! Head north through PALLET TOWN to begin your journey.`;
+    log(`Received ${starter.name} from Prof. Oak!`);
+    return state;
+  }
 
   // ── DIALOGUE (advance conversation) ─────────────────────────────────────
   if (state.dialogue) {
@@ -144,6 +170,12 @@ function processAction(state, action) {
 
   // ── OVERWORLD ────────────────────────────────────────────────────────────
   if (state.screen === 'overworld') {
+    // Guard: no party = shouldn't be in overworld, redirect
+    if (!state.player.party.length) {
+      state.screen = 'starter_select';
+      state.message = "OAK: Wait! You can't go out there without a POKéMON! Choose one first!";
+      return state;
+    }
     if (type === 'move') {
       const DIR = { north:[0,-1], south:[0,1], east:[1,0], west:[-1,0] };
       const [dx, dy] = DIR[action.direction] || [0,0];
@@ -477,7 +509,8 @@ function processBattleAction(state, action, log) {
 // ── public view ─────────────────────────────────────────────────────────────
 function getView(state) {
   const area = AREAS[state.areaId] || {};
-  const active = state.battle ? state.player.party[state.battle.playerPartyIndex] : state.player.party[0];
+  const active = state.battle ? state.player.party[state.battle.playerPartyIndex]
+                              : (state.player.party[0] || null);
   const view = {
     turn: state.turn,
     screen: state.screen,
@@ -527,7 +560,12 @@ function getView(state) {
       hint: 'Use {"type":"talk"} to advance.',
     };
   }
+  if (state.screen === 'starter_select') {
+    view.starter_options = Object.values(STARTERS);
+    view.hint = 'Use {"type":"choose_starter","species":"bulbasaur|charmander|squirtle"}';
+  }
   return view;
 }
 
-module.exports = { newGame, processAction, getView, makePokemon };
+module.exports = { newGame, processAction, getView, makePokemon, STARTERS };
+

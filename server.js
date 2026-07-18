@@ -96,7 +96,9 @@ app.get('/api-docs', (req, res) => res.json({
     'POST /reset': 'Reset the game',
   },
   action_types: {
+    choose_starter: { species: 'bulbasaur|charmander|squirtle', note: 'Required first action — no party until this is called' },
     move: { direction: 'north|south|east|west' },
+    talk: { note: 'Interact with adjacent NPC/sign OR advance active dialogue' },
     battle_move: { move_index: '0-3' },
     run: {}, throw_ball: { ball: 'pokeball|great_ball' },
     use_item: { item: 'potion', target_index: '0-5' },
