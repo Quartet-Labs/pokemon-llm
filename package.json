@@ -1,0 +1,14 @@
+{
+  "name": "pokemon-llm",
+  "version": "0.1.0",
+  "description": "A Gen 1 Pokémon-like game playable via LLM API, watchable in browser",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.16.0"
+  }
+}
