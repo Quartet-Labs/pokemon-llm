@@ -14,6 +14,23 @@ app.use(express.static('public'));
 // ── Game state ──────────────────────────────────────────────────────────────
 let state = newGame();
 
+function getMapSnapshot() {
+  const { AREAS, getAreaTile } = require('./game/data/areas');
+  const area = AREAS[state.areaId];
+  if (!area) return null;
+  const tiles = [];
+  for (let y = 0; y < area.height; y++) {
+    const row = [];
+    for (let x = 0; x < area.width; x++) row.push(getAreaTile(area, x, y));
+    tiles.push(row);
+  }
+  return {
+    areaId: area.id, name: area.name,
+    width: area.width, height: area.height, tiles,
+    npcs: (area.npcs || []).map(n => ({ x: n.x, y: n.y, name: n.name })),
+  };
+}
+
 function broadcast(payload) {
   const msg = JSON.stringify(payload);
   wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
@@ -54,7 +71,7 @@ app.post('/action', (req, res) => {
   try {
     state = processAction(state, action);
     const view = getView(state);
-    broadcast({ event: 'state_update', state: view, action });
+    broadcast({ event: 'state_update', state: view, map: getMapSnapshot(), action });
     res.json(view);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -70,6 +87,34 @@ app.post('/reset', (req, res) => {
   const view = getView(state);
   broadcast({ event: 'reset', state: view });
   res.json(view);
+});
+
+/**
+ * GET /map
+ * Returns the current area's tile grid + dimensions for the browser renderer.
+ */
+app.get('/map', (req, res) => {
+  const { AREAS, getAreaTile, T } = require('./game/data/areas');
+  const area = AREAS[state.areaId];
+  if (!area) return res.json({ error: 'unknown area' });
+  const tiles = [];
+  for (let y = 0; y < area.height; y++) {
+    const row = [];
+    for (let x = 0; x < area.width; x++) {
+      row.push(getAreaTile(area, x, y));
+    }
+    tiles.push(row);
+  }
+  res.json({
+    areaId: area.id,
+    name: area.name,
+    width: area.width,
+    height: area.height,
+    tiles,
+    npcs: (area.npcs || []).map(n => ({ x: n.x, y: n.y, name: n.name })),
+    signs: (area.signs || []).map(s => ({ x: s.x, y: s.y })),
+    player: { x: state.player.x, y: state.player.y },
+  });
 });
 
 /**
@@ -104,7 +149,7 @@ app.get('/api-docs', (req, res) => {
 // ── WebSocket ───────────────────────────────────────────────────────────────
 wss.on('connection', (ws) => {
   // Send current state immediately on connect
-  ws.send(JSON.stringify({ event: 'connected', state: getView(state) }));
+  ws.send(JSON.stringify({ event: 'connected', state: getView(state), map: getMapSnapshot() }));
 });
 
 // ── Start ───────────────────────────────────────────────────────────────────

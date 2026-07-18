@@ -6,83 +6,58 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #0a0a0a;
-    color: #e0e0e0;
+    background: #0a0a0a; color: #e0e0e0;
     font-family: 'Courier New', monospace;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-height: 100vh;
-    padding: 16px;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 16px;
   }
   h1 { color: #ffcc00; font-size: 1.4rem; margin-bottom: 12px; letter-spacing: 2px; }
   .layout {
-    display: grid;
-    grid-template-columns: 360px 1fr;
-    gap: 16px;
-    width: 100%;
-    max-width: 900px;
+    display: grid; grid-template-columns: 360px 1fr;
+    gap: 16px; width: 100%; max-width: 940px;
   }
-  canvas { display: block; image-rendering: pixelated; border: 2px solid #333; }
+  canvas { display: block; image-rendering: pixelated; border: 2px solid #444; }
+  .area-label { text-align:center; font-size:0.7rem; color:#888; margin-top:4px; letter-spacing:1px; }
   .panel {
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 4px;
-    padding: 12px;
-    font-size: 0.78rem;
+    background: #111; border: 1px solid #333; border-radius: 4px; padding: 12px; font-size: 0.78rem;
   }
   .panel h2 { color: #ffcc00; font-size: 0.85rem; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
-  .message-box {
-    background: #0d1117;
-    border: 2px solid #555;
-    border-radius: 2px;
-    padding: 10px;
-    min-height: 56px;
-    font-size: 0.85rem;
-    margin-bottom: 10px;
-    color: #fff;
-    white-space: pre-wrap;
+  .msg-box {
+    background: #0d1117; border: 2px solid #555; border-radius: 2px;
+    padding: 10px; min-height: 56px; font-size: 0.85rem; margin-bottom: 10px; color: #fff; white-space: pre-wrap;
   }
   .hp-bar-wrap { margin: 4px 0; }
   .hp-label { display: flex; justify-content: space-between; font-size: 0.72rem; }
   .hp-bar { height: 8px; background: #222; border-radius: 2px; overflow: hidden; margin-top: 2px; }
-  .hp-fill { height: 100%; transition: width 0.3s, background 0.3s; }
-  .hp-fill.high { background: #44dd44; }
-  .hp-fill.mid  { background: #ffcc00; }
-  .hp-fill.low  { background: #dd2222; }
-  .pokemon-card { background: #1a1a2e; border: 1px solid #444; border-radius: 4px; padding: 8px; margin-bottom: 6px; }
-  .pokemon-card .pname { font-weight: bold; color: #7ec8e3; }
-  .pokemon-card .moves { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
-  .move-tag { background: #222; border: 1px solid #555; border-radius: 10px; padding: 2px 7px; font-size: 0.68rem; }
+  .hp-fill { height: 100%; transition: width .3s, background .3s; }
+  .hp-fill.high { background: #44dd44; } .hp-fill.mid { background: #ffcc00; } .hp-fill.low { background: #dd2222; }
+  .pcard { background: #1a1a2e; border: 1px solid #444; border-radius: 4px; padding: 8px; margin-bottom: 6px; }
+  .pname { font-weight: bold; color: #7ec8e3; }
+  .moves { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .mtag { background: #222; border: 1px solid #555; border-radius: 10px; padding: 2px 7px; font-size: 0.68rem; }
   .log { font-size: 0.72rem; max-height: 200px; overflow-y: auto; }
-  .log-entry { padding: 2px 0; border-bottom: 1px solid #1a1a1a; color: #aaa; }
-  .log-entry:first-child { color: #e0e0e0; }
-  .badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 0.65rem; margin-left: 4px; }
-  .type-grass { background: #4a8f4a; } .type-fire { background: #8f4a1a; }
-  .type-water { background: #1a4a8f; } .type-electric { background: #8f8f1a; }
-  .type-normal { background: #5a5a5a; } .type-rock { background: #6a5a2a; }
-  .type-ground { background: #7a5a1a; } .type-flying { background: #3a5a8f; }
-  .type-poison { background: #6a1a8f; }
-  .turn-counter { text-align: right; color: #666; font-size: 0.7rem; margin-bottom: 4px; }
-  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
-  .status-burn { background: #ff4400; } .status-paralysis { background: #ffcc00; }
-  .status-poison { background: #aa00ff; }
-  .screen-label { text-align: center; font-size: 0.7rem; color: #666; margin-top: 4px; letter-spacing: 1px; }
+  .log-e { padding: 2px 0; border-bottom: 1px solid #1a1a1a; color: #888; }
+  .log-e:first-child { color: #ddd; }
+  .turn { text-align:right; color:#555; font-size:0.68rem; margin-bottom:4px; }
+  .badge-pill { display:inline-block; padding:1px 5px; border-radius:8px; font-size:0.62rem; margin-left:3px; }
+  .t-grass{background:#2d6a2d;} .t-fire{background:#7a3010;} .t-water{background:#10407a;}
+  .t-electric{background:#7a7010;} .t-normal{background:#4a4a4a;} .t-rock{background:#5a4a20;}
+  .t-ground{background:#6a4a10;} .t-flying{background:#2a4a7a;} .t-poison{background:#4a107a;}
 </style>
 </head>
 <body>
 <h1>🎮 POKÉMON LLM</h1>
 <div class="layout">
   <div>
-    <canvas id="canvas" width="360" height="270"></canvas>
-    <div class="screen-label" id="screen-label">OVERWORLD</div>
+    <canvas id="cv" width="360" height="288"></canvas>
+    <div class="area-label" id="area-label">PALLET TOWN</div>
   </div>
-  <div style="display:flex;flex-direction:column;gap:12px;">
+  <div style="display:flex;flex-direction:column;gap:10px;">
     <div class="panel">
-      <div class="turn-counter" id="turn-counter">Turn 0</div>
-      <div class="message-box" id="message">Connecting...</div>
+      <div class="turn" id="turn">Turn 0</div>
+      <div class="msg-box" id="msg">Connecting...</div>
     </div>
-    <div class="panel" id="party-panel">
+    <div class="panel">
       <h2>PARTY</h2>
       <div id="party"></div>
     </div>
@@ -94,244 +69,197 @@
 </div>
 
 <script>
-// ── Canvas renderer ──────────────────────────────────────────────────────────
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-const TILE = 18; // pixels per tile
-const COLS = Math.floor(canvas.width / TILE);   // 20
-const ROWS = Math.floor(canvas.height / TILE);  // 15
+// ── Canvas setup ─────────────────────────────────────────────────────────────
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const CW = cv.width, CH = cv.height;
 
-const TILE_COLORS = {
-  path:       '#8b7355',
-  grass:      '#228b22',
-  tall_grass: '#145214',
-  wall:       '#2a2a2a',
-  water:      '#1a5276',
-  door:       '#8B4513',
-  sign:       '#d4a017',
-  town:       '#5a4a3a',
+// Tile colours
+const TC = {
+  path:       '#8b7355', town:       '#8b7355',
+  grass:      '#3a8c3a', tall_grass: '#1a5c1a',
+  tree:       '#1a4a1a', wall:       '#2a2a2a',
+  water:      '#1a4a8f', building:   '#5a3a2a',
+  door:       '#8B4513', sign:       '#b8860b',
+  ledge_s:    '#5a4a1a', flower:     '#a0522d',
+  default:    '#1a1a1a',
 };
 
-// Minimal map data mirrored from server (server is source of truth; this is just for display)
-const MAP_RAW = [
-  "WWWWWWWWWWWWWWWWWWWW",
-  "W..................PW",
-  "W.WWWWWW..WWWWWWW.PW",
-  "W.WS....D.......W.PW",
-  "W.W.....D.......W.PW",
-  "W.WWWWWW..WWWWWWW.PW",
-  "W..........GGGGG..PW",
-  "WPPPPPPPPPPTTTTTPPGW",
-  "W..........TTTTT..GW",
-  "W.WWWWWW...GGGGG..PW",
-  "W.W.....W.........PW",
-  "W.W.....W.PPPPPPPPPW",
-  "W.WWWWWWW.........PW",
-  "W..................PW",
-  "WWWWWWWWWWWWWWWWWWWW",
-];
-const CHAR_MAP = { W:'wall',P:'path',G:'grass',T:'tall_grass','~':'water',D:'door',S:'sign','.':'town' };
+// Current map data (updated from server)
+let mapData = null;   // { width, height, tiles[][], npcs[], name }
+let lastState = null;
 
-function drawOverworld(playerX, playerY) {
-  for (let row = 0; row < ROWS; row++) {
-    for (let col = 0; col < COLS; col++) {
-      const ch = (MAP_RAW[row] || '')[col] || 'W';
-      const tile = CHAR_MAP[ch] || 'wall';
-      ctx.fillStyle = TILE_COLORS[tile] || '#111';
-      ctx.fillRect(col * TILE, row * TILE, TILE, TILE);
-      // Grid lines
-      ctx.strokeStyle = 'rgba(0,0,0,0.15)';
-      ctx.strokeRect(col * TILE, row * TILE, TILE, TILE);
+const TILE_PX = 18; // pixels per tile — will scale to fit canvas
+
+function drawOverworld(state) {
+  if (!mapData) { ctx.fillStyle='#111'; ctx.fillRect(0,0,CW,CH); return; }
+
+  const { width: MW, height: MH, tiles, npcs } = mapData;
+  const px = Math.floor(CW / MW);
+  const py = Math.floor(CH / MH);
+  const tsize = Math.min(px, py, TILE_PX);
+
+  // Center viewport on player
+  const playerX = state.player.position.x;
+  const playerY = state.player.position.y;
+  const viewCols = Math.ceil(CW / tsize) + 2;
+  const viewRows = Math.ceil(CH / tsize) + 2;
+  const startCol = Math.max(0, playerX - Math.floor(viewCols / 2));
+  const startRow = Math.max(0, playerY - Math.floor(viewRows / 2));
+  const offX = Math.floor(CW / 2) - (playerX - startCol) * tsize;
+  const offY = Math.floor(CH / 2) - (playerY - startRow) * tsize;
+
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, CW, CH);
+
+  for (let row = startRow; row < Math.min(MH, startRow + viewRows + 1); row++) {
+    for (let col = startCol; col < Math.min(MW, startCol + viewCols + 1); col++) {
+      const tile = (tiles[row] || [])[col] || 'wall';
+      const sx = offX + (col - startCol) * tsize;
+      const sy = offY + (row - startRow) * tsize;
+      ctx.fillStyle = TC[tile] || TC.default;
+      ctx.fillRect(sx, sy, tsize, tsize);
+      // Subtle grid
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+      ctx.strokeRect(sx, sy, tsize, tsize);
     }
   }
-  // Player sprite (red square with white dot)
-  const px = playerX * TILE, py = playerY * TILE;
+
+  // NPCs
+  if (npcs) {
+    for (const npc of npcs) {
+      if (npc.x < startCol || npc.x >= startCol + viewCols) continue;
+      if (npc.y < startRow || npc.y >= startRow + viewRows) continue;
+      const sx = offX + (npc.x - startCol) * tsize;
+      const sy = offY + (npc.y - startRow) * tsize;
+      ctx.fillStyle = '#ffaa00';
+      ctx.fillRect(sx + 2, sy + 2, tsize - 4, tsize - 4);
+    }
+  }
+
+  // Player sprite
+  const px2 = offX + (playerX - startCol) * tsize;
+  const py2 = offY + (playerY - startRow) * tsize;
   ctx.fillStyle = '#e00';
-  ctx.fillRect(px + 2, py + 2, TILE - 4, TILE - 4);
+  ctx.fillRect(px2 + 2, py2 + 2, tsize - 4, tsize - 4);
   ctx.fillStyle = '#fff';
-  ctx.fillRect(px + 6, py + 4, 4, 4);
+  const dot = Math.max(2, Math.floor(tsize / 4));
+  ctx.fillRect(px2 + dot + 1, py2 + dot, dot, dot);
 }
 
-function hpColor(frac) {
-  if (frac > 0.5) return '#44dd44';
-  if (frac > 0.25) return '#ffcc00';
-  return '#dd2222';
-}
+function hpParts(s) { const [c,m] = s.split('/').map(Number); return { cur:c, max:m, frac:m>0?c/m:0 }; }
+function hpClass(f) { return f > .5 ? 'high' : f > .25 ? 'mid' : 'low'; }
+function typeTag(t) { return `<span class="badge-pill t-${t}">${t}</span>`; }
 
 function drawBattle(state) {
   const b = state.battle;
   if (!b) return;
 
-  // Background
-  ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Ground lines
-  ctx.fillStyle = '#2a2a4a';
-  ctx.fillRect(0, 160, canvas.width, 20);
-  ctx.fillStyle = '#0d0d1a';
-  ctx.fillRect(0, 60, canvas.width, 20);
-
-  // Enemy platform
+  ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0,0,CW,CH);
   ctx.fillStyle = '#222240';
-  ctx.beginPath();
-  ctx.ellipse(270, 72, 60, 14, 0, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.beginPath(); ctx.ellipse(260,72,60,14,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(80,170,50,12,0,0,Math.PI*2); ctx.fill();
 
-  // Player platform
-  ctx.fillStyle = '#222240';
-  ctx.beginPath();
-  ctx.ellipse(90, 168, 50, 12, 0, 0, Math.PI * 2);
-  ctx.fill();
+  // Enemy
+  const ef = hpParts(b.enemy.hp);
+  ctx.fillStyle = ef.frac > 0 ? '#c04040' : '#555';
+  ctx.beginPath(); ctx.arc(260,44,28,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ff8888';
+  ctx.beginPath(); ctx.arc(252,36,9,0,Math.PI*2); ctx.fill();
 
-  // Enemy sprite (simple shape)
-  const ef = b.enemy.currentHp / (parseInt(b.enemy.hp?.split('/')[1]) || b.enemy.maxHp || 1);
-  ctx.fillStyle = ef > 0 ? '#cc4444' : '#444';
-  ctx.beginPath();
-  ctx.arc(270, 44, 26, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#ff6666';
-  ctx.beginPath();
-  ctx.arc(262, 36, 8, 0, Math.PI * 2);
-  ctx.fill();
+  // Player
+  const af = hpParts(b.your_active.hp);
+  ctx.fillStyle = af.frac > 0 ? '#4040c0' : '#555';
+  ctx.beginPath(); ctx.arc(80,142,24,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#8888ff';
+  ctx.beginPath(); ctx.arc(72,134,7,0,Math.PI*2); ctx.fill();
 
-  // Player sprite
-  const af = b.your_active.currentHp / (parseInt(b.your_active.hp?.split('/')[1]) || 1);
-  ctx.fillStyle = af > 0 ? '#4444cc' : '#444';
-  ctx.beginPath();
-  ctx.arc(90, 140, 22, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#6688ff';
-  ctx.beginPath();
-  ctx.arc(82, 132, 6, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Text
   ctx.font = '10px Courier New';
 
-  // Enemy info box
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(10, 10, 160, 44);
-  ctx.strokeStyle = '#666';
-  ctx.strokeRect(10, 10, 160, 44);
-  ctx.fillStyle = '#fff';
-  ctx.fillText(`${b.enemy.name}  Lv.${b.enemy.level}`, 16, 24);
-  const enemyHpParts = b.enemy.hp.split('/');
-  const ehpFrac = parseInt(enemyHpParts[0]) / parseInt(enemyHpParts[1]);
-  ctx.fillStyle = '#444';
-  ctx.fillRect(16, 30, 140, 8);
-  ctx.fillStyle = hpColor(ehpFrac);
-  ctx.fillRect(16, 30, Math.round(140 * ehpFrac), 8);
-  ctx.fillStyle = '#aaa';
-  ctx.fillText(`HP: ${b.enemy.hp}`, 16, 50);
+  // Enemy box
+  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(10,10,160,46);
+  ctx.strokeStyle='#666'; ctx.strokeRect(10,10,160,46);
+  ctx.fillStyle='#fff'; ctx.fillText(`${b.enemy.name}  Lv.${b.enemy.level}`, 16, 24);
+  ctx.fillStyle='#444'; ctx.fillRect(16,30,140,8);
+  ctx.fillStyle=ef.frac>.5?'#44dd44':ef.frac>.25?'#ffcc00':'#dd2222';
+  ctx.fillRect(16,30,Math.round(140*ef.frac),8);
+  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.enemy.hp}`, 16, 52);
 
-  // Player info box
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(190, 180, 160, 56);
-  ctx.strokeStyle = '#666';
-  ctx.strokeRect(190, 180, 160, 56);
-  ctx.fillStyle = '#fff';
-  ctx.fillText(`${b.your_active.name}  Lv.${b.your_active.level}`, 196, 194);
-  const ahpParts = b.your_active.hp.split('/');
-  const ahpFrac = parseInt(ahpParts[0]) / parseInt(ahpParts[1]);
-  ctx.fillStyle = '#444';
-  ctx.fillRect(196, 200, 140, 8);
-  ctx.fillStyle = hpColor(ahpFrac);
-  ctx.fillRect(196, 200, Math.round(140 * ahpFrac), 8);
-  ctx.fillStyle = '#aaa';
-  ctx.fillText(`HP: ${b.your_active.hp}`, 196, 216);
-  // Moves
-  ctx.fillStyle = '#888';
-  const moves = b.your_active.moves || [];
-  ctx.fillText(moves.slice(0,2).map((m,i) => `${i}:${m}`).join('  '), 196, 228);
-  if (moves.length > 2) ctx.fillText(moves.slice(2).map((m,i) => `${i+2}:${m}`).join('  '), 196, 238);
+  // Player box
+  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(190,186,162,60);
+  ctx.strokeStyle='#666'; ctx.strokeRect(190,186,162,60);
+  ctx.fillStyle='#fff'; ctx.fillText(`${b.your_active.name}  Lv.${b.your_active.level}`, 196, 200);
+  ctx.fillStyle='#444'; ctx.fillRect(196,206,142,8);
+  ctx.fillStyle=af.frac>.5?'#44dd44':af.frac>.25?'#ffcc00':'#dd2222';
+  ctx.fillRect(196,206,Math.round(142*af.frac),8);
+  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.your_active.hp}`, 196, 222);
+  const mvs = (b.your_active.moves||[]);
+  ctx.fillText(mvs.slice(0,2).map((m,i)=>`${i}:${m.name||m}`).join('  '), 196, 234);
+  if (mvs.length>2) ctx.fillText(mvs.slice(2).map((m,i)=>`${i+2}:${m.name||m}`).join('  '), 196, 244);
 
-  // VS text
-  ctx.fillStyle = '#ffcc00';
-  ctx.font = 'bold 14px Courier New';
-  ctx.fillText('VS', 172, 110);
+  ctx.fillStyle='#ffcc00'; ctx.font='bold 16px Courier New';
+  ctx.fillText('VS', 167, 112);
 }
 
 function render(state) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (state.screen === 'battle' && state.battle) {
-    drawBattle(state);
-  } else if (state.screen === 'gameover') {
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#ff3333';
-    ctx.font = 'bold 24px Courier New';
-    ctx.textAlign = 'center';
-    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2);
-    ctx.textAlign = 'left';
+  ctx.clearRect(0,0,CW,CH);
+  if (state.screen === 'battle' && state.battle) drawBattle(state);
+  else if (state.screen === 'gameover') {
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,CW,CH);
+    ctx.fillStyle='#f33'; ctx.font='bold 28px Courier New'; ctx.textAlign='center';
+    ctx.fillText('GAME OVER', CW/2, CH/2); ctx.textAlign='left';
   } else {
-    drawOverworld(state.player.position.x, state.player.position.y);
+    drawOverworld(state);
   }
 }
 
-// ── UI updates ───────────────────────────────────────────────────────────────
-function hpFrac(hpStr) {
-  const [cur, max] = hpStr.split('/').map(Number);
-  return max > 0 ? cur / max : 0;
-}
-function hpClass(frac) {
-  if (frac > 0.5) return 'high';
-  if (frac > 0.25) return 'mid';
-  return 'low';
-}
-function typeTag(t) {
-  return `<span class="badge type-${t}">${t}</span>`;
-}
-function statusDot(s) {
-  return s ? `<span class="status-dot status-${s}" title="${s}"></span>` : '';
-}
-
 function updateUI(state) {
-  document.getElementById('message').textContent = state.message || '...';
-  document.getElementById('turn-counter').textContent = `Turn ${state.turn}`;
-  document.getElementById('screen-label').textContent = state.screen.toUpperCase();
+  document.getElementById('msg').textContent = state.message || '...';
+  document.getElementById('turn').textContent = `Turn ${state.turn} — ${state.area?.name || ''}`;
+  document.getElementById('area-label').textContent = (state.area?.name || 'OVERWORLD').toUpperCase();
 
-  // Party
-  const partyEl = document.getElementById('party');
-  partyEl.innerHTML = state.player.party.map((p, i) => {
-    const frac = hpFrac(p.hp);
-    return `<div class="pokemon-card">
-      <div class="pname">${statusDot(p.status)} ${p.name} <small>Lv.${p.level}</small>
-        ${p.type?.map(typeTag).join('') || ''}
-      </div>
+  document.getElementById('party').innerHTML = state.player.party.map(p => {
+    const hp = hpParts(p.hp);
+    return `<div class="pcard">
+      <div class="pname">${p.name} <small>Lv.${p.level}</small>${(p.type||[]).map(typeTag).join('')}</div>
       <div class="hp-bar-wrap">
         <div class="hp-label"><span>HP</span><span>${p.hp}</span></div>
-        <div class="hp-bar"><div class="hp-fill ${hpClass(frac)}" style="width:${Math.round(frac*100)}%"></div></div>
+        <div class="hp-bar"><div class="hp-fill ${hpClass(hp.frac)}" style="width:${Math.round(hp.frac*100)}%"></div></div>
       </div>
-      <div class="moves">${(p.moves||[]).map(m => `<span class="move-tag">${m}</span>`).join('')}</div>
+      <div class="moves">${(p.moves||[]).map(m=>`<span class="mtag">${m}</span>`).join('')}</div>
     </div>`;
   }).join('');
 
-  // Log
-  const logEl = document.getElementById('log');
-  logEl.innerHTML = (state.log || []).map(l => `<div class="log-entry">${l}</div>`).join('');
-
+  document.getElementById('log').innerHTML = (state.log||[]).map(l=>`<div class="log-e">${l}</div>`).join('');
   render(state);
 }
 
-// ── WebSocket connection ─────────────────────────────────────────────────────
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 function connect() {
   const ws = new WebSocket(`ws://${location.host}`);
-  ws.onmessage = (evt) => {
+  ws.onmessage = evt => {
     try {
       const msg = JSON.parse(evt.data);
-      if (msg.state) updateUI(msg.state);
-    } catch (e) { console.error(e); }
+      if (msg.map) mapData = msg.map;
+      if (msg.state) { lastState = msg.state; updateUI(msg.state); }
+    } catch(e) { console.error(e); }
   };
   ws.onclose = () => {
-    document.getElementById('message').textContent = '⚠ Connection lost — reconnecting...';
+    document.getElementById('msg').textContent = '⚠ Reconnecting...';
     setTimeout(connect, 2000);
   };
   ws.onerror = () => ws.close();
 }
 
-// Initial state fetch + connect
-fetch('/state').then(r => r.json()).then(updateUI).catch(() => {});
+// Boot: fetch initial state + map in parallel
+Promise.all([
+  fetch('/state').then(r=>r.json()),
+  fetch('/map').then(r=>r.json()),
+]).then(([state, map]) => {
+  mapData = map;
+  lastState = state;
+  updateUI(state);
+}).catch(()=>{});
 connect();
 </script>
 </body>
