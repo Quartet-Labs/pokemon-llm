@@ -472,6 +472,15 @@ function buildViridianCity() {
         rows[y] = setChar(rows[y], x, 'T');
       }
 
+  // North exit to Viridian Forest: the perimeter loop above walls row 0 as trees,
+  // and the "keep north path open" clause only reopened rows 1-2 — so the exit
+  // column (connections.north.entryX = 9) was walled at the top row and the player
+  // could never step onto the edge to trigger the transition. Reopen row 0 at the
+  // exit cols so the north path actually leads out.
+  rows[0] = setChar(rows[0], 8,  'P');
+  rows[0] = setChar(rows[0], 9,  'P');
+  rows[0] = setChar(rows[0], 10, 'P');
+
   // Pokémon Center (cols 10-14, rows 12-15)
   for (let y = 12; y <= 15; y++)
     for (let x = 10; x <= 14; x++)
