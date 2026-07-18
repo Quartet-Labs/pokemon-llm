@@ -106,7 +106,8 @@ function newGame() {
     },
     battle: null,
     dialogue: null,
-    message: "OAK: Hello there! Welcome to the world of POKéMON! My name is OAK — people call me the POKéMON PROF! This world is inhabited far and wide by creatures called POKéMON! Here, I have 3 POKéMON. Which one will you choose?",
+    // Oak's intro dialogue — verbatim from Gen I Red/Blue (Bulbapedia)
+    message: "OAK: Hello there! Welcome to the world of POKéMON! My name is OAK! People call me the POKéMON PROF! This world is inhabited by creatures called POKéMON! For some people, POKéMON are pets. Others use them for fights. Myself… I study POKéMON as a profession. Now, let's choose your partner! Which POKéMON will you take?",
     log: [],
     turn: 0,
   };

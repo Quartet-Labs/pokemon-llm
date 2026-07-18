@@ -161,37 +161,54 @@ const VIRIDIAN_FOREST = {
   height: 32,
   tiles: buildViridianForest(),
   objects: [],
+  // Source: Bulbapedia — Viridian Forest trainers (Gen I Red/Blue)
+  // Bug Catcher 1: Weedle Lv6, Caterpie Lv6 — reward ₽60
+  // Bug Catcher 2: Weedle Lv7, Kakuna Lv7, Weedle Lv7 — reward ₽70
+  // Bug Catcher 3: Weedle Lv9 — reward ₽90
   npcs: [
-    { id:'bug_catcher_1', x:7, y:22, name:'BUG CATCHER RICK', dir:'south',
-      dialogue:["BUG CATCHER RICK: Heh, little trainer! My bug POKéMON are the best! Come on, let's battle!"],
+    { id:'bug_catcher_1', x:7, y:22, name:'BUG CATCHER', dir:'south',
+      dialogue:["BUG CATCHER: I like bugs! Do you? Wanna battle?"],
       trainerBattle: {
-        trainerName: 'BUG CATCHER RICK',
+        trainerName: 'BUG CATCHER',
         party: [
+          { species:'weedle',   level:6 },
           { species:'caterpie', level:6 },
-          { species:'weedle',   level:5 },
+        ],
+        reward: 60,
+        rewardFlag: 'beat_bug_catcher_1',
+      },
+      dialogueAfter: ["BUG CATCHER: Aw, I lost! Your POKéMON are amazing!"],
+    },
+    { id:'bug_catcher_2', x:13, y:11, name:'BUG CATCHER', dir:'west',
+      dialogue:["BUG CATCHER: Bugs are the greatest! My three POKéMON will prove it!"],
+      trainerBattle: {
+        trainerName: 'BUG CATCHER',
+        party: [
+          { species:'weedle',  level:7 },
+          { species:'kakuna',  level:7 },
+          { species:'weedle',  level:7 },
+        ],
+        reward: 70,
+        rewardFlag: 'beat_bug_catcher_2',
+      },
+      dialogueAfter: ["BUG CATCHER: Your POKéMON are way better than mine!"],
+    },
+    { id:'bug_catcher_3', x:9, y:8, name:'BUG CATCHER', dir:'south',
+      dialogue:["BUG CATCHER: My Weedle is the toughest in the forest! Prepare yourself!"],
+      trainerBattle: {
+        trainerName: 'BUG CATCHER',
+        party: [
+          { species:'weedle', level:9 },
         ],
         reward: 90,
-        rewardFlag: 'beat_bug_catcher_rick',
+        rewardFlag: 'beat_bug_catcher_3',
       },
-      dialogueAfter: ["BUG CATCHER RICK: Aw, I lost! You're pretty good! Come back when you're stronger... I'll have trained more bugs!"],
-    },
-    { id:'bug_catcher_2', x:13, y:11, name:'BUG CATCHER A.J.', dir:'west',
-      dialogue:["BUG CATCHER A.J.: Hey you! Yeah, you! I've got the best Weedle in the forest! Prepare yourself!"],
-      trainerBattle: {
-        trainerName: 'BUG CATCHER A.J.',
-        party: [
-          { species:'weedle',   level:7 },
-          { species:'caterpie', level:7 },
-        ],
-        reward: 105,
-        rewardFlag: 'beat_bug_catcher_aj',
-      },
-      dialogueAfter: ["BUG CATCHER A.J.: Ugh! You wiped me out... I need to catch stronger bugs!"],
+      dialogueAfter: ["BUG CATCHER: You're good! I need to train more!"],
     },
   ],
   signs: [
-    { x:9,  y:31, text:"VIRIDIAN FOREST\nWatch for wild POKéMON in the tall grass!" },
-    { x:9,  y:1,  text:"ROUTE 2 →\nPEWTER CITY ahead." },
+    { x:9,  y:31, text:"Weaken POKéMON before attempting capture!\nWhen healthy, they may escape!" },
+    { x:9,  y:1,  text:"ROUTE 2\nPEWTER CITY beyond." },
   ],
   connections: {
     south: { area:'viridian_city',   entryX:9, entryY:1  },
@@ -208,34 +225,69 @@ const PEWTER_CITY = {
   height: 24,
   tiles: buildPewterCity(),
   objects: [],
+  // Source: Bulbapedia — Pewter Gym (Gen I Red/Blue)
+  // Jr. Trainer♂: Diglett Lv11, Sandshrew Lv11
+  // BROCK: Geodude Lv12, Onix Lv14
+  // Brock dialogue verbatim from Bulbapedia /wiki/Brock/Quotes
   npcs: [
-    { id:'brock', x:12, y:7, name:'BROCK', dir:'south',
-      dialogue:["BROCK: I'm BROCK! I'm PEWTER's GYM LEADER! I believe in rock-hard defense and determination! Bring it on — my POKéMON won't crack!"],
+    { id:'jr_trainer_pewter', x:10, y:6, name:'JR. TRAINER♂', dir:'south',
+      dialogue:["JR. TRAINER♂: You need to get past me to face BROCK! Go!"],
+      trainerBattle: {
+        trainerName: 'JR. TRAINER♂',
+        party: [
+          { species:'diglett',   level:11 },
+          { species:'sandshrew', level:11 },
+        ],
+        reward: 231,
+        rewardFlag: 'beat_jr_trainer_pewter',
+      },
+      dialogueAfter: ["JR. TRAINER♂: I lost! Go on... BROCK is waiting for you."],
+    },
+    { id:'brock', x:12, y:5, name:'BROCK', dir:'south',
+      // Verbatim pre-battle dialogue from Gen I Red/Blue (Bulbapedia)
+      dialogue:[
+        "I'm BROCK! I'm PEWTER's GYM LEADER!",
+        "I believe in rock hard defense and determination!",
+        "That's why my POKéMON are all the ROCK type!",
+        "Do you still want to challenge me?",
+        "Fine then! Show me your best!",
+      ],
       trainerBattle: {
         trainerName: 'BROCK',
         party: [
           { species:'geodude', level:12 },
           { species:'onix',    level:14 },
         ],
-        reward: 1400,
+        reward: 1386,
         rewardFlag: 'beat_brock',
         badge: 'Boulder Badge',
       },
-      dialogueAfter: ["BROCK: You're good! Incredibly good! I understand now — I need to travel to hone my skills. The BOULDER BADGE is yours!"],
+      // Verbatim post-battle dialogue from Gen I Red/Blue (Bulbapedia)
+      dialogueAfter:[
+        "I took you for granted.",
+        "As proof of your victory, here's the BOULDERBADGE!",
+        "That's an official POKéMON LEAGUE BADGE!",
+        "Its bearer's POKéMON become more powerful!",
+        "The technique FLASH can now be used any time!",
+        "Wait! Take this with you! TM34 contains BIDE.",
+        "There are all kinds of trainers in the world! Go to the GYM in CERULEAN and test your abilities!",
+      ],
     },
-    { id:'gym_guide', x:7, y:7, name:'Gym Guide', dir:'east',
-      dialogue:["Trainer, the GYM LEADER BROCK awaits! His ROCK-type POKéMON are tough. WATER and GRASS moves are super effective, but your starter will do fine!"] },
+    { id:'gym_guide_pewter', x:7, y:8, name:'Gym Guide', dir:'east',
+      dialogue:["GYM GUIDE: BROCK uses ROCK-type POKéMON! WATER or GRASS moves are very effective! His first partner is GEODUDE; his ace is ONIX at level 14."] },
     { id:'youngster_pewter', x:16, y:14, name:'Youngster', dir:'south',
-      dialogue:["Yo! Did you come from VIRIDIAN FOREST? I heard a trainer in there beat all the BUG CATCHERS!"] },
+      dialogue:["Yo! Did you come from VIRIDIAN FOREST? I heard someone in there beat all the BUG CATCHERS!"] },
     { id:'scientist_pewter', x:5, y:16, name:'Scientist', dir:'east',
-      dialogue:["PEWTER MUSEUM of SCIENCE is incredible! We have an actual MOON STONE on display! Head east down this road to check it out."] },
+      dialogue:["The PEWTER MUSEUM of SCIENCE is great! We have a fossilized OLD AMBER on display — they say it contains the DNA of an ancient POKéMON!"] },
+    { id:'flint_pewter', x:10, y:21, name:'FLINT', dir:'north',
+      dialogue:["I'm FLINT! I sell rocks for a living... Business isn't going so well. Have you beaten BROCK yet? He's my son, you know."] },
   ],
   signs: [
     { x:10, y:22, text:"PEWTER CITY\nA Stone Gray City." },
-    { x:5,  y:5,  text:"POKéMON CENTER\nFull health restoration!" },
+    { x:5,  y:5,  text:"POKéMON CENTER\nWe restore your tired POKéMON to full health!" },
     { x:17, y:5,  text:"PEWTER MUSEUM of SCIENCE\nKnowledge for all ages." },
-    { x:5,  y:13, text:"POKé MART\nPEWTER CITY BRANCH\nBall x200 Super Potion x700" },
-    { x:11, y:5,  text:"PEWTER GYM\nGym Leader: BROCK\nSpecialty: ROCK-type\nBoulder Badge awarded here." },
+    { x:5,  y:13, text:"POKé MART\nPEWTER CITY BRANCH" },
+    { x:11, y:4,  text:"PEWTER GYM\nGym Leader: BROCK\nSpecialty: ROCK-type\nBOULDER BADGE awarded here." },
   ],
   warps: [
     { x:4,  y:9,  dest:'pokemon_center', destX:5, destY:8, areaName:'Pokémon Center' },
@@ -366,9 +418,18 @@ function buildPewterCity() {
       rows[y] = setChar(rows[y], x, y < 9 ? 'B' : (x === 17 || x === 18) ? 'D' : 'B');
 
   // Pewter Gym (cols 9-14, rows 3-9)
-  for (let y = 3; y <= 9; y++)
-    for (let x = 9; x <= 14; x++)
-      rows[y] = setChar(rows[y], x, 'B'); // Gym — no door, enter from open plan (Brock NPC triggers battle)
+  // Outer walls solid building; interior (cols 10-13, rows 4-8) walkable path
+  for (let y = 3; y <= 9; y++) {
+    for (let x = 9; x <= 14; x++) {
+      if (y === 3 || x === 9 || x === 14) {
+        rows[y] = setChar(rows[y], x, 'B'); // outer walls
+      } else {
+        rows[y] = setChar(rows[y], x, 'P'); // walkable interior
+      }
+    }
+  }
+  // Gym sign on top wall
+  rows[3] = setChar(rows[3], 11, 'S');
 
   // House 1 (cols 15-21, rows 11-16)
   for (let y = 11; y <= 16; y++)
