@@ -4,57 +4,127 @@
 <meta charset="UTF-8">
 <title>Pokémon LLM</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: #0a0a0a; color: #e0e0e0;
-    font-family: 'Courier New', monospace;
-    display: flex; flex-direction: column; align-items: center;
-    min-height: 100vh; padding: 16px;
-  }
-  h1 { color: #ffcc00; font-size: 1.4rem; margin-bottom: 12px; letter-spacing: 2px; }
-  .layout {
-    display: grid; grid-template-columns: 360px 1fr;
-    gap: 16px; width: 100%; max-width: 940px;
-  }
-  canvas { display: block; image-rendering: pixelated; border: 2px solid #444; }
-  .area-label { text-align:center; font-size:0.7rem; color:#888; margin-top:4px; letter-spacing:1px; }
-  .panel {
-    background: #111; border: 1px solid #333; border-radius: 4px; padding: 12px; font-size: 0.78rem;
-  }
-  .panel h2 { color: #ffcc00; font-size: 0.85rem; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
-  .msg-box {
-    background: #0d1117; border: 2px solid #555; border-radius: 2px;
-    padding: 10px; min-height: 56px; font-size: 0.85rem; margin-bottom: 10px; color: #fff; white-space: pre-wrap;
-  }
-  .hp-bar-wrap { margin: 4px 0; }
-  .hp-label { display: flex; justify-content: space-between; font-size: 0.72rem; }
-  .hp-bar { height: 8px; background: #222; border-radius: 2px; overflow: hidden; margin-top: 2px; }
-  .hp-fill { height: 100%; transition: width .3s, background .3s; }
-  .hp-fill.high { background: #44dd44; } .hp-fill.mid { background: #ffcc00; } .hp-fill.low { background: #dd2222; }
-  .pcard { background: #1a1a2e; border: 1px solid #444; border-radius: 4px; padding: 8px; margin-bottom: 6px; }
-  .pname { font-weight: bold; color: #7ec8e3; }
-  .moves { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
-  .mtag { background: #222; border: 1px solid #555; border-radius: 10px; padding: 2px 7px; font-size: 0.68rem; }
-  .log { font-size: 0.72rem; max-height: 200px; overflow-y: auto; }
-  .log-e { padding: 2px 0; border-bottom: 1px solid #1a1a1a; color: #888; }
-  .log-e:first-child { color: #ddd; }
-  .turn { text-align:right; color:#555; font-size:0.68rem; margin-bottom:4px; }
-  .badge-pill { display:inline-block; padding:1px 5px; border-radius:8px; font-size:0.62rem; margin-left:3px; }
-  .t-grass{background:#2d6a2d;} .t-fire{background:#7a3010;} .t-water{background:#10407a;}
-  .t-electric{background:#7a7010;} .t-normal{background:#4a4a4a;} .t-rock{background:#5a4a20;}
-  .t-ground{background:#6a4a10;} .t-flying{background:#2a4a7a;} .t-poison{background:#4a107a;}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0a0a; color: #e0e0e0;
+  font-family: 'Courier New', monospace;
+  display: flex; flex-direction: column; align-items: center;
+  min-height: 100vh; padding: 16px; gap: 12px;
+}
+h1 { color: #ffcc00; font-size: 1.3rem; letter-spacing: 2px; }
+
+/* ── Layout ── */
+.top-row {
+  display: grid;
+  grid-template-columns: 360px 1fr 260px;
+  gap: 12px; width: 100%; max-width: 1100px;
+}
+.mid-row {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 12px; width: 100%; max-width: 1100px;
+}
+
+/* ── Canvas ── */
+#cv { display: block; image-rendering: pixelated; border: 2px solid #444; }
+.area-label { text-align:center; font-size:.68rem; color:#777; margin-top:3px; letter-spacing:1px; }
+
+/* ── Panels ── */
+.panel {
+  background: #111; border: 1px solid #2a2a2a;
+  border-radius: 4px; padding: 10px; font-size:.76rem;
+}
+.panel h2 { color:#ffcc00; font-size:.82rem; margin-bottom:6px; border-bottom:1px solid #2a2a2a; padding-bottom:3px; }
+
+/* ── Message box ── */
+.msg-box {
+  background:#0d1117; border:2px solid #444; border-radius:2px;
+  padding:10px; min-height:52px; font-size:.83rem; color:#fff; white-space:pre-wrap;
+}
+.turn-line { text-align:right; color:#555; font-size:.66rem; margin-bottom:3px; }
+
+/* ── HP bars ── */
+.hp-wrap { margin:3px 0; }
+.hp-label { display:flex; justify-content:space-between; font-size:.7rem; }
+.hp-bar { height:7px; background:#1a1a1a; border-radius:2px; overflow:hidden; margin-top:2px; }
+.hp-fill { height:100%; transition:width .3s,background .3s; }
+.hp-fill.high{background:#44dd44;} .hp-fill.mid{background:#ffcc00;} .hp-fill.low{background:#dd2222;}
+
+/* ── Party cards ── */
+.pcard { background:#16162a; border:1px solid #333; border-radius:3px; padding:7px; margin-bottom:5px; }
+.pname { font-weight:bold; color:#7ec8e3; }
+.moves { margin-top:3px; display:flex; flex-wrap:wrap; gap:3px; }
+.mtag { background:#1a1a2a; border:1px solid #444; border-radius:8px; padding:1px 6px; font-size:.65rem; }
+
+/* ── Log (scrollable) ── */
+.log-wrap { max-height:160px; overflow-y:auto; scroll-behavior:smooth; }
+.log-wrap::-webkit-scrollbar { width:4px; }
+.log-wrap::-webkit-scrollbar-thumb { background:#333; border-radius:2px; }
+.log-e { padding:2px 0; border-bottom:1px solid #1a1a1a; color:#888; font-size:.7rem; }
+.log-e:first-child { color:#ddd; }
+
+/* ── Type badges ── */
+.tbadge { display:inline-block; padding:0 5px; border-radius:7px; font-size:.6rem; margin-left:2px; }
+.t-grass{background:#2d6a2d;} .t-fire{background:#7a3010;} .t-water{background:#10407a;}
+.t-electric{background:#7a7010;} .t-normal{background:#4a4a4a;} .t-rock{background:#5a4a20;}
+.t-ground{background:#6a4a10;} .t-flying{background:#2a4a7a;} .t-poison{background:#4a107a;}
+
+/* ── Bulbapedia links ── */
+.bpanel { display:flex; flex-direction:column; gap:6px; }
+.blink {
+  display:flex; align-items:center; gap:8px; text-decoration:none;
+  background:#0d1a0d; border:1px solid #1a3a1a; border-radius:4px;
+  padding:6px 9px; color:#aaffaa; font-size:.72rem;
+  transition:background .15s; cursor:pointer;
+}
+.blink:hover { background:#122a12; border-color:#2a6a2a; }
+.blink .bl-icon { font-size:1.1rem; flex-shrink:0; }
+.blink .bl-text { flex:1; }
+.blink .bl-label { font-size:.6rem; color:#668866; display:block; }
+.blink .bl-name { color:#ccffcc; font-weight:bold; }
+.blink-none { color:#555; font-size:.7rem; text-align:center; padding:10px 0; }
+
+/* ── Chat ── */
+.chat-msgs {
+  max-height:180px; overflow-y:auto; scroll-behavior:smooth;
+  display:flex; flex-direction:column; gap:2px; margin-bottom:8px;
+}
+.chat-msgs::-webkit-scrollbar { width:4px; }
+.chat-msgs::-webkit-scrollbar-thumb { background:#333; }
+.chat-msg { font-size:.7rem; line-height:1.4; }
+.chat-msg .cu { color:#ffcc00; font-weight:bold; }
+.chat-msg .ct { color:#ccc; }
+.chat-msg .cs { color:#557755; font-style:italic; }
+.chat-msg.system .cu { color:#666; }
+.chat-input-row { display:flex; gap:5px; }
+.chat-input {
+  flex:1; background:#0d1117; border:1px solid #333; border-radius:3px;
+  color:#fff; padding:5px 8px; font-family:inherit; font-size:.72rem;
+  outline:none;
+}
+.chat-input:focus { border-color:#555; }
+.chat-send {
+  background:#1a3a1a; border:1px solid #2a5a2a; border-radius:3px;
+  color:#aaffaa; padding:5px 10px; cursor:pointer; font-size:.72rem;
+}
+.chat-send:hover { background:#223a22; }
+.my-name-label { font-size:.62rem; color:#557755; margin-bottom:4px; }
 </style>
 </head>
 <body>
 <h1>🎮 POKÉMON LLM</h1>
-<div class="layout">
+
+<div class="top-row">
+  <!-- Canvas -->
   <div>
     <canvas id="cv" width="360" height="288"></canvas>
     <div class="area-label" id="area-label">PALLET TOWN</div>
   </div>
+
+  <!-- Game info -->
   <div style="display:flex;flex-direction:column;gap:10px;">
     <div class="panel">
-      <div class="turn" id="turn">Turn 0</div>
+      <div class="turn-line" id="turn">Turn 0</div>
       <div class="msg-box" id="msg">Connecting...</div>
     </div>
     <div class="panel">
@@ -63,187 +133,283 @@
     </div>
     <div class="panel">
       <h2>EVENT LOG</h2>
-      <div class="log" id="log"></div>
+      <div class="log-wrap" id="log-wrap">
+        <div id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulbapedia links -->
+  <div class="panel">
+    <h2>📖 BULBAPEDIA</h2>
+    <div class="bpanel" id="blinks">
+      <div class="blink-none">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<div class="mid-row">
+  <!-- Chat -->
+  <div></div>
+  <div class="panel">
+    <h2>💬 OBSERVER CHAT</h2>
+    <div class="my-name-label" id="my-name"></div>
+    <div class="chat-msgs" id="chat-msgs"></div>
+    <div class="chat-input-row">
+      <input class="chat-input" id="chat-in" placeholder="Say something..." maxlength="200" />
+      <button class="chat-send" id="chat-send">Send</button>
     </div>
   </div>
 </div>
 
 <script>
-// ── Canvas setup ─────────────────────────────────────────────────────────────
+// ── Canvas ────────────────────────────────────────────────────────────────────
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 const CW = cv.width, CH = cv.height;
 
-// Tile colours
 const TC = {
-  path:       '#8b7355', town:       '#8b7355',
-  grass:      '#3a8c3a', tall_grass: '#1a5c1a',
-  tree:       '#1a4a1a', wall:       '#2a2a2a',
-  water:      '#1a4a8f', building:   '#5a3a2a',
-  door:       '#8B4513', sign:       '#b8860b',
-  ledge_s:    '#5a4a1a', flower:     '#a0522d',
-  default:    '#1a1a1a',
+  path:'#8b7355', town:'#8b7355', grass:'#3a8c3a', tall_grass:'#1a5c1a',
+  tree:'#1a4a1a', wall:'#2a2a2a', water:'#1a4a8f', building:'#5a3a2a',
+  door:'#8B4513', sign:'#b8860b', ledge_s:'#5a4a1a', flower:'#a0522d',
+  default:'#111',
 };
 
-// Current map data (updated from server)
-let mapData = null;   // { width, height, tiles[][], npcs[], name }
-let lastState = null;
-
-const TILE_PX = 18; // pixels per tile — will scale to fit canvas
+let mapData = null, lastState = null;
 
 function drawOverworld(state) {
   if (!mapData) { ctx.fillStyle='#111'; ctx.fillRect(0,0,CW,CH); return; }
+  const { width:MW, height:MH, tiles, npcs } = mapData;
+  const tsize = Math.min(Math.floor(CW/15), Math.floor(CH/12), 20);
+  const px = state.player.position.x, py = state.player.position.y;
+  const vCols = Math.ceil(CW/tsize)+2, vRows = Math.ceil(CH/tsize)+2;
+  const sc = Math.max(0, px - Math.floor(vCols/2));
+  const sr = Math.max(0, py - Math.floor(vRows/2));
+  const ox = Math.floor(CW/2) - (px-sc)*tsize;
+  const oy = Math.floor(CH/2) - (py-sr)*tsize;
 
-  const { width: MW, height: MH, tiles, npcs } = mapData;
-  const px = Math.floor(CW / MW);
-  const py = Math.floor(CH / MH);
-  const tsize = Math.min(px, py, TILE_PX);
-
-  // Center viewport on player
-  const playerX = state.player.position.x;
-  const playerY = state.player.position.y;
-  const viewCols = Math.ceil(CW / tsize) + 2;
-  const viewRows = Math.ceil(CH / tsize) + 2;
-  const startCol = Math.max(0, playerX - Math.floor(viewCols / 2));
-  const startRow = Math.max(0, playerY - Math.floor(viewRows / 2));
-  const offX = Math.floor(CW / 2) - (playerX - startCol) * tsize;
-  const offY = Math.floor(CH / 2) - (playerY - startRow) * tsize;
-
-  ctx.fillStyle = '#111';
-  ctx.fillRect(0, 0, CW, CH);
-
-  for (let row = startRow; row < Math.min(MH, startRow + viewRows + 1); row++) {
-    for (let col = startCol; col < Math.min(MW, startCol + viewCols + 1); col++) {
-      const tile = (tiles[row] || [])[col] || 'wall';
-      const sx = offX + (col - startCol) * tsize;
-      const sy = offY + (row - startRow) * tsize;
-      ctx.fillStyle = TC[tile] || TC.default;
-      ctx.fillRect(sx, sy, tsize, tsize);
-      // Subtle grid
-      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-      ctx.strokeRect(sx, sy, tsize, tsize);
+  ctx.fillStyle='#111'; ctx.fillRect(0,0,CW,CH);
+  for (let r=sr; r<Math.min(MH,sr+vRows+1); r++) {
+    for (let c=sc; c<Math.min(MW,sc+vCols+1); c++) {
+      const tile=(tiles[r]||[])[c]||'wall';
+      const sx=ox+(c-sc)*tsize, sy=oy+(r-sr)*tsize;
+      ctx.fillStyle=TC[tile]||TC.default;
+      ctx.fillRect(sx,sy,tsize,tsize);
+      ctx.strokeStyle='rgba(0,0,0,.1)'; ctx.strokeRect(sx,sy,tsize,tsize);
     }
   }
-
-  // NPCs
-  if (npcs) {
-    for (const npc of npcs) {
-      if (npc.x < startCol || npc.x >= startCol + viewCols) continue;
-      if (npc.y < startRow || npc.y >= startRow + viewRows) continue;
-      const sx = offX + (npc.x - startCol) * tsize;
-      const sy = offY + (npc.y - startRow) * tsize;
-      ctx.fillStyle = '#ffaa00';
-      ctx.fillRect(sx + 2, sy + 2, tsize - 4, tsize - 4);
-    }
+  if (npcs) for (const n of npcs) {
+    if (n.x<sc||n.x>=sc+vCols||n.y<sr||n.y>=sr+vRows) continue;
+    const sx=ox+(n.x-sc)*tsize, sy=oy+(n.y-sr)*tsize;
+    ctx.fillStyle='#ffaa00'; ctx.fillRect(sx+2,sy+2,tsize-4,tsize-4);
   }
-
-  // Player sprite
-  const px2 = offX + (playerX - startCol) * tsize;
-  const py2 = offY + (playerY - startRow) * tsize;
-  ctx.fillStyle = '#e00';
-  ctx.fillRect(px2 + 2, py2 + 2, tsize - 4, tsize - 4);
-  ctx.fillStyle = '#fff';
-  const dot = Math.max(2, Math.floor(tsize / 4));
-  ctx.fillRect(px2 + dot + 1, py2 + dot, dot, dot);
+  const sx=ox+(px-sc)*tsize, sy=oy+(py-sr)*tsize;
+  ctx.fillStyle='#e00'; ctx.fillRect(sx+2,sy+2,tsize-4,tsize-4);
+  ctx.fillStyle='#fff';
+  const d=Math.max(2,Math.floor(tsize/4));
+  ctx.fillRect(sx+d+1,sy+d,d,d);
 }
 
-function hpParts(s) { const [c,m] = s.split('/').map(Number); return { cur:c, max:m, frac:m>0?c/m:0 }; }
-function hpClass(f) { return f > .5 ? 'high' : f > .25 ? 'mid' : 'low'; }
-function typeTag(t) { return `<span class="badge-pill t-${t}">${t}</span>`; }
+function hpInfo(s){const[c,m]=s.split('/').map(Number);return{cur:c,max:m,f:m>0?c/m:0};}
+function hpCls(f){return f>.5?'high':f>.25?'mid':'low';}
+function typeTag(t){return`<span class="tbadge t-${t}">${t}</span>`;}
 
 function drawBattle(state) {
-  const b = state.battle;
-  if (!b) return;
-
-  ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0,0,CW,CH);
-  ctx.fillStyle = '#222240';
+  const b=state.battle;
+  ctx.fillStyle='#1a1a2e'; ctx.fillRect(0,0,CW,CH);
+  ctx.fillStyle='#222240';
   ctx.beginPath(); ctx.ellipse(260,72,60,14,0,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(80,170,50,12,0,0,Math.PI*2); ctx.fill();
 
-  // Enemy
-  const ef = hpParts(b.enemy.hp);
-  ctx.fillStyle = ef.frac > 0 ? '#c04040' : '#555';
+  const ef=hpInfo(b.enemy.hp), af=hpInfo(b.your_active.hp);
+  ctx.fillStyle=ef.f>0?'#c04040':'#555';
   ctx.beginPath(); ctx.arc(260,44,28,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#ff8888';
-  ctx.beginPath(); ctx.arc(252,36,9,0,Math.PI*2); ctx.fill();
-
-  // Player
-  const af = hpParts(b.your_active.hp);
-  ctx.fillStyle = af.frac > 0 ? '#4040c0' : '#555';
+  ctx.fillStyle='#ff8888'; ctx.beginPath(); ctx.arc(252,36,9,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=af.f>0?'#4040c0':'#555';
   ctx.beginPath(); ctx.arc(80,142,24,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#8888ff';
-  ctx.beginPath(); ctx.arc(72,134,7,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#8888ff'; ctx.beginPath(); ctx.arc(72,134,7,0,Math.PI*2); ctx.fill();
 
-  ctx.font = '10px Courier New';
-
-  // Enemy box
+  ctx.font='10px Courier New';
   ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(10,10,160,46);
   ctx.strokeStyle='#666'; ctx.strokeRect(10,10,160,46);
-  ctx.fillStyle='#fff'; ctx.fillText(`${b.enemy.name}  Lv.${b.enemy.level}`, 16, 24);
-  ctx.fillStyle='#444'; ctx.fillRect(16,30,140,8);
-  ctx.fillStyle=ef.frac>.5?'#44dd44':ef.frac>.25?'#ffcc00':'#dd2222';
-  ctx.fillRect(16,30,Math.round(140*ef.frac),8);
-  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.enemy.hp}`, 16, 52);
+  ctx.fillStyle='#fff'; ctx.fillText(`${b.enemy.name}  Lv.${b.enemy.level}`,16,24);
+  ctx.fillStyle='#333'; ctx.fillRect(16,30,140,8);
+  ctx.fillStyle=ef.f>.5?'#44dd44':ef.f>.25?'#ffcc00':'#dd2222';
+  ctx.fillRect(16,30,Math.round(140*ef.f),8);
+  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.enemy.hp}`,16,52);
 
-  // Player box
-  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(190,186,162,60);
-  ctx.strokeStyle='#666'; ctx.strokeRect(190,186,162,60);
-  ctx.fillStyle='#fff'; ctx.fillText(`${b.your_active.name}  Lv.${b.your_active.level}`, 196, 200);
-  ctx.fillStyle='#444'; ctx.fillRect(196,206,142,8);
-  ctx.fillStyle=af.frac>.5?'#44dd44':af.frac>.25?'#ffcc00':'#dd2222';
-  ctx.fillRect(196,206,Math.round(142*af.frac),8);
-  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.your_active.hp}`, 196, 222);
-  const mvs = (b.your_active.moves||[]);
-  ctx.fillText(mvs.slice(0,2).map((m,i)=>`${i}:${m.name||m}`).join('  '), 196, 234);
-  if (mvs.length>2) ctx.fillText(mvs.slice(2).map((m,i)=>`${i+2}:${m.name||m}`).join('  '), 196, 244);
-
-  ctx.fillStyle='#ffcc00'; ctx.font='bold 16px Courier New';
-  ctx.fillText('VS', 167, 112);
+  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(190,188,162,60);
+  ctx.strokeStyle='#666'; ctx.strokeRect(190,188,162,60);
+  ctx.fillStyle='#fff'; ctx.fillText(`${b.your_active.name}  Lv.${b.your_active.level}`,196,202);
+  ctx.fillStyle='#333'; ctx.fillRect(196,208,142,8);
+  ctx.fillStyle=af.f>.5?'#44dd44':af.f>.25?'#ffcc00':'#dd2222';
+  ctx.fillRect(196,208,Math.round(142*af.f),8);
+  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.your_active.hp}`,196,224);
+  const mvs=b.your_active.moves||[];
+  ctx.fillText(mvs.slice(0,2).map((m,i)=>`${i}:${m.name||m}`).join('  '),196,236);
+  if(mvs.length>2) ctx.fillText(mvs.slice(2).map((m,i)=>`${i+2}:${m.name||m}`).join('  '),196,246);
+  ctx.fillStyle='#ffcc00'; ctx.font='bold 16px Courier New'; ctx.fillText('VS',167,112);
 }
 
 function render(state) {
   ctx.clearRect(0,0,CW,CH);
-  if (state.screen === 'battle' && state.battle) drawBattle(state);
-  else if (state.screen === 'gameover') {
+  if (state.screen==='battle'&&state.battle) drawBattle(state);
+  else if (state.screen==='gameover') {
     ctx.fillStyle='#000'; ctx.fillRect(0,0,CW,CH);
     ctx.fillStyle='#f33'; ctx.font='bold 28px Courier New'; ctx.textAlign='center';
-    ctx.fillText('GAME OVER', CW/2, CH/2); ctx.textAlign='left';
-  } else {
-    drawOverworld(state);
-  }
+    ctx.fillText('GAME OVER',CW/2,CH/2); ctx.textAlign='left';
+  } else drawOverworld(state);
 }
 
+// ── Bulbapedia links ──────────────────────────────────────────────────────────
+const BPEDIA = 'https://bulbapedia.bulbagarden.net/wiki/';
+const AREA_LINKS = {
+  pallet_town:   { name:'Pallet Town',   slug:'Pallet_Town',   icon:'🏘️' },
+  route_1:       { name:'Route 1',       slug:'Kanto_Route_1', icon:'🌿' },
+  viridian_city: { name:'Viridian City', slug:'Viridian_City', icon:'🌳' },
+};
+
+function bpLink(icon, label, name, url) {
+  return `<a class="blink" href="${url}" target="_blank" rel="noopener">
+    <span class="bl-icon">${icon}</span>
+    <span class="bl-text">
+      <span class="bl-label">${label}</span>
+      <span class="bl-name">${name}</span>
+    </span>
+  </a>`;
+}
+
+function pokemonSlug(name) {
+  // Convert name to Bulbapedia slug format
+  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase() + '_(Pokémon)';
+}
+function moveSlug(name) {
+  return name.split(' ').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join('_') + '_(move)';
+}
+
+function updateBulbapedia(state) {
+  const links = [];
+
+  // Area link
+  const areaInfo = AREA_LINKS[state.area?.id];
+  if (areaInfo) {
+    links.push(bpLink(areaInfo.icon, 'Current Area', areaInfo.name, BPEDIA + areaInfo.slug));
+  }
+
+  if (state.screen === 'battle' && state.battle) {
+    const b = state.battle;
+    // Enemy Pokémon
+    links.push(bpLink('⚔️', 'Wild Pokémon', b.enemy.name, BPEDIA + pokemonSlug(b.enemy.species || b.enemy.name)));
+    // Your active Pokémon
+    links.push(bpLink('🔵', 'Your Pokémon', b.your_active.name, BPEDIA + pokemonSlug(b.your_active.species || b.your_active.name)));
+    // Moves (first 2 to keep it compact)
+    const moves = b.your_active.moves || [];
+    for (const mv of moves.slice(0,2)) {
+      const name = mv.name || mv;
+      links.push(bpLink('💥', 'Move', name.charAt(0).toUpperCase()+name.slice(1), BPEDIA + moveSlug(name)));
+    }
+  } else {
+    // Overworld: show party Pokémon links
+    for (const p of (state.player?.party||[]).slice(0,2)) {
+      links.push(bpLink('🟡', 'Party', p.name, BPEDIA + pokemonSlug(p.species || p.name)));
+    }
+    // Area-specific extras
+    if (state.area?.id === 'route_1') {
+      links.push(bpLink('🌾', 'Wild Pokémon', 'Pidgey', BPEDIA + 'Pidgey_(Pokémon)'));
+      links.push(bpLink('🌾', 'Wild Pokémon', 'Rattata', BPEDIA + 'Rattata_(Pokémon)'));
+    }
+    if (state.area?.id === 'viridian_city') {
+      links.push(bpLink('🏥', 'Location', 'Pokémon Center', BPEDIA + 'Pokémon_Center'));
+    }
+  }
+
+  const el = document.getElementById('blinks');
+  el.innerHTML = links.length ? links.join('') : '<div class="blink-none">No links for current scene</div>';
+}
+
+// ── UI update ─────────────────────────────────────────────────────────────────
 function updateUI(state) {
   document.getElementById('msg').textContent = state.message || '...';
-  document.getElementById('turn').textContent = `Turn ${state.turn} — ${state.area?.name || ''}`;
-  document.getElementById('area-label').textContent = (state.area?.name || 'OVERWORLD').toUpperCase();
+  document.getElementById('turn').textContent = `Turn ${state.turn} — ${state.area?.name||''}`;
+  document.getElementById('area-label').textContent = (state.area?.name||'OVERWORLD').toUpperCase();
 
-  document.getElementById('party').innerHTML = state.player.party.map(p => {
-    const hp = hpParts(p.hp);
+  document.getElementById('party').innerHTML = (state.player?.party||[]).map(p => {
+    const hp=hpInfo(p.hp);
     return `<div class="pcard">
       <div class="pname">${p.name} <small>Lv.${p.level}</small>${(p.type||[]).map(typeTag).join('')}</div>
-      <div class="hp-bar-wrap">
+      <div class="hp-wrap">
         <div class="hp-label"><span>HP</span><span>${p.hp}</span></div>
-        <div class="hp-bar"><div class="hp-fill ${hpClass(hp.frac)}" style="width:${Math.round(hp.frac*100)}%"></div></div>
+        <div class="hp-bar"><div class="hp-fill ${hpCls(hp.f)}" style="width:${Math.round(hp.f*100)}%"></div></div>
       </div>
       <div class="moves">${(p.moves||[]).map(m=>`<span class="mtag">${m}</span>`).join('')}</div>
     </div>`;
   }).join('');
 
-  document.getElementById('log').innerHTML = (state.log||[]).map(l=>`<div class="log-e">${l}</div>`).join('');
+  const logEl = document.getElementById('log');
+  const wrap = document.getElementById('log-wrap');
+  const wasAtBottom = wrap.scrollTop >= wrap.scrollHeight - wrap.clientHeight - 10;
+  logEl.innerHTML = (state.log||[]).map(l=>`<div class="log-e">${l}</div>`).join('');
+  if (wasAtBottom) wrap.scrollTop = wrap.scrollHeight;
+
+  updateBulbapedia(state);
   render(state);
 }
 
+// ── Chat ──────────────────────────────────────────────────────────────────────
+let myName = '';
+let ws;
+
+function addChatMsg(msg) {
+  const box = document.getElementById('chat-msgs');
+  const atBottom = box.scrollTop >= box.scrollHeight - box.clientHeight - 10;
+  const isSystem = msg.user === '—';
+  const div = document.createElement('div');
+  div.className = 'chat-msg' + (isSystem ? ' system' : '');
+  if (isSystem) {
+    div.innerHTML = `<span class="cs">${msg.text}</span>`;
+  } else {
+    const isMine = msg.user === myName;
+    div.innerHTML = `<span class="cu">${isMine ? 'You' : msg.user}</span> <span class="ct">${msg.text}</span>`;
+  }
+  box.appendChild(div);
+  if (atBottom || isSystem) box.scrollTop = box.scrollHeight;
+}
+
+function sendChat() {
+  const inp = document.getElementById('chat-in');
+  const text = inp.value.trim();
+  if (!text || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type:'chat', text }));
+  inp.value = '';
+}
+
+document.getElementById('chat-send').addEventListener('click', sendChat);
+document.getElementById('chat-in').addEventListener('keydown', e => { if(e.key==='Enter') sendChat(); });
+
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connect() {
-  const ws = new WebSocket(`ws://${location.host}`);
+  ws = new WebSocket(`ws://${location.host}`);
+
   ws.onmessage = evt => {
-    try {
-      const msg = JSON.parse(evt.data);
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch { return; }
+
+    if (msg.event === 'connected') {
       if (msg.map) mapData = msg.map;
       if (msg.state) { lastState = msg.state; updateUI(msg.state); }
-    } catch(e) { console.error(e); }
+      if (msg.myName) {
+        myName = msg.myName;
+        document.getElementById('my-name').textContent = `You are: ${myName}`;
+      }
+      if (msg.chatHistory) msg.chatHistory.forEach(addChatMsg);
+    }
+    if (msg.event === 'state_update' || msg.event === 'reset') {
+      if (msg.map) mapData = msg.map;
+      if (msg.state) { lastState = msg.state; updateUI(msg.state); }
+    }
+    if (msg.event === 'chat') addChatMsg(msg.msg);
   };
+
   ws.onclose = () => {
     document.getElementById('msg').textContent = '⚠ Reconnecting...';
     setTimeout(connect, 2000);
@@ -251,15 +417,9 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
-// Boot: fetch initial state + map in parallel
-Promise.all([
-  fetch('/state').then(r=>r.json()),
-  fetch('/map').then(r=>r.json()),
-]).then(([state, map]) => {
-  mapData = map;
-  lastState = state;
-  updateUI(state);
-}).catch(()=>{});
+// Boot
+Promise.all([fetch('/state').then(r=>r.json()), fetch('/map').then(r=>r.json())])
+  .then(([s, m]) => { mapData=m; lastState=s; updateUI(s); }).catch(()=>{});
 connect();
 </script>
 </body>
