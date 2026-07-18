@@ -1,6 +1,8 @@
 'use strict';
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { WebSocketServer } = require('ws');
 const { newGame, processAction, getView } = require('./game/engine');
 
@@ -10,6 +12,27 @@ const wss = new WebSocketServer({ server });
 
 app.use(express.json());
 app.use(express.static('public'));
+
+// ── Persistent action log ───────────────────────────────────────────────────
+const LOG_FILE = process.env.LOG_FILE || '/tmp/pokemon-action-log.jsonl';
+const actionLog = [];  // in-memory copy for /logs endpoint
+
+// Replay existing log on startup
+if (fs.existsSync(LOG_FILE)) {
+  const lines = fs.readFileSync(LOG_FILE, 'utf8').trim().split('\n').filter(Boolean);
+  for (const line of lines) {
+    try { actionLog.push(JSON.parse(line)); } catch {}
+  }
+  console.log(`📋 Loaded ${actionLog.length} log entries from ${LOG_FILE}`);
+}
+
+function appendLog(entry) {
+  actionLog.push(entry);
+  // Structured stdout so Railway log retention captures it
+  console.log(JSON.stringify({ _log: true, ...entry }));
+  // Append to file for persistence within deployment
+  try { fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n'); } catch {}
+}
 
 // ── Game state ──────────────────────────────────────────────────────────────
 let state = newGame();
@@ -61,6 +84,15 @@ app.post('/action', (req, res) => {
     state = processAction(state, action);
     const view = getView(state);
     broadcast({ event: 'state_update', state: view, map: getMapSnapshot(), action });
+    // Log every action with timestamp + resulting state summary
+    appendLog({
+      ts: new Date().toISOString(),
+      action,
+      area: view.areaId,
+      phase: view.phase,
+      log: view.log ? view.log.slice(-3) : [],  // last 3 log lines
+      party: (view.party || []).map(p => ({ name: p.name, hp: p.hp, maxHp: p.maxHp, level: p.level })),
+    });
     res.json(view);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -68,10 +100,21 @@ app.post('/action', (req, res) => {
 });
 
 app.post('/reset', (req, res) => {
+  appendLog({ ts: new Date().toISOString(), action: { type: 'reset' }, area: null, phase: null, log: ['— game reset —'], party: [] });
   state = newGame();
   const view = getView(state);
   broadcast({ event: 'reset', state: view, map: getMapSnapshot() });
   res.json(view);
+});
+
+app.get('/logs', (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 500, 5000);
+  const offset = Math.max(0, actionLog.length - limit);
+  res.json({
+    total: actionLog.length,
+    returned: Math.min(limit, actionLog.length),
+    entries: actionLog.slice(offset),
+  });
 });
 
 app.get('/map', (req, res) => {
