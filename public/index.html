@@ -327,6 +327,13 @@ function drawBattle(state) {
   ctx.fillText(mvs.slice(0,2).map((m,i)=>`${i}:${m.name||m}`).join('  '),196,236);
   if(mvs.length>2) ctx.fillText(mvs.slice(2).map((m,i)=>`${i+2}:${m.name||m}`).join('  '),196,246);
   ctx.fillStyle='#ffcc00'; ctx.font='bold 16px Courier New'; ctx.fillText('VS',167,112);
+  // Trainer label bar
+  if (b.is_trainer && b.trainer_name) {
+    ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(0,268,CW,20);
+    ctx.fillStyle='#ffcc00'; ctx.font='bold 10px Courier New'; ctx.textAlign='center';
+    ctx.fillText(`TRAINER — ${b.trainer_name}  (${(b.trainer_remaining||0)+1} POKéMON left)`, CW/2, 281);
+    ctx.textAlign='left';
+  }
 }
 
 function render(state) {
@@ -381,9 +388,11 @@ function updateInventory(bag, money) {
 // ── Bulbapedia links ──────────────────────────────────────────────────────────
 const BPEDIA = 'https://bulbapedia.bulbagarden.net/wiki/';
 const AREA_LINKS = {
-  pallet_town:   { name:'Pallet Town',   slug:'Pallet_Town',   icon:'🏘️' },
-  route_1:       { name:'Route 1',       slug:'Kanto_Route_1', icon:'🌿' },
-  viridian_city: { name:'Viridian City', slug:'Viridian_City', icon:'🌳' },
+  pallet_town:     { name:'Pallet Town',      slug:'Pallet_Town',         icon:'🏘️' },
+  route_1:         { name:'Route 1',          slug:'Kanto_Route_1',       icon:'🌿' },
+  viridian_city:   { name:'Viridian City',    slug:'Viridian_City',       icon:'🌳' },
+  viridian_forest: { name:'Viridian Forest',  slug:'Viridian_Forest',     icon:'🌲' },
+  pewter_city:     { name:'Pewter City',      slug:'Pewter_City',         icon:'⛰️' },
 };
 
 function bpLink(icon, label, name, url) {
@@ -428,6 +437,14 @@ function updateBulbapedia(state) {
       }
       if (state.area?.id === 'viridian_city') {
         links.push(bpLink('🏥','Location','Pokémon Center', BPEDIA+'Pok%C3%A9mon_Center'));
+      }
+      if (state.area?.id === 'viridian_forest') {
+        links.push(bpLink('🐛','Wild Pokémon','Caterpie', BPEDIA+'Caterpie_(Pok%C3%A9mon)'));
+        links.push(bpLink('🐝','Wild Pokémon','Weedle', BPEDIA+'Weedle_(Pok%C3%A9mon)'));
+      }
+      if (state.area?.id === 'pewter_city') {
+        links.push(bpLink('🏋️','Gym Leader','Brock', BPEDIA+'Brock'));
+        links.push(bpLink('🥊','Gym','Pewter City Gym', BPEDIA+'Pewter_Gym'));
       }
     }
   }

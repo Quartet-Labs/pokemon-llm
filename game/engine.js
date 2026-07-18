@@ -229,10 +229,33 @@ function processAction(state, action) {
       // NPC blocking
       const npcHere = getNpcAt(area, nx, ny);
       if (npcHere) {
-        // Start dialogue
-        const lines = [...npcHere.dialogue];
+        // Trainer battle check
+        if (npcHere.trainerBattle && !state.player.flags[npcHere.trainerBattle.rewardFlag]) {
+          const tb = npcHere.trainerBattle;
+          const [first, ...rest] = tb.party.map(e => makePokemon(e.species, e.level));
+          state.screen = 'battle';
+          state.battle = {
+            enemy: first,
+            isTrainer: true,
+            trainerName: tb.trainerName || npcHere.name,
+            trainerParty: rest,
+            playerPartyIndex: 0,
+            reward: tb.reward || 0,
+            rewardFlag: tb.rewardFlag,
+            badge: tb.badge || null,
+            turn: 0,
+          };
+          const opener = (npcHere.dialogue || [])[0] || `${npcHere.name} wants to fight!`;
+          state.message = opener;
+          log(state.message);
+          return state;
+        }
+        // Regular dialogue (or after-battle dialogue for defeated trainer)
+        const dialogueSource = (npcHere.trainerBattle && state.player.flags[npcHere.trainerBattle.rewardFlag])
+          ? (npcHere.dialogueAfter || npcHere.dialogue)
+          : npcHere.dialogue;
+        const lines = [...(dialogueSource || [])];
         state.dialogue = { lines, index:0, npcId: npcHere.id };
-        // Filter already-given items
         state.dialogue.lines = lines.filter(l => {
           if (typeof l === 'object' && l.give) {
             return !state.player.flags[`got_${l.give}_from_${npcHere.id}`];
@@ -411,6 +434,34 @@ function processBattleAction(state, action, log) {
       const exp = Math.floor((enemy.level * 50) / 7);
       active.exp += exp;
       msgs.push(`${enemy.name} fainted! ${active.name} gained ${exp} EXP.`);
+
+      // Trainer battle: more Pokémon?
+      if (battle.isTrainer && battle.trainerParty && battle.trainerParty.length > 0) {
+        const next = battle.trainerParty.shift();
+        battle.enemy = next;
+        msgs.push(`${battle.trainerName} sent out ${next.name}!`);
+        // Return true to END this round's attack chain — `enemy` local ref is stale.
+        // Next call to processBattleAction will capture `battle.enemy` = Onix fresh.
+        return true;
+      }
+
+      // Trainer defeated (or wild fainted)
+      if (battle.isTrainer) {
+        msgs.push(`${battle.trainerName} is out of POKéMON! You win!`);
+        if (battle.reward) {
+          state.player.money += battle.reward;
+          msgs.push(`Received ₽${battle.reward} from ${battle.trainerName}.`);
+        }
+        if (battle.rewardFlag) state.player.flags[battle.rewardFlag] = true;
+        if (battle.badge) {
+          state.player.badges++;
+          const bkey = battle.badge.toLowerCase().replace(/\s+/g, '_');
+          state.player.flags[`badge_${bkey}`] = true;
+          msgs.push(`${battle.trainerName} awarded you the ${battle.badge.toUpperCase()}!`);
+          msgs.push(`${state.player.badges} badge(s) earned so far. Head to the next GYM!`);
+        }
+      }
+
       state.screen = 'overworld'; state.battle = null;
       return true;
     }
@@ -445,6 +496,10 @@ function processBattleAction(state, action, log) {
   }
 
   if (type === 'run') {
+    if (battle.isTrainer) {
+      state.message = "Can't escape from a trainer battle!";
+      return state;
+    }
     const esc = Math.floor((active.spd * 32) / (enemy.spd || 1)) + 30;
     if (roll(256) < esc) {
       state.screen = 'overworld'; state.battle = null;
@@ -533,24 +588,25 @@ function getView(state) {
     },
   };
   if (state.screen === 'battle' && state.battle) {
+    const isTrainer = !!state.battle.isTrainer;
     view.battle = {
+      is_trainer: isTrainer,
+      trainer_name: isTrainer ? state.battle.trainerName : null,
+      trainer_remaining: isTrainer ? (state.battle.trainerParty || []).length : null,
       your_active: {
-        name: active.name, level: active.level,
+        name: active.name, species: active.species, level: active.level,
         hp: `${active.currentHp}/${active.maxHp}`, status: active.status,
         moves: active.moves.map((m,i) => ({ index:i, name:m, ...(MOVES[m]||{}) })),
       },
       enemy: {
-        name: state.battle.enemy.name, level: state.battle.enemy.level,
+        name: state.battle.enemy.name, species: state.battle.enemy.species,
+        level: state.battle.enemy.level,
         hp: `${state.battle.enemy.currentHp}/${state.battle.enemy.maxHp}`,
         status: state.battle.enemy.status, type: state.battle.enemy.type,
       },
-      available_actions: [
-        'battle_move (move_index: 0-3)',
-        'run',
-        'throw_ball (ball: pokeball|great_ball)',
-        'use_item (item: potion, target_index: 0-5)',
-        'switch (party_index: 0-5)',
-      ],
+      available_actions: isTrainer
+        ? ['battle_move (move_index: 0-3)', 'throw_ball (ball: pokeball|great_ball)', 'use_item (item: potion, target_index: 0-5)', 'switch (party_index: 0-5)']
+        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: pokeball|great_ball)', 'use_item (item: potion, target_index: 0-5)', 'switch (party_index: 0-5)'],
     };
   }
   if (state.dialogue) {

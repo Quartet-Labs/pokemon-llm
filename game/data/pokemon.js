@@ -23,6 +23,17 @@ const POKEMON = {
   meowth:     { id:52, name:"MEOWTH",     type:["normal"],         hp:40, atk:45, def:35, spd:90, spc:40, moves:["scratch","growl","bite","pay day"] },
   geodude:    { id:74, name:"GEODUDE",    type:["rock","ground"],  hp:40, atk:80, def:100,spd:20, spc:30, moves:["tackle","defense curl","rock throw","magnitude"] },
   eevee:      { id:133,name:"EEVEE",      type:["normal"],         hp:55, atk:55, def:50, spd:55, spc:45, moves:["tackle","tail whip","sand attack","quick attack"] },
+
+  // Viridian Forest (Bug)
+  caterpie:   { id:10, name:"CATERPIE",   type:["bug"],            hp:45, atk:30, def:35, spd:45, spc:20, moves:["tackle","string shot"] },
+  metapod:    { id:11, name:"METAPOD",    type:["bug"],            hp:50, atk:20, def:55, spd:30, spc:25, moves:["harden"] },
+  butterfree: { id:12, name:"BUTTERFREE", type:["bug","flying"],   hp:60, atk:45, def:50, spd:70, spc:80, moves:["confusion","sleep powder","stun spore","gust"] },
+  weedle:     { id:13, name:"WEEDLE",     type:["bug","poison"],   hp:35, atk:35, def:30, spd:50, spc:20, moves:["poison sting","string shot"] },
+  kakuna:     { id:14, name:"KAKUNA",     type:["bug","poison"],   hp:45, atk:25, def:50, spd:35, spc:25, moves:["harden"] },
+  beedrill:   { id:15, name:"BEEDRILL",   type:["bug","poison"],   hp:65, atk:80, def:40, spd:75, spc:45, moves:["twineedle","fury attack","poison sting","agility"] },
+
+  // Pewter / Brock
+  onix:       { id:95, name:"ONIX",       type:["rock","ground"],  hp:35, atk:45, def:160,spd:70, spc:30, moves:["tackle","screech","bind","rock throw"] },
 };
 
 // Wild encounter tables per terrain + area
@@ -31,6 +42,22 @@ const ENCOUNTER_TABLES = {
     tall_grass: [
       { species:'pidgey',  levelMin:2, levelMax:5, rate:55 },
       { species:'rattata', levelMin:2, levelMax:4, rate:45 },
+    ],
+  },
+  viridian_forest: {
+    tall_grass: [
+      { species:'caterpie', levelMin:3, levelMax:5, rate:40 },
+      { species:'weedle',   levelMin:3, levelMax:5, rate:40 },
+      { species:'pidgey',   levelMin:3, levelMax:5, rate:15 },
+      { species:'pikachu',  levelMin:4, levelMax:6, rate:5  },
+    ],
+  },
+  route_2_north: {
+    tall_grass: [
+      { species:'pidgey',  levelMin:5, levelMax:8, rate:50 },
+      { species:'rattata', levelMin:5, levelMax:7, rate:30 },
+      { species:'caterpie',levelMin:4, levelMax:6, rate:10 },
+      { species:'weedle',  levelMin:4, levelMax:6, rate:10 },
     ],
   },
 };

@@ -127,9 +127,8 @@ const VIRIDIAN_CITY = {
   tiles: buildViridianCity(),
   objects: [],
   npcs: [
-    { id:'old_man', x:9, y:6, name:'Old Man', dir:'south',
-      dialogue:["ZZZ... hm? Oh! Sorry, I was napping. I haven't had my coffee yet this morning. I can't function without my morning coffee!"],
-      blocksNorth: true },
+    { id:'old_man', x:5, y:5, name:'Old Man', dir:'south',
+      dialogue:["Ahhh, finally had my morning coffee! I feel like a new man! Heading to PEWTER CITY? Take the north path through VIRIDIAN FOREST — but watch out for BUG POKéMON!"] },
     { id:'girl_viridian', x:11, y:7, name:'Girl', dir:'east',
       dialogue:["That old man sure loves his coffee... He's always dozing off there."] },
     { id:'gym_sign_npc', x:17, y:4, name:'Youngster', dir:'south',
@@ -140,6 +139,7 @@ const VIRIDIAN_CITY = {
     { x:18, y:3,  text:"VIRIDIAN GYM\nGym Leader: ???\nThis Gym's LEADER is out on personal business!" },
     { x:11, y:14, text:"POKéMON CENTER\nWe restore your tired POKéMON to full health." },
     { x:17, y:10, text:"POKé MART\nVIRIDIAN CITY BRANCH" },
+    { x:9,  y:2,  text:"VIRIDIAN FOREST →\nPEWTER CITY beyond!" },
   ],
   warps: [
     { x:11, y:15, dest:'pokemon_center', destX:5,  destY:8,  areaName:'Pokémon Center' },
@@ -148,13 +148,106 @@ const VIRIDIAN_CITY = {
     { x:18, y:11, dest:'poke_mart',      destX:5,  destY:8,  areaName:'Poké Mart'      },
   ],
   connections: {
-    south: { area:'route_1', entryX:7, entryY:0 },
-    // north blocked by old man until parcel delivered
-    // west → route_22 (future)
+    south: { area:'route_1',       entryX:7, entryY:0  },
+    north: { area:'viridian_forest', entryX:9, entryY:30 },
   },
-  warpsSpecial: {
-    pokemon_center: { healParty: true },
-    poke_mart:      { shop: ['pokeball','potion','antidote'] },
+};
+
+// ── Viridian Forest (20 wide x 32 tall) ──────────────────────────────────────
+const VIRIDIAN_FOREST = {
+  id: 'viridian_forest',
+  name: 'Viridian Forest',
+  width: 20,
+  height: 32,
+  tiles: buildViridianForest(),
+  objects: [],
+  npcs: [
+    { id:'bug_catcher_1', x:7, y:22, name:'BUG CATCHER RICK', dir:'south',
+      dialogue:["BUG CATCHER RICK: Heh, little trainer! My bug POKéMON are the best! Come on, let's battle!"],
+      trainerBattle: {
+        trainerName: 'BUG CATCHER RICK',
+        party: [
+          { species:'caterpie', level:6 },
+          { species:'weedle',   level:5 },
+        ],
+        reward: 90,
+        rewardFlag: 'beat_bug_catcher_rick',
+      },
+      dialogueAfter: ["BUG CATCHER RICK: Aw, I lost! You're pretty good! Come back when you're stronger... I'll have trained more bugs!"],
+    },
+    { id:'bug_catcher_2', x:13, y:11, name:'BUG CATCHER A.J.', dir:'west',
+      dialogue:["BUG CATCHER A.J.: Hey you! Yeah, you! I've got the best Weedle in the forest! Prepare yourself!"],
+      trainerBattle: {
+        trainerName: 'BUG CATCHER A.J.',
+        party: [
+          { species:'weedle',   level:7 },
+          { species:'caterpie', level:7 },
+        ],
+        reward: 105,
+        rewardFlag: 'beat_bug_catcher_aj',
+      },
+      dialogueAfter: ["BUG CATCHER A.J.: Ugh! You wiped me out... I need to catch stronger bugs!"],
+    },
+  ],
+  signs: [
+    { x:9,  y:31, text:"VIRIDIAN FOREST\nWatch for wild POKéMON in the tall grass!" },
+    { x:9,  y:1,  text:"ROUTE 2 →\nPEWTER CITY ahead." },
+  ],
+  connections: {
+    south: { area:'viridian_city',   entryX:9, entryY:1  },
+    north: { area:'pewter_city',      entryX:10, entryY:22 },
+  },
+  warps: [],
+};
+
+// ── Pewter City (24 wide x 24 tall) ──────────────────────────────────────────
+const PEWTER_CITY = {
+  id: 'pewter_city',
+  name: 'Pewter City',
+  width: 24,
+  height: 24,
+  tiles: buildPewterCity(),
+  objects: [],
+  npcs: [
+    { id:'brock', x:12, y:7, name:'BROCK', dir:'south',
+      dialogue:["BROCK: I'm BROCK! I'm PEWTER's GYM LEADER! I believe in rock-hard defense and determination! Bring it on — my POKéMON won't crack!"],
+      trainerBattle: {
+        trainerName: 'BROCK',
+        party: [
+          { species:'geodude', level:12 },
+          { species:'onix',    level:14 },
+        ],
+        reward: 1400,
+        rewardFlag: 'beat_brock',
+        badge: 'Boulder Badge',
+      },
+      dialogueAfter: ["BROCK: You're good! Incredibly good! I understand now — I need to travel to hone my skills. The BOULDER BADGE is yours!"],
+    },
+    { id:'gym_guide', x:7, y:7, name:'Gym Guide', dir:'east',
+      dialogue:["Trainer, the GYM LEADER BROCK awaits! His ROCK-type POKéMON are tough. WATER and GRASS moves are super effective, but your starter will do fine!"] },
+    { id:'youngster_pewter', x:16, y:14, name:'Youngster', dir:'south',
+      dialogue:["Yo! Did you come from VIRIDIAN FOREST? I heard a trainer in there beat all the BUG CATCHERS!"] },
+    { id:'scientist_pewter', x:5, y:16, name:'Scientist', dir:'east',
+      dialogue:["PEWTER MUSEUM of SCIENCE is incredible! We have an actual MOON STONE on display! Head east down this road to check it out."] },
+  ],
+  signs: [
+    { x:10, y:22, text:"PEWTER CITY\nA Stone Gray City." },
+    { x:5,  y:5,  text:"POKéMON CENTER\nFull health restoration!" },
+    { x:17, y:5,  text:"PEWTER MUSEUM of SCIENCE\nKnowledge for all ages." },
+    { x:5,  y:13, text:"POKé MART\nPEWTER CITY BRANCH\nBall x200 Super Potion x700" },
+    { x:11, y:5,  text:"PEWTER GYM\nGym Leader: BROCK\nSpecialty: ROCK-type\nBoulder Badge awarded here." },
+  ],
+  warps: [
+    { x:4,  y:9,  dest:'pokemon_center', destX:5, destY:8, areaName:'Pokémon Center' },
+    { x:5,  y:9,  dest:'pokemon_center', destX:6, destY:8, areaName:'Pokémon Center' },
+    { x:4,  y:14, dest:'poke_mart',      destX:5, destY:8, areaName:'Poké Mart'      },
+    { x:5,  y:14, dest:'poke_mart',      destX:6, destY:8, areaName:'Poké Mart'      },
+    { x:17, y:9,  dest:'pewter_museum',  destX:3, destY:6, areaName:'Pewter Museum'  },
+    { x:18, y:9,  dest:'pewter_museum',  destX:4, destY:6, areaName:'Pewter Museum'  },
+  ],
+  connections: {
+    south: { area:'viridian_forest', entryX:9, entryY:1 },
+    // east → Route 3 (future)
   },
 };
 
@@ -200,6 +293,105 @@ function buildRoute1() {
   return rows;
 }
 
+function buildViridianForest() {
+  // 20 wide x 32 tall. Dense trees with a winding path and tall-grass patches.
+  // Path: south entry cols 8-11 → winds left → center → winds right → north exit cols 8-11
+  const rows = [];
+  for (let y = 0; y < 32; y++) {
+    let row = '';
+    for (let x = 0; x < 20; x++) {
+      if (x === 0 || x === 19) { row += 'T'; continue; }
+      // Path definition: winding corridor
+      const inPath = (
+        (x >= 8 && x <= 11 && y >= 0  && y <= 7)  ||   // south entry straight
+        (x >= 5 && x <= 11 && y >= 7  && y <= 10) ||   // veer left
+        (x >= 5 && x <= 8  && y >= 10 && y <= 14) ||   // left corridor
+        (x >= 5 && x <= 14 && y >= 14 && y <= 17) ||   // cross right
+        (x >= 11 && x <= 14 && y >= 17 && y <= 21)||   // right corridor
+        (x >= 8  && x <= 14 && y >= 21 && y <= 25)||   // veer back left
+        (x >= 8  && x <= 11 && y >= 25 && y <= 32)    // north exit
+      );
+      // Tall grass: off the path but not at the very edge
+      const inGrass = !inPath && x >= 2 && x <= 17 && (
+        (y >= 3  && y <= 6  && x >= 2  && x <= 7) ||
+        (y >= 11 && y <= 14 && x >= 9  && x <= 17)||
+        (y >= 17 && y <= 21 && x >= 2  && x <= 9) ||
+        (y >= 23 && y <= 27 && x >= 12 && x <= 17)
+      );
+      if (inPath) row += 'P';
+      else if (inGrass) row += 'G';
+      else row += 'T';
+    }
+    rows.push(row);
+  }
+  // Ensure clean entry/exit rows
+  rows[31] = 'TTTTTTTTTPPPPTTTTTTT';
+  rows[30] = 'TTTTTTTTTPPPPTTTTTTT';
+  rows[0]  = 'TTTTTTTTTPPPPTTTTTTT';
+  rows[1]  = 'TTTTTTTTTPPPPTTTTTTT';
+  return rows;
+}
+
+function buildPewterCity() {
+  // 24 wide x 24 tall
+  const rows = [];
+  for (let y = 0; y < 24; y++) {
+    let row = '';
+    for (let x = 0; x < 24; x++) {
+      if (x === 0 || x === 23 || y === 0 || y === 23) row += 'T';
+      else row += 'P';
+    }
+    rows.push(row);
+  }
+
+  // Perimeter trees depth 1-2
+  for (let x = 1; x <= 22; x++) {
+    rows[1] = setChar(rows[1], x, 'T');
+    rows[2] = setChar(rows[2], x, x < 10 || x > 12 ? 'T' : 'P'); // north exit open cols 10-12
+  }
+
+  // Pokémon Center (cols 2-8, rows 5-9)
+  for (let y = 5; y <= 9; y++)
+    for (let x = 2; x <= 8; x++)
+      rows[y] = setChar(rows[y], x, y < 9 ? 'B' : (x === 4 || x === 5) ? 'D' : 'B');
+
+  // Poké Mart (cols 2-8, rows 11-14)
+  for (let y = 11; y <= 14; y++)
+    for (let x = 2; x <= 8; x++)
+      rows[y] = setChar(rows[y], x, y < 14 ? 'B' : (x === 4 || x === 5) ? 'D' : 'B');
+
+  // Museum (cols 15-21, rows 5-9)
+  for (let y = 5; y <= 9; y++)
+    for (let x = 15; x <= 21; x++)
+      rows[y] = setChar(rows[y], x, y < 9 ? 'B' : (x === 17 || x === 18) ? 'D' : 'B');
+
+  // Pewter Gym (cols 9-14, rows 3-9)
+  for (let y = 3; y <= 9; y++)
+    for (let x = 9; x <= 14; x++)
+      rows[y] = setChar(rows[y], x, 'B'); // Gym — no door, enter from open plan (Brock NPC triggers battle)
+
+  // House 1 (cols 15-21, rows 11-16)
+  for (let y = 11; y <= 16; y++)
+    for (let x = 15; x <= 21; x++)
+      rows[y] = setChar(rows[y], x, y < 16 ? 'B' : (x === 17 || x === 18) ? 'D' : 'B');
+
+  // Sign tiles
+  rows[5]  = setChar(rows[5],  5,  'S'); // Pokémon center sign
+  rows[5]  = setChar(rows[5],  17, 'S'); // Museum sign
+  rows[11] = setChar(rows[11], 5,  'S'); // Poké mart sign
+  rows[3]  = setChar(rows[3],  11, 'S'); // Gym sign
+
+  // South exit (cols 9-12) at y=23
+  rows[23] = setChar(rows[23], 9,  'P');
+  rows[23] = setChar(rows[23], 10, 'P');
+  rows[23] = setChar(rows[23], 11, 'P');
+  rows[22] = setChar(rows[22], 9,  'P');
+  rows[22] = setChar(rows[22], 10, 'P');
+  rows[22] = setChar(rows[22], 11, 'P');
+
+  return rows;
+}
+
 function buildViridianCity() {
   const rows = [];
   for (let y = 0; y < 30; y++) {
@@ -210,10 +402,14 @@ function buildViridianCity() {
     }
     rows.push(row);
   }
-  // Trees around perimeter depth 2
+  // Trees around perimeter depth 2, leave north path open at cols 8-10
   for (let y = 1; y < 4; y++)
     for (let x = 1; x < 29; x++)
-      if (y < 3 || x < 3 || x > 26) rows[y] = setChar(rows[y], x, 'T');
+      if (y < 3 || x < 3 || x > 26) {
+        // Keep north path open
+        if (y <= 2 && x >= 8 && x <= 10) continue;
+        rows[y] = setChar(rows[y], x, 'T');
+      }
 
   // Pokémon Center (cols 10-14, rows 12-15)
   for (let y = 12; y <= 15; y++)
@@ -269,9 +465,11 @@ const CHAR_TO_TILE = {
 
 // ── Area registry ─────────────────────────────────────────────────────────────
 const AREAS = {
-  pallet_town:   PALLET_TOWN,
-  route_1:       ROUTE_1,
-  viridian_city: VIRIDIAN_CITY,
+  pallet_town:      PALLET_TOWN,
+  route_1:          ROUTE_1,
+  viridian_city:    VIRIDIAN_CITY,
+  viridian_forest:  VIRIDIAN_FOREST,
+  pewter_city:      PEWTER_CITY,
 };
 
 // ── Tile accessors ─────────────────────────────────────────────────────────────
