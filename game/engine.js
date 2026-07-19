@@ -9,6 +9,43 @@ const {
 // ── helpers ────────────────────────────────────────────────────────────────
 function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
+// ── Poké Mart catalog (#20 #21) ───────────────────────────────────────────────
+// Keys match area IDs that have marts; the clerk's `martTier` tag maps here.
+const MART_CATALOG = {
+  viridian: [
+    { item: 'poke_ball',     price: 200 },
+    { item: 'potion',        price: 300 },
+    { item: 'antidote',      price: 100 },
+    { item: 'paralyze_heal', price: 200 },
+  ],
+  pewter: [
+    { item: 'poke_ball',     price: 200 },
+    { item: 'great_ball',    price: 600 },
+    { item: 'potion',        price: 300 },
+    { item: 'super_potion',  price: 700 },
+    { item: 'antidote',      price: 100 },
+  ],
+};
+
+// Friendly display names for items
+const ITEM_NAMES = {
+  poke_ball:     'Poké Ball',
+  great_ball:    'Great Ball',
+  ultra_ball:    'Ultra Ball',
+  potion:        'Potion',
+  super_potion:  'Super Potion',
+  antidote:      'Antidote',
+  paralyze_heal: 'Parlyz Heal',
+  full_heal:     'Full Heal',
+};
+
+// Resolve which mart tier is available for a given area, or null if none.
+function getMartTierForArea(areaId) {
+  if (areaId === 'viridian_city') return 'viridian';
+  if (areaId === 'pewter_city')   return 'pewter';
+  return null;
+}
+
 // ── Seeded PRNG (#33) ───────────────────────────────────────────────────────
 // mulberry32 — fast, good statistical quality, reproducible from a uint32 seed.
 function mulberry32Rng(seed) {
@@ -286,6 +323,37 @@ function enemyMove(enemy) {
   return enemy.moves[Math.floor(rand * enemy.moves.length)];
 }
 
+// ── #19: Gen I catch mechanics ────────────────────────────────────────────────
+// Formula: f = floor((3*maxHP - 2*currentHP) * effectiveCatchRate * ballMult / (3*maxHP))
+// Ball shakes 4 times: each shake passes if roll(256)-1 <= f. Caught iff all 4 pass.
+function attemptCatch(ball, target) {
+  const ballMult = { poke_ball: 1, great_ball: 1.5, ultra_ball: 2, master_ball: Infinity }[ball] ?? 1;
+  if (ballMult === Infinity) return { caught: true, shakes: 4 };
+
+  const base = POKEMON[target.species];
+  const catchRate = base?.catchRate ?? 45;
+
+  let statusBonus = 0;
+  if (target.status === 'sleep' || target.status === 'freeze') statusBonus = 10;
+  else if (target.status === 'paralysis' || target.status === 'burn' || target.status === 'poison') statusBonus = 5;
+
+  const effectiveCatchRate = Math.min(255, catchRate + statusBonus);
+
+  const f = Math.max(0, Math.min(255,
+    Math.floor((3 * target.maxHp - 2 * target.currentHp) * effectiveCatchRate * ballMult / (3 * target.maxHp))
+  ));
+
+  if (f >= 255) return { caught: true, shakes: 4 };
+
+  let shakes = 0;
+  for (let i = 0; i < 4; i++) {
+    const r = roll(256) - 1;  // roll(n) returns 1..n, so -1 gives 0..255
+    if (r > f) break;
+    shakes++;
+  }
+  return { caught: shakes === 4, shakes };
+}
+
 // ── initial state ─────────────────────────────────────────────────────────────
 const STARTERS = {
   bulbasaur:  { species:'bulbasaur',  name:'BULBASAUR',  type:'Grass/Poison', desc:'A strange seed was planted on its back at birth.' },
@@ -307,7 +375,15 @@ function newGame(seed) {
     player: {
       x: 8, y: 9,    // standing in front of Oak's table
       party: [],
-      bag: { pokeball:5, potion:1 },
+      bag: {
+        poke_ball: 5,    great_ball: 0,  ultra_ball: 0,  master_ball: 0,
+        potion: 5,       super_potion: 0,
+        antidote: 0,     paralyze_heal: 0, full_heal: 0,
+        // legacy key kept for save-state compat
+        pokeball: 0,
+      },
+      // #19: canonical ball inventory (mirrors bag ball keys for catch mechanic)
+      items: { poke_ball: 5, great_ball: 0, ultra_ball: 0, master_ball: 0 },
       money: 3000,
       badges: 0,
       steps: 0,
@@ -559,7 +635,15 @@ function processAction(state, action) {
       return useItemOverworld(state, action);
     }
 
-    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item`;
+    if (type === 'mart_view') {
+      return martView(state);
+    }
+
+    if (type === 'mart_buy') {
+      return martBuy(state, action);
+    }
+
+    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy`;
     return state;
   }
 
@@ -594,7 +678,15 @@ function handleWarp(state, warp, area) {
     return state;
   }
   if (destId === 'poke_mart') {
-    state.message = "CLERK: Welcome! We have POKéBalls ¥200, Potions ¥300. (Shop not yet interactive — use use_item to manage inventory)";
+    // The mart tier is resolved from the city the player is in
+    const tier = getMartTierForArea(state.areaId);
+    if (tier) {
+      const catalog = MART_CATALOG[tier];
+      const lines = catalog.map(e => `${ITEM_NAMES[e.item] || e.item} ₽${e.price}`).join(', ');
+      state.message = `CLERK: Welcome to the POKé MART! We have: ${lines}. Use mart_buy to purchase. You have ₽${state.player.money}.`;
+    } else {
+      state.message = "CLERK: Welcome to the POKé MART! Use mart_view to see what's available.";
+    }
     return state;
   }
   // Area warps
@@ -610,18 +702,95 @@ function handleWarp(state, warp, area) {
 }
 
 function useItemOverworld(state, action) {
-  const { item, target_index = 0 } = action;
-  const target = state.player.party[target_index];
+  const { item, target_index: targetIndex = 0 } = action;
+  const target = state.player.party[targetIndex];
   if (!target) { state.message = 'No Pokémon at that party slot.'; return state; }
-  if (item === 'potion') {
-    if (!(state.player.bag.potion > 0)) { state.message = 'You have no Potions.'; return state; }
-    const healed = Math.min(20, target.maxHp - target.currentHp);
+
+  const bag = state.player.bag;
+  const itemName = ITEM_NAMES[item] || item;
+
+  if (item === 'potion' || item === 'super_potion') {
+    const heal = item === 'potion' ? 20 : 50;
+    if (!(bag[item] > 0)) { state.message = `You have no ${itemName}s.`; return state; }
+    if (target.currentHp <= 0) { state.message = `${target.name} has fainted!`; return state; }
+    if (target.currentHp >= target.maxHp) { state.message = `${target.name}'s HP is already full!`; return state; }
+    const healed = Math.min(heal, target.maxHp - target.currentHp);
     target.currentHp += healed;
-    state.player.bag.potion--;
-    state.message = `Used POTION on ${target.name}. +${healed} HP.`;
+    bag[item]--;
+    state.message = `Used ${itemName} on ${target.name}. +${healed} HP. (${target.currentHp}/${target.maxHp})`;
+
+  } else if (item === 'antidote') {
+    if (!(bag.antidote > 0)) { state.message = 'You have no Antidotes.'; return state; }
+    if (target.status !== 'poison') { state.message = `${target.name} is not poisoned.`; return state; }
+    target.status = null;
+    bag.antidote--;
+    state.message = `Used Antidote on ${target.name}. ${target.name} is cured of poison!`;
+
+  } else if (item === 'paralyze_heal') {
+    if (!(bag.paralyze_heal > 0)) { state.message = 'You have no Parlyz Heals.'; return state; }
+    if (target.status !== 'paralysis') { state.message = `${target.name} is not paralyzed.`; return state; }
+    target.status = null;
+    bag.paralyze_heal--;
+    state.message = `Used Parlyz Heal on ${target.name}. ${target.name} is cured of paralysis!`;
+
+  } else if (item === 'full_heal') {
+    if (!(bag.full_heal > 0)) { state.message = 'You have no Full Heals.'; return state; }
+    if (!target.status && !target.confused) { state.message = `${target.name} has no status condition.`; return state; }
+    const cured = target.status || (target.confused ? 'confusion' : '');
+    target.status = null;
+    target.statusTurns = 0;
+    target.confused = false;
+    target.confusedTurns = 0;
+    bag.full_heal--;
+    state.message = `Used Full Heal on ${target.name}. Cured ${cured}!`;
+
   } else {
-    state.message = `Can't use ${item} here.`;
+    state.message = `Can't use ${itemName} here. Try: potion, super_potion, antidote, paralyze_heal, full_heal`;
   }
+  return state;
+}
+
+// ── Mart actions (#20 #21) ────────────────────────────────────────────────────
+function martView(state) {
+  const tier = getMartTierForArea(state.areaId);
+  if (!tier) {
+    state.message = "There's no Poké Mart here. Travel to Viridian City or Pewter City.";
+    return state;
+  }
+  const catalog = MART_CATALOG[tier];
+  const lines = catalog.map(e => `${ITEM_NAMES[e.item] || e.item}: ₽${e.price}`).join('\n');
+  state.message = `CLERK: Here's what we stock:\n${lines}\nYou have ₽${state.player.money}. Use mart_buy to purchase.`;
+  return state;
+}
+
+function martBuy(state, action) {
+  const tier = getMartTierForArea(state.areaId);
+  if (!tier) {
+    state.message = "There's no Poké Mart here. Travel to Viridian City or Pewter City.";
+    return state;
+  }
+  const { item, quantity = 1 } = action;
+  if (!item) { state.message = 'Specify an item to buy. Use mart_view to see the catalog.'; return state; }
+  const qty = Math.max(1, Math.floor(quantity));
+
+  const catalog = MART_CATALOG[tier];
+  const entry = catalog.find(e => e.item === item);
+  if (!entry) {
+    const avail = catalog.map(e => e.item).join(', ');
+    state.message = `CLERK: Sorry, we don't carry ${item}. We stock: ${avail}.`;
+    return state;
+  }
+
+  const total = entry.price * qty;
+  if (state.player.money < total) {
+    state.message = `CLERK: That costs ₽${total} but you only have ₽${state.player.money}. You need ₽${total - state.player.money} more.`;
+    return state;
+  }
+
+  state.player.money -= total;
+  state.player.bag[item] = (state.player.bag[item] || 0) + qty;
+  const displayName = ITEM_NAMES[item] || item;
+  state.message = `CLERK: Bought ${qty}× ${displayName} for ₽${total}. You have ₽${state.player.money} remaining.`;
   return state;
 }
 
@@ -903,28 +1072,41 @@ function processBattleAction(state, action, log) {
 
   // ── THROW BALL ──────────────────────────────────────────────────────────
   if (type === 'throw_ball') {
-    // #5: Block ball-throwing in trainer battles
+    // #5 / #19: Block ball-throwing in trainer battles
     if (battle.isTrainer) {
-      state.message = "You can't catch a trainer's Pokémon!";
+      state.message = "Can't catch trainer's Pokémon!";
       return state;
     }
     const active = getActive();
     const enemy  = getEnemy();
-    const ball = action.ball || 'pokeball';
-    if (!(state.player.bag[ball] > 0)) { state.message = `No ${ball}s left.`; return state; }
-    state.player.bag[ball]--;
-    const hpFrac = enemy.currentHp / enemy.maxHp;
-    const catchRate = Math.floor((255 - hpFrac * 200) / (ball === 'great_ball' ? 1.5 : 1));
-    if (roll(255) <= catchRate) {
-      msgs.push(`Caught ${enemy.name}!`);
-      if (state.player.party.length < 6) state.player.party.push(JSON.parse(JSON.stringify(enemy)));
+    const ball = action.ball || 'poke_ball';
+    if ((state.player.items?.[ball] ?? 0) < 1) {
+      state.message = `No ${ball.replace(/_/g, ' ')} left!`;
+      return state;
+    }
+    state.player.items[ball]--;
+
+    // #19: Real Gen I catch formula
+    const result = attemptCatch(ball, enemy);
+    const shakeDesc = ['Oh no! It escaped!', '1 shake...', '2 shakes...', '3 shakes...', 'Gotcha!'];
+    if (result.shakes > 0 && result.shakes < 4) {
+      msgs.push(`The ball shook ${result.shakes} time(s)... ${enemy.name} broke free!`);
+    }
+    if (result.caught) {
+      battle.outcome = 'caught';
+      msgs.push(`${enemy.name} was caught!`);
+      if (state.player.party.length < 6) {
+        state.player.party.push(JSON.parse(JSON.stringify(enemy)));
+      } else {
+        msgs.push(`${enemy.name} was sent to the PC box (party full).`);
+      }
       state.screen = 'overworld'; state.battle = null;
     } else {
-      msgs.push(`${enemy.name} broke free!`);
+      if (result.shakes === 0) msgs.push(`${enemy.name} broke free immediately!`);
       doAttack(enemy, selectEnemyMove(), active, false);
       checkFaint();
     }
-    state.message = msgs.join(' '); msgs.forEach(log);
+    state.message = msgs.filter(Boolean).join(' '); msgs.forEach(log);
     return state;
   }
 
