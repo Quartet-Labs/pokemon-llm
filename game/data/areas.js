@@ -862,19 +862,19 @@ const PEWTER_MUSEUM = {
   width: 12,
   height: 8,
   tiles: [
-    "WWWWWWWWWWWW",
+    "WWWWWDDWWWWW",  // 0 — north door leads to back room
     "WPPPPPPPPPPW",
     "WPPPPPPPPPPW",
     "WPPPPPPPPPPW",
     "WPPPPPPPPPPW",
     "WPPPPPPPPPPW",
     "WPPPPPPPPPPW",
-    "WWWWWDDWWWWW",
+    "WWWWWDDWWWWW",  // 7 exit south
   ],
   objects: [],
   npcs: [
     { id:'museum_guide', x:6, y:2, name:'Museum Guide', dir:'south',
-      dialogue:["Welcome to PEWTER MUSEUM! The DOME FOSSIL can restore KABUTO. The HELIX FOSSIL can restore OMANYTE. These are the mysteries of ancient POKéMON!"] },
+      dialogue:["Welcome to PEWTER MUSEUM! The DOME FOSSIL can restore KABUTO. The HELIX FOSSIL can restore OMANYTE. These are the mysteries of ancient POKéMON! The BACK ROOM has more exhibits — step through the north door!"] },
     { id:'fossil_amber', x:4, y:3, name:'Display Case', dir:'south',
       dialogue:["OLD AMBER: Scientists say a POKéMON is encased inside... (AERODACTYL)"] },
   ],
@@ -883,8 +883,58 @@ const PEWTER_MUSEUM = {
     { x:9, y:2, text:"HELIX FOSSIL\nA rare fossil..." },
   ],
   warps: [
+    { x:5, y:0, dest:'pewter_museum_back', destX:5, destY:4, areaName:'Pewter Museum (Back)' },
+    { x:6, y:0, dest:'pewter_museum_back', destX:6, destY:4, areaName:'Pewter Museum (Back)' },
     { x:5, y:7, dest:'pewter_city', destX:17, destY:9, areaName:'Pewter City' },
     { x:6, y:7, dest:'pewter_city', destX:18, destY:9, areaName:'Pewter City' },
+  ],
+};
+
+// ── Interior: Pewter Museum — Back Room ──────────────────────────────────────
+const PEWTER_MUSEUM_BACK = {
+  id: 'pewter_museum_back',
+  name: 'Pewter Museum (Back)',
+  width: 12,
+  height: 6,
+  tiles: [
+    "WWWWWWWWWWWW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WWWWWDDWWWWW",  // 5 exit south back to front room
+  ],
+  objects: [],
+  npcs: [
+    { id:'museum_scientist_back', x:6, y:2, name:'Scientist', dir:'south',
+      // [D7] Give Old Amber once when player has beaten Brock
+      flagDialogue: [
+        { requireFlag: 'beat_brock', denyFlag: 'got_old_amber',
+          lines: [
+            "SCIENTIST: Ah, a trainer! We've been studying this specimen — it's OLD AMBER, preserved from ancient times.",
+            "SCIENTIST: A Pokémon is trapped inside! We'd revive it, but we lack the technology here.",
+            "SCIENTIST: Take it to the scientists on CINNABAR ISLAND — they can resurrect it!",
+            { give: 'old_amber', qty: 1 },
+            { setFlag: 'got_old_amber' },
+            "SCIENTIST: That amber contains AERODACTYL, an ancient flying Pokémon. Treat it well!",
+          ]
+        },
+        { requireFlag: 'got_old_amber',
+          lines: ["SCIENTIST: You already have the OLD AMBER! Take it to CINNABAR ISLAND for revival."] },
+        { default: true,
+          lines: ["SCIENTIST: We're studying fossils from the ancient world. These are incredibly rare specimens! Beat the GYM and come back."] },
+      ],
+    },
+    { id:'museum_aide_back', x:4, y:3, name:'Museum Aide', dir:'east',
+      dialogue:["AIDE: The dome and helix fossils come from MT. MOON. Trainers who venture deep enough may find one — but there can only be one of each per expedition!"] },
+  ],
+  signs: [
+    { x:3, y:1, text:"RESEARCH LAB\nAuthorized personnel only." },
+    { x:9, y:1, text:"OLD AMBER\nDNA of an extinct\nPOKéMON preserved inside." },
+  ],
+  warps: [
+    { x:5, y:5, dest:'pewter_museum', destX:5, destY:1, areaName:'Pewter Museum' },
+    { x:6, y:5, dest:'pewter_museum', destX:6, destY:1, areaName:'Pewter Museum' },
   ],
 };
 
@@ -1082,6 +1132,7 @@ const AREAS = {
   pewter_mart:      PEWTER_MART,
   pewter_gym:       PEWTER_GYM,
   pewter_museum:    PEWTER_MUSEUM,
+  pewter_museum_back: PEWTER_MUSEUM_BACK,
   route_22:         ROUTE_22,
   route_23:         ROUTE_23,
 };
