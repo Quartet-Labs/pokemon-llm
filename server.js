@@ -14,13 +14,10 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // ── Session store (#25) ───────────────────────────────────────────────────────
-// sessions: Map<sessionId, { id, token, label, state, actionLog, haltFlag,
-//                            createdAt, lastActionAt, rateLimitMs }>
 const sessions = new Map();
 const SESSIONS_FILE = process.env.SESSIONS_FILE || '/tmp/pokemon-sessions.json';
 const ACTION_RATE_LIMIT_MS = parseInt(process.env.ACTION_RATE_LIMIT_MS || '500');
 
-// Load persisted sessions on boot
 if (fs.existsSync(SESSIONS_FILE)) {
   try {
     const saved = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
@@ -28,40 +25,27 @@ if (fs.existsSync(SESSIONS_FILE)) {
       sessions.set(id, { actionLog: [], ...data });
     }
     console.log(`💾 Loaded ${sessions.size} session(s) from ${SESSIONS_FILE}`);
-  } catch (e) {
-    console.warn(`⚠ Failed to load sessions: ${e.message}`);
-  }
+  } catch (e) { console.warn(`⚠ Failed to load sessions: ${e.message}`); }
 }
 
-// Migrate legacy single-state file to default session
 const LEGACY_STATE_FILE = process.env.STATE_FILE || '/tmp/pokemon-state.json';
 if (!sessions.has('default') && fs.existsSync(LEGACY_STATE_FILE)) {
   try {
     const legacyState = JSON.parse(fs.readFileSync(LEGACY_STATE_FILE, 'utf8'));
-    sessions.set('default', {
-      id: 'default', token: null, label: 'Default',
-      state: legacyState, actionLog: [],
-      haltFlag: false, createdAt: Date.now(), lastActionAt: 0, rateLimitMs: 0,
-    });
-    console.log(`💾 Migrated legacy state to default session (turn ${legacyState.turn})`);
+    sessions.set('default', { id: 'default', token: null, label: 'Default', state: legacyState,
+      actionLog: [], haltFlag: false, createdAt: Date.now(), lastActionAt: 0, rateLimitMs: 0 });
+    console.log(`💾 Migrated legacy state to default session`);
   } catch {}
 }
 
-// Always ensure a default session exists (no auth, no rate limit, backwards compat)
 if (!sessions.has('default')) {
-  sessions.set('default', {
-    id: 'default', token: null, label: 'Default',
-    state: newGame(), actionLog: [],
-    haltFlag: false, createdAt: Date.now(), lastActionAt: 0, rateLimitMs: 0,
-  });
+  sessions.set('default', { id: 'default', token: null, label: 'Default', state: newGame(),
+    actionLog: [], haltFlag: false, createdAt: Date.now(), lastActionAt: 0, rateLimitMs: 0 });
 }
 
 function saveSessions() {
-  // actionLog is in-memory only (too large to serialize every call); omit it
   const obj = {};
-  for (const [id, s] of sessions) {
-    obj[id] = { ...s, actionLog: [] };
-  }
+  for (const [id, s] of sessions) obj[id] = { ...s, actionLog: [] };
   try { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj)); } catch (e) {
     console.warn(`⚠ Failed to save sessions: ${e.message}`);
   }
@@ -70,32 +54,82 @@ function saveSessions() {
 function mkId(bytes) { return crypto.randomBytes(bytes).toString('hex'); }
 
 function createSession({ seed, label } = {}) {
-  const id = mkId(4);           // 8-char public id
-  const token = mkId(16);       // 32-char secret token (#35)
-  const session = {
-    id, token, label: label || `Run ${id}`,
+  const id = mkId(4);
+  const token = mkId(16);
+  const session = { id, token, label: label || `Run ${id}`,
     state: newGame(seed !== undefined ? seed : undefined),
-    actionLog: [],
-    haltFlag: false,
-    createdAt: Date.now(),
-    lastActionAt: 0,
-    rateLimitMs: ACTION_RATE_LIMIT_MS,
-  };
+    actionLog: [], haltFlag: false, createdAt: Date.now(), lastActionAt: 0,
+    rateLimitMs: ACTION_RATE_LIMIT_MS };
   sessions.set(id, session);
   saveSessions();
-  // Notify all spectators of the new session
   broadcastAll({ event: 'session_created', session: sessionSummary(session) });
   return session;
 }
 
 function sessionSummary(s) {
-  return {
-    sessionId: s.id, label: s.label,
-    turn: s.state.turn, area: s.state.areaId,
-    badges: s.state.player?.badges ?? 0,
-    screen: s.state.screen, haltFlag: s.haltFlag,
+  return { sessionId: s.id, label: s.label, turn: s.state.turn, area: s.state.areaId,
+    badges: s.state.player?.badges ?? 0, screen: s.state.screen, haltFlag: s.haltFlag,
     createdAt: s.createdAt, lastActionAt: s.lastActionAt,
+    benchmarkId: s.benchmarkId || null };
+}
+
+// ── Benchmark store (#34) ──────────────────────────────────────────────────────
+const benchmarks = new Map();  // benchmarkId → BenchmarkResult
+const BENCHMARKS_FILE = process.env.BENCHMARKS_FILE || '/tmp/pokemon-benchmarks.json';
+
+if (fs.existsSync(BENCHMARKS_FILE)) {
+  try {
+    const saved = JSON.parse(fs.readFileSync(BENCHMARKS_FILE, 'utf8'));
+    for (const [id, data] of Object.entries(saved)) benchmarks.set(id, data);
+    console.log(`🏆 Loaded ${benchmarks.size} benchmark result(s)`);
+  } catch (e) { console.warn(`⚠ Failed to load benchmarks: ${e.message}`); }
+}
+
+function saveBenchmarks() {
+  try { fs.writeFileSync(BENCHMARKS_FILE, JSON.stringify(Object.fromEntries(benchmarks))); } catch {}
+}
+
+function createBenchmark({ model, seed, actionBudget, label }) {
+  const benchmarkId = 'bench_' + mkId(4);
+  const resolvedSeed = seed !== undefined ? (seed >>> 0) : Math.floor(Math.random() * 0x7FFFFFFF);
+  const resolvedBudget = Math.min(parseInt(actionBudget) || 2000, 10000);
+  const session = createSession({ seed: resolvedSeed, label: label || `${model || 'unknown'} · seed=${resolvedSeed}` });
+  session.benchmarkId = benchmarkId;
+  session.benchmarkBudget = resolvedBudget;
+  session.benchmarkActionsUsed = 0;
+  session.rateLimitMs = 0;  // benchmarks have no rate limit (automated)
+  const result = {
+    id: benchmarkId,
+    sessionId: session.id,
+    model: model || 'unknown',
+    seed: resolvedSeed,
+    actionBudget: resolvedBudget,
+    actionsUsed: 0,
+    badges: 0,
+    turnsToFirstBadge: null,
+    outcome: 'ongoing',  // 'ongoing' | 'badge_N' | 'budget_exhausted'
+    startedAt: Date.now(),
+    completedAt: null,
   };
+  benchmarks.set(benchmarkId, result);
+  saveBenchmarks();
+  return { session, result };
+}
+
+function completeBenchmark(session, outcome) {
+  if (!session.benchmarkId) return;
+  const result = benchmarks.get(session.benchmarkId);
+  if (!result || result.outcome !== 'ongoing') return;
+  result.actionsUsed = session.benchmarkActionsUsed || 0;
+  result.badges = session.state.player?.badges ?? 0;
+  result.outcome = outcome;
+  result.completedAt = Date.now();
+  if (outcome.startsWith('badge_') && result.turnsToFirstBadge === null) {
+    result.turnsToFirstBadge = result.actionsUsed;
+  }
+  saveBenchmarks();
+  broadcastAll({ event: 'benchmark_completed', result });
+  console.log(`🏆 Benchmark ${session.benchmarkId} completed: ${outcome} in ${result.actionsUsed} actions`);
 }
 
 // ── Auth & rate-limit helpers (#35) ─────────────────────────────────────────
@@ -106,11 +140,11 @@ function resolveSession(req) {
 }
 
 function checkAuth(req, res, session) {
-  if (!session.token) return true;  // null token = no auth (default session)
+  if (!session.token) return true;
   const auth = req.headers['authorization'] || '';
   const provided = auth.startsWith('Bearer ') ? auth.slice(7).trim() : (req.query.token || '');
   if (provided !== session.token) {
-    res.status(401).json({ error: 'Unauthorized. Pass Authorization: Bearer <token> (from POST /session).' });
+    res.status(401).json({ error: 'Unauthorized. Pass Authorization: Bearer <token> (from POST /session or POST /benchmark).' });
     return false;
   }
   return true;
@@ -157,8 +191,7 @@ function getMapSnapshot(state) {
     npcs: (area.npcs || []).map(n => ({ x: n.x, y: n.y, name: n.name })) };
 }
 
-// ── WebSocket broadcast ───────────────────────────────────────────────────────
-// Broadcast to clients subscribed to a specific session
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 function broadcast(sessionId, payload) {
   const msg = JSON.stringify({ sessionId, ...payload });
   wss.clients.forEach(c => {
@@ -168,77 +201,148 @@ function broadcast(sessionId, payload) {
   });
 }
 
-// Broadcast to ALL clients (for chat and session-list updates)
 function broadcastAll(payload) {
   const msg = JSON.stringify(payload);
   wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
 }
 
-// ── Anon name generator ────────────────────────────────────────────────────
 const ADJECTIVES = ['Brave','Swift','Calm','Bold','Keen','Wild','Wise','Zany','Odd','Cool'];
 const POKEMON_NAMES = ['Pikachu','Rattata','Pidgey','Eevee','Meowth','Geodude','Bulbasaur','Squirtle','Charmander','Spearow'];
 const usedNames = new Set();
 function anonName() {
   for (let i = 0; i < 100; i++) {
-    const name = ADJECTIVES[Math.floor(Math.random()*ADJECTIVES.length)]
-                + POKEMON_NAMES[Math.floor(Math.random()*POKEMON_NAMES.length)];
+    const name = ADJECTIVES[Math.floor(Math.random()*ADJECTIVES.length)] + POKEMON_NAMES[Math.floor(Math.random()*POKEMON_NAMES.length)];
     if (!usedNames.has(name)) { usedNames.add(name); return name; }
   }
   return 'Observer' + Math.floor(Math.random() * 9999);
 }
 
-const chatHistory = [];  // global chat across sessions
+const chatHistory = [];
 
 // ── REST API ────────────────────────────────────────────────────────────────
 
-// Create a new isolated session (#25)
 app.post('/session', (req, res) => {
   const { seed, label } = req.body || {};
   const session = createSession({ seed, label });
-  res.json({
-    sessionId: session.id,
-    token: session.token,
-    label: session.label,
-    rng_seed: session.state.rngSeed,
-    state: getView(session.state),
-    note: 'Keep your token secret. Pass it as: Authorization: Bearer <token> on /action and /reset.',
-  });
+  res.json({ sessionId: session.id, token: session.token, label: session.label,
+    rng_seed: session.state.rngSeed, state: getView(session.state),
+    note: 'Keep your token secret. Pass it as: Authorization: Bearer <token>' });
 });
 
-// List sessions (public info only — no tokens)
 app.get('/sessions', (req, res) => {
   res.json([...sessions.values()].map(sessionSummary));
 });
 
-// Get state for a session
+// ── Benchmark endpoints (#34) ───────────────────────────────────────────────────
+
+// Create a benchmark run
+app.post('/benchmark', (req, res) => {
+  const { model, seed, actionBudget, label } = req.body || {};
+  const { session, result } = createBenchmark({ model, seed, actionBudget, label });
+  res.json({
+    benchmarkId: result.id,
+    sessionId: session.id,
+    token: session.token,
+    model: result.model,
+    seed: result.seed,
+    actionBudget: result.actionBudget,
+    state: getView(session.state),
+    note: 'Play normally via POST /action?session=<sessionId>. Budget and badge detection are automatic.',
+    leaderboard: '/benchmarks',
+    replay: `GET /logs?session=${session.id}  (replay: newGame(${result.seed}) + action sequence)`,
+  });
+});
+
+// Leaderboard
+app.get('/benchmarks', (req, res) => {
+  let results = [...benchmarks.values()];
+  if (req.query.model) results = results.filter(r => r.model === req.query.model);
+  if (req.query.seed) results = results.filter(r => r.seed === parseInt(req.query.seed));
+  const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
+  // Sort: completed first, then by badges desc, then by actions used asc
+  results.sort((a, b) => {
+    if (a.outcome === 'ongoing' && b.outcome !== 'ongoing') return 1;
+    if (a.outcome !== 'ongoing' && b.outcome === 'ongoing') return -1;
+    if (b.badges !== a.badges) return b.badges - a.badges;
+    if (a.actionsUsed !== b.actionsUsed) return a.actionsUsed - b.actionsUsed;
+    return (a.startedAt || 0) - (b.startedAt || 0);
+  });
+  res.json({ total: results.length, results: results.slice(0, limit) });
+});
+
+// Single benchmark result
+app.get('/benchmarks/:id', (req, res) => {
+  const result = benchmarks.get(req.params.id);
+  if (!result) return res.status(404).json({ error: 'Benchmark not found.' });
+  res.json({
+    ...result,
+    replay: {
+      seed: result.seed,
+      instructions: `const { newGame, processAction } = require('./game/engine');` +
+        `\nlet state = newGame(${result.seed});` +
+        `\n// replay actions from GET /logs?session=${result.sessionId}`,
+      logs_url: `/logs?session=${result.sessionId}`,
+      spectate_url: `/?session=${result.sessionId}`,
+    },
+  });
+});
+
 app.get('/state', (req, res) => {
   const session = resolveSession(req);
-  if (!session) return res.status(404).json({ error: 'Session not found. Use POST /session or omit ?session for default.' });
+  if (!session) return res.status(404).json({ error: 'Session not found.' });
   res.json(getView(session.state));
 });
 
-// Submit action
 app.post('/action', (req, res) => {
   const session = resolveSession(req);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
   if (!checkAuth(req, res, session)) return;
   if (!checkRateLimit(req, res, session)) return;
-  if (session.haltFlag) {
-    return res.json({ halted: true, message: 'Run halted by spectator — stop playing.' });
+  if (session.haltFlag) return res.json({ halted: true, message: 'Run halted by spectator — stop playing.' });
+
+  // Benchmark budget check (#34)
+  if (session.benchmarkId) {
+    session.benchmarkActionsUsed = (session.benchmarkActionsUsed || 0) + 1;
+    if (session.benchmarkActionsUsed > session.benchmarkBudget) {
+      completeBenchmark(session, 'budget_exhausted');
+      return res.json({
+        budgetExhausted: true,
+        message: `Action budget of ${session.benchmarkBudget} exhausted — benchmark complete.`,
+        benchmarkId: session.benchmarkId,
+        result: benchmarks.get(session.benchmarkId),
+      });
+    }
   }
+
   const action = req.body;
   if (!action || !action.type) return res.status(400).json({ error: 'action.type is required' });
   try {
+    const prevBadges = session.state.player?.badges ?? 0;
     session.state = processAction(session.state, action);
     session.lastActionAt = Date.now();
     const view = getView(session.state);
+    const newBadges = view.player?.badges ?? 0;
+
+    // Badge milestone detection for benchmark scoring (#34)
+    if (session.benchmarkId && newBadges > prevBadges) {
+      const benchResult = benchmarks.get(session.benchmarkId);
+      if (benchResult) {
+        benchResult.badges = newBadges;
+        if (benchResult.turnsToFirstBadge === null) {
+          benchResult.turnsToFirstBadge = session.benchmarkActionsUsed;
+        }
+        // Complete on first badge for now (could extend to full-game runs)
+        completeBenchmark(session, `badge_${newBadges}`);
+      }
+    }
+
     broadcast(session.id, { event: 'state_update', state: view, map: getMapSnapshot(session.state), action });
     appendLog(session, {
-      ts: new Date().toISOString(),
-      driver: driverLabel(req),
-      action, area: view.area?.id, screen: view.screen,
+      ts: new Date().toISOString(), driver: driverLabel(req), action,
+      area: view.area?.id, screen: view.screen,
       log: view.log ? view.log.slice(-3) : [],
       party: (view.player?.party || []).map(p => ({ name: p.name, hp: p.hp, level: p.level })),
+      benchmark: session.benchmarkId ? { id: session.benchmarkId, action: session.benchmarkActionsUsed } : undefined,
     });
     saveSessions();
     res.json(view);
@@ -247,13 +351,18 @@ app.post('/action', (req, res) => {
   }
 });
 
-// Reset a session (only affects THIS session, not others)
 app.post('/reset', (req, res) => {
   const session = resolveSession(req);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
   if (!checkAuth(req, res, session)) return;
-  const seed = req.body?.seed;
+  if (session.benchmarkId) {
+    const result = benchmarks.get(session.benchmarkId);
+    if (result && result.outcome === 'ongoing') {
+      completeBenchmark(session, 'reset_abandoned');
+    }
+  }
   session.haltFlag = false;
+  const seed = req.body?.seed;
   appendLog(session, { ts: new Date().toISOString(), action: { type: 'reset', seed }, area: null, screen: null, log: ['— game reset —'], party: [] });
   session.state = newGame(seed);
   session.lastActionAt = 0;
@@ -263,7 +372,6 @@ app.post('/reset', (req, res) => {
   res.json(view);
 });
 
-// Halt endpoints
 app.get('/halt', (req, res) => {
   const session = resolveSession(req);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
@@ -283,7 +391,6 @@ app.post('/halt', (req, res) => {
   res.json({ halted: true, message: 'Run halted by spectator — stop playing.' });
 });
 
-// Action log for a session
 app.get('/logs', (req, res) => {
   const session = resolveSession(req);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
@@ -293,7 +400,6 @@ app.get('/logs', (req, res) => {
   res.json({ sessionId: session.id, total: log.length, returned: Math.min(limit, log.length), entries: log.slice(offset) });
 });
 
-// Map
 app.get('/map', (req, res) => {
   const session = resolveSession(req);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
@@ -304,59 +410,50 @@ app.get('/map', (req, res) => {
 
 app.get('/api-docs', (req, res) => res.json({
   description: 'Pokémon LLM — REST API reference',
+  benchmark: {
+    'POST /benchmark': 'Create a benchmark run. Body: {model, seed?, actionBudget?, label?}. Returns {benchmarkId, sessionId, token, seed, actionBudget}.',
+    'GET /benchmarks': 'Leaderboard. Sorted by badges desc, actionsUsed asc. Query: ?model=X&seed=N&limit=N.',
+    'GET /benchmarks/:id': 'Single result + replay instructions.',
+    scoring: 'Badges earned (higher better), then actions used to first badge (lower better).',
+    replay: 'newGame(seed) + replay action log from GET /logs?session=X → deterministic reproduction.',
+  },
   sessions: {
-    'POST /session': 'Create a new session. Body: {seed?, label?}. Returns: {sessionId, token, state, rng_seed}.',
-    'GET /sessions': 'List all active sessions (public info, no tokens).',
-    note: 'All endpoints accept ?session=<id> or X-Session-Id header. Omit for backwards-compat default session.',
+    'POST /session': 'Create session. Body: {seed?, label?}. Returns: {sessionId, token}.',
+    'GET /sessions': 'List all active sessions.',
   },
-  auth: {
-    note: 'Named sessions require Authorization: Bearer <token> on POST /action and POST /reset.',
-    'default session': 'No auth required (backwards compatible with existing drivers).',
-  },
-  rate_limiting: {
-    note: `POST /action is rate-limited to 1 action per ${ACTION_RATE_LIMIT_MS}ms per named session.`,
-    response: '429 with {retry_after_ms} on violation.',
-    default_session: 'No rate limit.',
-    override: 'Set ACTION_RATE_LIMIT_MS env var to change.',
-  },
+  auth: { note: 'Named/benchmark sessions require Authorization: Bearer <token> on write endpoints.' },
+  rate_limiting: { note: `500ms limit per named session (ACTION_RATE_LIMIT_MS). Benchmark sessions: no limit.` },
   endpoints: {
-    'GET /state': 'Current game state',
-    'POST /action': 'Submit one action. Returns {halted:true,message} if run is halted.',
-    'POST /reset': 'Reset the game. Body: {seed?} for a specific seed. Only resets the requested session.',
-    'GET /halt': '{halted: bool}',
-    'POST /halt': 'Body {} to halt, {clear:true} to resume.',
-    'GET /logs': 'Action log for session (?limit=N, max 5000)',
-    'GET /map': 'Current area tile map',
+    'GET /state': 'Game state (?session=X)',
+    'POST /action': 'Submit action. Returns {budgetExhausted:true} when benchmark budget runs out.',
+    'POST /reset': 'Reset (?session=X). Body: {seed?}. Only resets the specified session.',
+    'GET /halt': 'Halt status. POST /halt to halt, {clear:true} to resume.',
+    'GET /logs': 'Action log (?session=X&limit=N)',
+    'GET /map': 'Area tile map (?session=X)',
+    'GET /leaderboard.html': 'Visual leaderboard page',
   },
   action_types: {
-    choose_starter: { species: 'bulbasaur|charmander|squirtle' },
-    move: { direction: 'north|south|east|west' },
-    talk: {}, battle_move: { move_index: '0-3' },
-    run: {}, throw_ball: { ball: 'pokeball|great_ball' },
-    use_item: { item: 'potion', target_index: '0-5' },
-    switch: { party_index: '0-5' },
+    choose_starter: { species: 'bulbasaur|charmander|squirtle' }, move: { direction: 'north|south|east|west' },
+    talk: {}, battle_move: { move_index: '0-3' }, run: {}, throw_ball: { ball: 'pokeball|great_ball' },
+    use_item: { item: 'potion', target_index: '0-5' }, switch: { party_index: '0-5' },
   },
 }));
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 wss.on('connection', (ws, req) => {
   ws._name = anonName();
-
-  // Subscribe to a session via URL: ws://host/?session=X
-  const url = new URL(req.url || '/', `http://localhost`);
+  const url = new URL(req.url || '/', 'http://localhost');
   const requestedId = url.searchParams.get('session') || 'default';
   ws._sessionId = sessions.has(requestedId) ? requestedId : 'default';
   const session = sessions.get(ws._sessionId);
 
   ws.send(JSON.stringify({
-    event: 'connected',
-    sessionId: ws._sessionId,
+    event: 'connected', sessionId: ws._sessionId,
     sessions: [...sessions.values()].map(sessionSummary),
+    benchmarks: [...benchmarks.values()].slice(-20),  // last 20 for UI
     state: session ? getView(session.state) : null,
     map: session ? getMapSnapshot(session.state) : null,
-    myName: ws._name,
-    chatHistory,
-    halted: session?.haltFlag ?? false,
+    myName: ws._name, chatHistory, halted: session?.haltFlag ?? false,
   }));
 
   const joinMsg = { ts: Date.now(), user: '—', text: `${ws._name} joined` };
@@ -365,7 +462,6 @@ wss.on('connection', (ws, req) => {
 
   ws.on('message', (raw) => {
     let data; try { data = JSON.parse(raw); } catch { return; }
-
     if (data.type === 'chat' && typeof data.text === 'string') {
       const text = data.text.trim().slice(0, 200);
       if (!text) return;
@@ -373,19 +469,12 @@ wss.on('connection', (ws, req) => {
       chatHistory.push(msg); if (chatHistory.length > 100) chatHistory.shift();
       broadcastAll({ event: 'chat', msg });
     }
-
-    // Switch session subscription without reconnecting
     if (data.type === 'subscribe' && typeof data.sessionId === 'string') {
       const s = sessions.get(data.sessionId);
       if (!s) { ws.send(JSON.stringify({ event: 'error', message: 'Session not found.' })); return; }
       ws._sessionId = data.sessionId;
-      ws.send(JSON.stringify({
-        event: 'subscribed',
-        sessionId: data.sessionId,
-        state: getView(s.state),
-        map: getMapSnapshot(s.state),
-        halted: s.haltFlag,
-      }));
+      ws.send(JSON.stringify({ event: 'subscribed', sessionId: data.sessionId,
+        state: getView(s.state), map: getMapSnapshot(s.state), halted: s.haltFlag }));
     }
   });
 
@@ -397,9 +486,8 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// ── Start ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🎮 Pokémon LLM running on http://localhost:${PORT}`);
-  console.log(`📊 ${sessions.size} session(s) loaded. Default session requires no auth.`);
+  console.log(`📊 ${sessions.size} session(s), 🏆 ${benchmarks.size} benchmark result(s)`);
 });

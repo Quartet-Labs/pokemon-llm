@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pokémon LLM — Benchmark Leaderboard</title>
+<meta http-equiv="refresh" content="30">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0a0a; color: #e0e0e0; font-family: 'Courier New', monospace; padding: 24px; }
+h1 { color: #ffcc00; font-size: 1.4rem; letter-spacing: 2px; margin-bottom: 4px; }
+.sub { color: #555; font-size: .72rem; margin-bottom: 24px; }
+a { color: #aaffaa; }
+
+.section { margin-bottom: 32px; }
+.section h2 { color: #ffcc00; font-size: .9rem; border-bottom: 1px solid #222; padding-bottom: 4px; margin-bottom: 12px; }
+
+table { width: 100%; border-collapse: collapse; font-size: .74rem; }
+th { background: #111; color: #888; text-align: left; padding: 6px 10px; border-bottom: 1px solid #222; }
+td { padding: 6px 10px; border-bottom: 1px solid #1a1a1a; }
+tr:hover td { background: #111; }
+
+.badge-cell { color: #ffcc00; font-weight: bold; }
+.ongoing { color: #666; font-style: italic; }
+.complete { color: #44dd44; }
+.exhausted { color: #dd4444; }
+.rank-1 td:first-child { color: #ffd700; }
+.rank-2 td:first-child { color: #c0c0c0; }
+.rank-3 td:first-child { color: #cd7f32; }
+
+.pill { display:inline-block; background:#1a2a1a; border:1px solid #2a4a2a; border-radius:8px; padding:1px 8px; color:#aaffaa; font-size:.65rem; margin-left:4px; }
+.pill.red { background:#2a0000; border-color:#4a1111; color:#ff8888; }
+.pill.gray { background:#1a1a1a; border-color:#333; color:#666; }
+
+.filter-bar { display:flex; gap:12px; margin-bottom:16px; align-items:center; font-size:.74rem; color:#888; }
+.filter-bar select, .filter-bar input {
+  background:#111; border:1px solid #333; color:#ccc; padding:4px 8px;
+  border-radius:3px; font-family:inherit; font-size:.72rem;
+}
+</style>
+</head>
+<body>
+<h1>🏆 POKÉMON LLM — BENCHMARK LEADERBOARD</h1>
+<div class="sub">Auto-refreshes every 30s · <a href="/">spectator view</a> · <a href="/api-docs">API docs</a></div>
+
+<div class="section">
+  <h2>COMPLETED RUNS</h2>
+  <div class="filter-bar">
+    Filter: model <input id="model-filter" placeholder="all" style="width:160px">
+    seed <input id="seed-filter" placeholder="all" style="width:100px">
+    <button onclick="applyFilter()" style="background:#1a3a1a;border:1px solid #2a5a2a;color:#aaffaa;padding:4px 12px;cursor:pointer;border-radius:3px;font-family:inherit">Apply</button>
+  </div>
+  <table id="leaderboard-table">
+    <thead><tr>
+      <th>#</th><th>Model</th><th>Seed</th><th>Badges</th>
+      <th>Actions to Badge 1</th><th>Total Actions</th><th>Outcome</th><th>Replay</th>
+    </tr></thead>
+    <tbody id="lb-body"><tr><td colspan="8" style="color:#555;padding:20px">Loading...</td></tr></tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>ONGOING RUNS</h2>
+  <table>
+    <thead><tr><th>Session</th><th>Model</th><th>Seed</th><th>Budget</th><th>Actions Used</th><th>Badges</th><th>Area</th><th>Spectate</th></tr></thead>
+    <tbody id="ongoing-body"><tr><td colspan="8" style="color:#555;padding:20px">Loading...</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+let allResults = [];
+
+async function load() {
+  const [lbRes, sessRes] = await Promise.all([
+    fetch('/benchmarks?limit=200').then(r => r.json()),
+    fetch('/sessions').then(r => r.json()),
+  ]);
+  allResults = lbRes.results || [];
+  renderLeaderboard(allResults);
+  renderOngoing(sessRes || []);
+}
+
+function outcomeLabel(r) {
+  if (r.outcome === 'ongoing') return '<span class="ongoing">ongoing</span>';
+  if (r.outcome === 'budget_exhausted') return '<span class="exhausted">budget exhausted</span>';
+  if (r.outcome === 'reset_abandoned') return '<span class="exhausted">abandoned</span>';
+  if (r.outcome.startsWith('badge_')) return `<span class="complete">${r.outcome.replace('_',' ')}✓</span>`;
+  return r.outcome;
+}
+
+function renderLeaderboard(results) {
+  const completed = results.filter(r => r.outcome !== 'ongoing');
+  const tbody = document.getElementById('lb-body');
+  if (!completed.length) { tbody.innerHTML = '<tr><td colspan="8" style="color:#555;padding:16px">No completed runs yet.</td></tr>'; return; }
+  tbody.innerHTML = completed.map((r, i) => `
+    <tr class="rank-${i+1}">
+      <td>${i+1}</td>
+      <td>${r.model}<span class="pill">${r.id}</span></td>
+      <td>${r.seed}</td>
+      <td class="badge-cell">${r.badges} ★</td>
+      <td>${r.turnsToFirstBadge ?? '—'}</td>
+      <td>${r.actionsUsed}</td>
+      <td>${outcomeLabel(r)}</td>
+      <td><a href="/?session=${r.sessionId}">watch</a> · <a href="/benchmarks/${r.id}">json</a></td>
+    </tr>`).join('');
+}
+
+function renderOngoing(sessions) {
+  const tbody = document.getElementById('ongoing-body');
+  const benchSessions = sessions.filter(s => s.benchmarkId);
+  if (!benchSessions.length) { tbody.innerHTML = '<tr><td colspan="8" style="color:#555;padding:16px">No active benchmark runs.</td></tr>'; return; }
+  tbody.innerHTML = benchSessions.map(s => {
+    const result = allResults.find(r => r.sessionId === s.sessionId);
+    return `<tr>
+      <td>${s.sessionId}</td>
+      <td>${result?.model || '?'}</td>
+      <td>${result?.seed ?? '?'}</td>
+      <td>${result?.actionBudget ?? '?'}</td>
+      <td>${result?.actionsUsed ?? s.turn}</td>
+      <td class="badge-cell">${s.badges}</td>
+      <td>${s.area || '?'}</td>
+      <td><a href="/?session=${s.sessionId}">spectate</a></td>
+    </tr>`;
+  }).join('');
+}
+
+function applyFilter() {
+  const model = document.getElementById('model-filter').value.trim().toLowerCase();
+  const seed = document.getElementById('seed-filter').value.trim();
+  let filtered = allResults;
+  if (model) filtered = filtered.filter(r => r.model.toLowerCase().includes(model));
+  if (seed) filtered = filtered.filter(r => String(r.seed) === seed);
+  renderLeaderboard(filtered);
+}
+
+load();
+</script>
+</body>
+</html>
