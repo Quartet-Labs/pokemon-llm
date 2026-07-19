@@ -637,12 +637,66 @@ function processBattleAction(state, action, log) {
   // #12: Boulder Badge → +12.5% ATK on player's physical moves
   const playerBadgeBoost = state.player.flags?.badge_boulder_badge ? 1.125 : 1;
 
-  // Pick an enemy move with PP remaining, or Struggle
+  // Pick an enemy move with PP remaining using type-aware scoring (#30)
   function selectEnemyMove() {
     const en = getEnemy();
+    const active = getActive();
+
+    // Collect moves with PP remaining (fall back to legacy random if no PP tracking)
     if (!en.pp) return enemyMove(en);
-    const available = en.moves.filter(mv => (en.pp[mv] ?? 1) > 0);
-    return available.length ? available[Math.floor(Math.random() * available.length)] : 'struggle';
+    const moves = en.moves.filter(mv => (en.pp[mv] ?? 1) > 0);
+    if (!moves.length) return 'struggle';
+
+    // Resolve defender types (array of lowercase strings)
+    const playerTypes = POKEMON[active.species]?.type || ['normal'];
+
+    // Resolve attacker types for STAB
+    const enemyTypes = POKEMON[en.species]?.type || ['normal'];
+
+    // Score each available move
+    const scores = moves.map(mvName => {
+      const mv = MOVES[mvName];
+      if (!mv || mv.cat === 'status' || !mv.power) {
+        // Status moves: give a modest flat score — useful if nothing else works,
+        // but deprioritised vs damaging moves (trainer AI is aggressive).
+        // Note: if ALL of the enemy's damaging moves score 0x effectiveness here,
+        // a future improvement could trigger a Pokemon switch instead.
+        return { mv: mvName, score: 20 };
+      }
+
+      // Base score from move power
+      let score = mv.power;
+
+      // Type effectiveness vs player's active Pokemon
+      const eff = getEffectiveness(mv.type, playerTypes);
+      score *= eff;
+
+      // STAB bonus (Same-Type Attack Bonus)
+      if (enemyTypes.includes(mv.type)) score *= 1.5;
+
+      // KO weight: if the move could finish the player's active Pokemon, heavily prefer it
+      if (score >= active.currentHp) score *= 2;
+
+      return { mv: mvName, score };
+    });
+
+    // Sort descending by score
+    scores.sort((a, b) => b.score - a.score);
+
+    // 70% pick the best move; 30% weighted-random among top 3 to keep AI beatable
+    const r = roll(10);
+    if (r <= 7 || scores.length === 1) return scores[0].mv;
+
+    const pool = scores.slice(0, Math.min(3, scores.length));
+    const totalScore = pool.reduce((s, x) => s + x.score, 0);
+    // Fall back to best move if all scores are zero (e.g. full immunity)
+    if (totalScore <= 0) return scores[0].mv;
+    let rnd = roll(Math.ceil(totalScore)) - 1;
+    for (const entry of pool) {
+      rnd -= entry.score;
+      if (rnd <= 0) return entry.mv;
+    }
+    return pool[0].mv;
   }
 
   // Core attack function used by player and enemy
@@ -932,19 +986,48 @@ function processBattleAction(state, action, log) {
   if (type === 'use_item') {
     const active = getActive();
     const enemy  = getEnemy();
-    const { item, target_index = battle.playerPartyIndex } = action;
-    const target = state.player.party[target_index];
+    const { item, target_index: targetIdx = battle.playerPartyIndex } = action;
+    const target = state.player.party[targetIdx];
     if (!target) { state.message = 'No Pokémon at that slot.'; return state; }
-    if (item === 'potion' && state.player.bag.potion > 0) {
-      const healed = Math.min(20, target.maxHp - target.currentHp);
-      target.currentHp += healed;
-      state.player.bag.potion--;
-      msgs.push(`Used POTION on ${target.name}. +${healed} HP.`);
+
+    const bag = state.player.bag;
+    const itemName = ITEM_NAMES[item] || item;
+    let used = false;
+
+    if ((item === 'potion' || item === 'super_potion') && bag[item] > 0) {
+      const heal = item === 'potion' ? 20 : 50;
+      if (target.currentHp > 0) {
+        const healed = Math.min(heal, target.maxHp - target.currentHp);
+        target.currentHp += healed;
+        bag[item]--;
+        msgs.push(`Used ${itemName} on ${target.name}. +${healed} HP.`);
+        used = true;
+      }
+    } else if (item === 'antidote' && bag.antidote > 0 && target.status === 'poison') {
+      target.status = null;
+      bag.antidote--;
+      msgs.push(`Used Antidote on ${target.name}. Cured poison!`);
+      used = true;
+    } else if (item === 'paralyze_heal' && bag.paralyze_heal > 0 && target.status === 'paralysis') {
+      target.status = null;
+      bag.paralyze_heal--;
+      msgs.push(`Used Parlyz Heal on ${target.name}. Cured paralysis!`);
+      used = true;
+    } else if (item === 'full_heal' && bag.full_heal > 0 && (target.status || target.confused)) {
+      const cured = target.status || 'confusion';
+      target.status = null; target.statusTurns = 0;
+      target.confused = false; target.confusedTurns = 0;
+      bag.full_heal--;
+      msgs.push(`Used Full Heal on ${target.name}. Cured ${cured}!`);
+      used = true;
+    }
+
+    if (used) {
       doAttack(enemy, selectEnemyMove(), active, false);
       checkFaint();
       state.message = msgs.join(' '); msgs.forEach(log);
     } else {
-      state.message = `Can't use ${item}.`;
+      state.message = `Can't use ${itemName} right now. Check your bag and Pokémon status.`;
     }
     return state;
   }
@@ -1033,8 +1116,8 @@ function getView(state) {
       },
       // #5: no throw_ball in trainer battles
       available_actions: isTrainer
-        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion, target_index: 0-5)', 'switch (party_index: 0-5)']
-        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: pokeball|great_ball)', 'use_item (item: potion, target_index: 0-5)', 'switch (party_index: 0-5)'],
+        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)']
+        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
     };
   }
   if (state.dialogue) {
