@@ -321,7 +321,7 @@ const POKEMON = {
                 moves:["teleport"] },
 
   kadabra:    { id:64, name:"KADABRA",    type:["psychic"],        hp:40, atk:35, def:30, spd:105,spc:120, baseExp:145, growthRate:'medium_slow', catchRate:100,
-                evolvesTo:{ species:'alakazam', trade:true },
+                evolvesTo:{ species:'alakazam', level:36 }, // [B3] no link-trade; level substitute
                 learnset:{ 1:['teleport','confusion'], 16:['disable'], 20:['psybeam'], 27:['recover'], 31:['psywave'], 38:['amnesia'], 42:['psychic'], 48:['reflect'] },
                 moves:["teleport","confusion","disable","psybeam"] },
 
@@ -336,7 +336,7 @@ const POKEMON = {
                 moves:["karate chop","low kick","leer","focus energy"] },
 
   machoke:    { id:67, name:"MACHOKE",    type:["fighting"],       hp:80, atk:100,def:70, spd:45, spc:50,  baseExp:146, growthRate:'medium_slow', catchRate:90,
-                evolvesTo:{ species:'machamp', trade:true },
+                evolvesTo:{ species:'machamp', level:36 }, // [B3] no link-trade; level substitute
                 learnset:{ 1:['karate chop','low kick','leer','focus energy'], 39:['seismic toss'], 46:['submission'] },
                 moves:["karate chop","seismic toss","leer","submission"] },
 
@@ -378,7 +378,7 @@ const POKEMON = {
                 moves:["tackle","defense curl","rock throw","earthquake"] },
 
   graveler:   { id:75, name:"GRAVELER",   type:["rock","ground"],  hp:55, atk:95, def:115,spd:35, spc:45,  baseExp:134, growthRate:'medium_fast', catchRate:120,
-                evolvesTo:{ species:'golem', trade:true },
+                evolvesTo:{ species:'golem', level:36 }, // [B3] no link-trade; level substitute
                 // [B2] Inherits all Geodude moves by Lv 25; Harden/Earthquake/Explosion corrected levels
                 learnset:{ 1:['tackle','defense curl','rock throw','self destruct'], 26:['harden'], 31:['earthquake'], 36:['explosion'] },
                 moves:["tackle","defense curl","rock throw","earthquake"] },
@@ -471,7 +471,7 @@ const POKEMON = {
                 moves:["lick","confuse ray","night shade","hypnosis"] },
 
   haunter:    { id:93, name:"HAUNTER",    type:["ghost","poison"], hp:45, atk:50, def:45, spd:95, spc:115, baseExp:126, growthRate:'medium_slow', catchRate:90,
-                evolvesTo:{ species:'gengar', trade:true },
+                evolvesTo:{ species:'gengar', level:36 }, // [B3] no link-trade; level substitute
                 learnset:{ 1:['lick','confuse ray','night shade','hypnosis'] },
                 moves:["lick","confuse ray","night shade","hypnosis"] },
 
