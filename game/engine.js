@@ -321,7 +321,8 @@ function makePokemon(speciesKey, level, opts = {}) {
     // #22: Bide multi-turn state
     bideState: null,       // { turnsLeft, damageAccum } while charging
     // #23: Bind/Wrap multi-turn state
-    boundState: null,      // { turnsLeft } while trapped
+    boundState: null,      // { turnsLeft, dmgPerTurn } while trapped
+    trappingState: null,   // [A8] { move, turnsLeft } while user is locked into a trapping move
     // [C8] Two-turn move charging state (Fly/Dig/Solar Beam/Skull Bash/Razor Wind/Sky Attack)
     chargingMove: null,   // null | { move: string, invulnerable: bool }
     // [C9] Hyper Beam recharge — must skip next turn after use
@@ -358,6 +359,7 @@ function resetVolatileState(pokemon) {
   pokemon.confused = false; pokemon.confusedTurns = 0;
   pokemon.flinched = false;
   pokemon.boundState = null;
+  pokemon.trappingState = null;
   pokemon.bideState = null;
   pokemon.recharging = false;
   pokemon.toxicCounter = 0;
@@ -552,16 +554,24 @@ function applyStatusEnd(pokemon, opponent) {
       }
     }
   }
-  // #23: Bind/Wrap — deal 1/16 per turn, count down, free when done
+  // #23 [A8] Bind/Wrap — deal repeated initial-hit damage per turn, count down, free when done
   if (pokemon.boundState) {
     pokemon.boundState.turnsLeft--;
     if (pokemon.boundState.turnsLeft <= 0) {
       pokemon.boundState = null;
       msgs.push(`${pokemon.name} was freed from the bind!`);
     } else {
-      const dmg = Math.max(1, Math.floor(pokemon.maxHp / 16));
+      // [A8] Use stored initial damage (not 1/16 chip)
+      const dmg = Math.max(1, pokemon.boundState.dmgPerTurn ?? Math.floor(pokemon.maxHp / 16));
       pokemon.currentHp = Math.max(0, pokemon.currentHp - dmg);
       msgs.push(`${pokemon.name} is hurt by the bind! (-${dmg} HP)`);
+    }
+  }
+  // [A8] Trapping lock-in — decrement on the ATTACKER's side
+  if (pokemon.trappingState) {
+    pokemon.trappingState.turnsLeft--;
+    if (pokemon.trappingState.turnsLeft <= 0) {
+      pokemon.trappingState = null;
     }
   }
   // [A12] Toxic — escalating N/16 damage per turn; counter already incremented above if leechSeeded
@@ -782,6 +792,8 @@ function enemyMove(enemy) {
 
 // [A10] Wild Pokémon move selector — uniform random (Gen I behaviour)
 function selectWildMove(enemy) {
+  // [A8] Trapping lock-in: must keep using the trap move
+  if (enemy.trappingState) return enemy.trappingState.move;
   const moves = (enemy.moves || []).filter(mv => (enemy.pp?.[mv] ?? 1) > 0);
   if (!moves.length) return 'struggle';
   return moves[roll(moves.length) - 1];
@@ -2010,6 +2022,9 @@ function processBattleAction(state, action, log) {
     const en = getEnemy();
     const active = getActive();
 
+    // [A8] Trapping lock-in: must keep using the trap move
+    if (en.trappingState) return en.trappingState.move;
+
     // Collect moves with PP remaining (fall back to legacy random if no PP tracking)
     if (!en.pp) return enemyMove(en);
     const moves = en.moves.filter(mv => (en.pp[mv] ?? 1) > 0);
@@ -2077,6 +2092,21 @@ function processBattleAction(state, action, log) {
       msgs.push(`${attacker.name}'s ${mvName.toUpperCase()} is disabled!`);
       return;
     }
+
+    // [A8] Trapping follow-up: if attacker is locked in AND defender is already bound,
+    // skip the full damage path — chip via applyStatusEnd handles it
+    if (attacker.trappingState && attacker.trappingState.move === mvName && defender.boundState) {
+      // Deduct PP (still costs PP each turn)
+      if (mvName !== 'struggle') {
+        if (!attacker.pp) attacker.pp = {};
+        if ((attacker.pp[mvName] ?? 1) > 0) attacker.pp[mvName]--;
+      }
+      attacker.lastMoveUsed = mvName;
+      msgs.push(`${attacker.name} keeps using ${mvName.toUpperCase()}!`);
+      return;
+    }
+
+    let lastBindDmg = 0;  // [A8] capture damage for dmgPerTurn
 
     // [C11] Thrash/Petal Dance lock-in — override move selection if rampaging
     if (attacker.lockinState) {
@@ -2295,6 +2325,7 @@ function processBattleAction(state, action, log) {
       const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
       const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
       defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      lastBindDmg = dmg;  // [A8] save for trapping setup
       // [C7/H7] Counter: track last physical damage received + move type for type restriction
       const mvCat = MOVES[mvName]?.cat;
       if (mvCat === 'physical') {
@@ -2334,10 +2365,20 @@ function processBattleAction(state, action, log) {
       msgs.push(`${attacker.name} used ${mvName.toUpperCase()}!`);
       msgs.push(...applyMoveEffect(mvName, defender, attacker));
     }
-    // #23: Bind/Wrap — trap if move has bind effect and target not already bound
+    // #23 [A8] Bind/Wrap — full Gen I partial-trapping implementation
     if (mv?.effect?.bind && !defender.boundState) {
-      defender.boundState = { turnsLeft: 2 + roll(3) };  // 2-4 turns
-      msgs.push(`${defender.name} was bound!`);
+      // Ghost immunity: Wrap/Bind doesn't affect Ghost types
+      if (defender.type.includes('ghost')) {
+        msgs.push(`It had no effect on ${defender.name}!`);
+      } else {
+        // Duration distribution: 2/3/4/5 turns at 3/3/1/1 probability (out of 8)
+        const r = roll(8);
+        const turns = r <= 3 ? 2 : r <= 6 ? 3 : r === 7 ? 4 : 5;
+        defender.boundState = { turnsLeft: turns, dmgPerTurn: Math.max(1, lastBindDmg) };
+        // [A8] Lock the attacker into the trapping move for the same duration
+        attacker.trappingState = { move: mvName, turnsLeft: turns };
+        msgs.push(`${defender.name} was bound!`);
+      }
     }
   }
 
@@ -2481,7 +2522,12 @@ function processBattleAction(state, action, log) {
     } else {
       // Normal turn — clear any lingering glitch invulnerability
       active.glitchInvulnerable = false;
-      moveName = active.moves[action.move_index ?? 0];
+      // [A8] Player lock-in: if trapping, override move choice
+      if (active.trappingState) {
+        moveName = active.trappingState.move;
+      } else {
+        moveName = active.moves[action.move_index ?? 0];
+      }
     }
     if (!moveName) { state.message = 'Invalid move index (0-3).'; return state; }
     battle.turn++;
@@ -2875,6 +2921,7 @@ function getView(state) {
         confused: active.confused || undefined,
         biding: active.bideState ? `charging (${active.bideState.turnsLeft} turn(s) left)` : undefined,
         bound: active.boundState ? `bound (${active.boundState.turnsLeft} turn(s) left)` : undefined,
+        trapping: active.trappingState ? `locked in (${active.trappingState.move}, ${active.trappingState.turnsLeft} turn(s) left)` : undefined,
         // #15: show PP per move
         moves: active.moves.map((m,i) => ({
           index: i,
