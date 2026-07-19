@@ -133,6 +133,8 @@ const VIRIDIAN_CITY = {
       dialogue:["That old man sure loves his coffee... He's always dozing off there."] },
     { id:'gym_sign_npc', x:17, y:4, name:'Youngster', dir:'south',
       dialogue:["The VIRIDIAN GYM is closed. The leader has been away for quite some time..."] },
+    { id:'viridian_mart_clerk', x:19, y:10, name:'POKé MART Clerk', dir:'south',
+      dialogue:["Welcome to the VIRIDIAN CITY POKé MART! We stock Poké Balls (₽200), Potions (₽300), Antidotes (₽100), and Parlyz Heals (₽200). Use mart_view for the catalog, mart_buy to purchase!"] },
   ],
   signs: [
     { x:8,  y:10, text:"VIRIDIAN CITY\nThe Eternally Green Paradise." },
@@ -281,6 +283,8 @@ const PEWTER_CITY = {
       dialogue:["The PEWTER MUSEUM of SCIENCE is great! We have a fossilized OLD AMBER on display — they say it contains the DNA of an ancient POKéMON!"] },
     { id:'flint_pewter', x:10, y:21, name:'FLINT', dir:'north',
       dialogue:["I'm FLINT! I sell rocks for a living... Business isn't going so well. Have you beaten BROCK yet? He's my son, you know."] },
+    { id:'pewter_mart_clerk', x:6, y:13, name:'POKé MART Clerk', dir:'south',
+      dialogue:["Welcome to the PEWTER CITY POKé MART! We carry Poké Balls (₽200), Great Balls (₽600), Potions (₽300), Super Potions (₽700), and Antidotes (₽100). Use mart_view for the catalog, mart_buy to purchase!"] },
   ],
   signs: [
     { x:10, y:22, text:"PEWTER CITY\nA Stone Gray City." },
