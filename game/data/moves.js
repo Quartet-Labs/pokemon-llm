@@ -14,7 +14,7 @@ const MOVES = {
   "leer":          { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: { stat: "def", target: "enemy", stages: -1 } },
   "quick attack":  { power: 40,  acc: 100, pp: 30, type: "normal",   cat: "physical", effect: { priority: 1 } },
   "hyper fang":    { power: 80,  acc: 90,  pp: 15, type: "normal",   cat: "physical", effect: { status: "flinch", chance: 10 } },
-  "pay day":       { power: 40,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: null },
+  "pay day":       { power: 40,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: { pay_day: true } },
   "fury attack":   { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: { multi_hit: [2,5] } },
   // Whirlwind: flee effect ends wild battles (trainer battles: fails)
   "whirlwind":     { power: 0,   acc: 85,  pp: 20, type: "normal",   cat: "status",   effect: { flee: "wild" } },
@@ -47,17 +47,18 @@ const MOVES = {
   "body slam":     { power: 85,  acc: 100, pp: 15, type: "normal",   cat: "physical", effect: { status: "paralysis", chance: 30 } },
   "wrap":          { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: { bind: true } },
   "take down":     { power: 90,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: { recoil: 4 } },
-  "thrash":        { power: 90,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: null },
+  "thrash":        { power: 90,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: { lockin: true } },
   "double edge":   { power: 100, acc: 100, pp: 15, type: "normal",   cat: "physical", effect: { recoil: 4 } },
   "roar":          { power: 0,   acc: 100, pp: 20, type: "normal",   cat: "status",   effect: { flee: "wild" } },
   "sing":          { power: 0,   acc: 55,  pp: 15, type: "normal",   cat: "status",   effect: { status: "sleep", chance: 100 } },
-  "sonic boom":    { power: 1,   acc: 90,  pp: 20, type: "normal",   cat: "special",  effect: { fixed_damage: 20 } },
+  "sonic boom":    { power: 1,   acc: 90,  pp: 20, type: "normal",   cat: "physical", effect: { fixed_damage: 20 } },
   "disable":       { power: 0,   acc: 55,  pp: 20, type: "normal",   cat: "status",   effect: { disable: true } },
   "hydro pump":    { power: 120, acc: 80,  pp: 5,  type: "water",    cat: "special",  effect: null },
   "psybeam":       { power: 65,  acc: 100, pp: 20, type: "psychic",  cat: "special",  effect: { status: "confusion", chance: 10 } },
   "bubble beam":   { power: 65,  acc: 100, pp: 20, type: "water",    cat: "special",  effect: { stat: "spd", target: "enemy", stages: -1, statChance: 33 } },
   "aurora beam":   { power: 65,  acc: 100, pp: 20, type: "ice",      cat: "special",  effect: { stat: "atk", target: "enemy", stages: -1, statChance: 33 } },
-  "hyper beam":    { power: 150, acc: 90,  pp: 5,  type: "normal",   cat: "special",  effect: { recharge: true } },
+  // [C14] Hyper Beam: Normal type → Physical in Gen I
+  "hyper beam":    { power: 150, acc: 90,  pp: 5,  type: "normal",   cat: "physical", effect: { recharge: true } },
   "drill peck":    { power: 80,  acc: 100, pp: 20, type: "flying",   cat: "physical", effect: null },
   "submission":    { power: 80,  acc: 80,  pp: 25, type: "fighting", cat: "physical", effect: { recoil: 4 } },
   "low kick":      { power: 50,  acc: 90,  pp: 20, type: "fighting", cat: "physical", effect: { status: "flinch", chance: 30 } },
@@ -74,9 +75,10 @@ const MOVES = {
   "psywave":       { power: 1,   acc: 80,  pp: 15, type: "psychic",  cat: "special",  effect: { psywave: true } },
   "splash":        { power: 0,   acc: 100, pp: 40, type: "normal",   cat: "status",   effect: null },
   "acid armor":    { power: 0,   acc: 100, pp: 40, type: "poison",   cat: "status",   effect: { stat: "def", target: "self", stages: 2 } },
-  "waterfall":     { power: 80,  acc: 100, pp: 15, type: "water",    cat: "physical", effect: null },
-  "clamp":         { power: 35,  acc: 75,  pp: 10, type: "water",    cat: "physical", effect: { bind: true } },
-  "swift":         { power: 60,  acc: 100, pp: 20, type: "normal",   cat: "special",  effect: { always_hit: true } },
+  // [C14] Waterfall, Clamp: Water type → Special in Gen I
+  "waterfall":     { power: 80,  acc: 100, pp: 15, type: "water",    cat: "special",  effect: null },
+  "clamp":         { power: 35,  acc: 75,  pp: 10, type: "water",    cat: "special",  effect: { bind: true } },
+  "swift":         { power: 60,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: { always_hit: true } },
   "skull bash":    { power: 100, acc: 100, pp: 15, type: "normal",   cat: "physical", effect: null },
   "spike cannon":  { power: 20,  acc: 100, pp: 15, type: "normal",   cat: "physical", effect: { multi_hit: [2,5] } },
   "constrict":     { power: 10,  acc: 100, pp: 35, type: "normal",   cat: "physical", effect: { stat: "spd", target: "enemy", stages: -1, statChance: 33 } },
@@ -85,11 +87,13 @@ const MOVES = {
   "soft boiled":   { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: { heal: 2 } },
   "high jump kick":{ power: 85,  acc: 90,  pp: 20, type: "fighting", cat: "physical", effect: { crash: 1 } },
   "lick":          { power: 20,  acc: 100, pp: 30, type: "ghost",    cat: "physical", effect: { status: "paralysis", chance: 30 } },
-  "smog":          { power: 20,  acc: 70,  pp: 20, type: "poison",   cat: "special",  effect: { status: "poison", chance: 40 } },
-  "sludge":        { power: 65,  acc: 100, pp: 20, type: "poison",   cat: "special",  effect: { status: "poison", chance: 30 } },
+  // [C14] Smog, Sludge: Poison type → Physical in Gen I
+  "smog":          { power: 20,  acc: 70,  pp: 20, type: "poison",   cat: "physical", effect: { status: "poison", chance: 40 } },
+  "sludge":        { power: 65,  acc: 100, pp: 20, type: "poison",   cat: "physical", effect: { status: "poison", chance: 30 } },
   "bone club":     { power: 65,  acc: 85,  pp: 20, type: "ground",   cat: "physical", effect: { status: "flinch", chance: 10 } },
   "fire blast":    { power: 120, acc: 85,  pp: 5,  type: "fire",     cat: "special",  effect: { status: "burn", chance: 30 } },
-  "crabhammer":    { power: 90,  acc: 85,  pp: 10, type: "water",    cat: "physical", effect: { crit_rate: 8 } },
+  // [C14] Crabhammer: Water type → Special in Gen I
+  "crabhammer":    { power: 90,  acc: 85,  pp: 10, type: "water",    cat: "special",  effect: { crit_rate: 8 } },
   "explosion":     { power: 250, acc: 100, pp: 5,  type: "normal",   cat: "physical", effect: null },
   "fury swipes":   { power: 18,  acc: 80,  pp: 15, type: "normal",   cat: "physical", effect: { multi_hit: [2,5] } },
   "bonemerang":    { power: 50,  acc: 90,  pp: 10, type: "ground",   cat: "physical", effect: { multi_hit: 2 } },
@@ -97,13 +101,15 @@ const MOVES = {
   "rock slide":    { power: 75,  acc: 90,  pp: 10, type: "rock",     cat: "physical", effect: { status: "flinch", chance: 30 } },
   "sharpen":       { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: { stat: "atk", target: "self", stages: 1 } },
   "conversion":    { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: null },
-  "tri attack":    { power: 80,  acc: 100, pp: 10, type: "normal",   cat: "special",  effect: null },
+  // [C14] Tri Attack: Normal type → Physical in Gen I
+  "tri attack":    { power: 80,  acc: 100, pp: 10, type: "normal",   cat: "physical", effect: null },
   "super fang":    { power: 1,   acc: 90,  pp: 10, type: "normal",   cat: "physical", effect: { super_fang: true } },
   "substitute":    { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: null },
   "struggle":      { power: 50,  acc: 100, pp: 999,type: "normal",   cat: "physical", effect: null },
 
   // Ghost
-  "night shade":   { power: 1,   acc: 100, pp: 15, type: "ghost",    cat: "special",  effect: { level_damage: true } },
+  // [C14] Night Shade: Ghost type → Physical in Gen I
+  "night shade":   { power: 1,   acc: 100, pp: 15, type: "ghost",    cat: "physical", effect: { level_damage: true } },
   "confuse ray":   { power: 0,   acc: 100, pp: 10, type: "ghost",    cat: "status",   effect: { status: "confusion", chance: 100 } },
 
   // Dragon
@@ -121,7 +127,7 @@ const MOVES = {
   "barrier":       { power: 0,   acc: 100, pp: 30, type: "psychic",  cat: "status",   effect: { stat: "def", target: "self", stages: 2 } },
   "reflect":       { power: 0,   acc: 100, pp: 20, type: "psychic",  cat: "status",   effect: { reflect: true } },
   "metronome":     { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: { metronome: true } },
-  "minimize":      { power: 0,   acc: 100, pp: 20, type: "normal",   cat: "status",   effect: { stat: "acc", target: "enemy", stages: -1 } },
+  "minimize":      { power: 0,   acc: 100, pp: 20, type: "normal",   cat: "status",   effect: { stat: "eva", target: "self", stages: 2 } },
   "transform":     { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: { transform: true } },
   "swords dance":  { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: { stat: "atk", target: "self", stages: 2 } },
   "mirror move":   { power: 0,   acc: 100, pp: 20, type: "flying",   cat: "status",   effect: { mirror: true } },
@@ -133,16 +139,24 @@ const MOVES = {
   "fissure":       { power: 1,   acc: 30,  pp: 5,  type: "ground",   cat: "physical", effect: { ohko: true } },
   "glare":         { power: 0,   acc: 75,  pp: 30, type: "normal",   cat: "status",   effect: { status: "paralysis", chance: 100 } },
   "poison gas":    { power: 0,   acc: 55,  pp: 40, type: "poison",   cat: "status",   effect: { status: "poison", chance: 100 } },
-  "barrage":       { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: null },
+  // [C15] Barrage: update with multi_hit effect
+  "barrage":       { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: { multi_hit: [2,5] } },
   "fire spin":     { power: 15,  acc: 70,  pp: 15, type: "fire",     cat: "special",  effect: { bind: true } },
   "toxic":         { power: 0,   acc: 85,  pp: 10, type: "poison",   cat: "status",   effect: { status: "toxic", chance: 100 } },
-  "petal dance":   { power: 70,  acc: 100, pp: 20, type: "grass",    cat: "special",  effect: null },
+  "petal dance":   { power: 70,  acc: 100, pp: 20, type: "grass",    cat: "special",  effect: { lockin: true } },
   "guillotine":    { power: 1,   acc: 30,  pp: 5,  type: "normal",   cat: "physical", effect: { ohko: true } },
   "egg bomb":      { power: 100, acc: 75,  pp: 10, type: "normal",   cat: "physical", effect: null },
-  "whirlpool":     { power: 15,  acc: 70,  pp: 15, type: "water",    cat: "special",  effect: { bind: true } },
+  // [C15] Whirlpool: Gen II move — removed from Gen I roster
+  // "whirlpool":  removed (Gen II, not available in Gen I)
   "mist":          { power: 0,   acc: 100, pp: 30, type: "ice",      cat: "status",   effect: { mist: true } },
-  "acid":          { power: 40,  acc: 100, pp: 30, type: "poison",   cat: "special",  effect: { stat: "def", target: "enemy", stages: -1, statChance: 33 } },
+  // [C14] Acid: Poison type → Physical in Gen I
+  "acid":          { power: 40,  acc: 100, pp: 30, type: "poison",   cat: "physical", effect: { stat: "def", target: "enemy", stages: -1, statChance: 33 } },
   "pin missile":   { power: 14,  acc: 85,  pp: 20, type: "bug",      cat: "physical", effect: { multi_hit: [2,5] } },
+
+  // [C15] Missing Gen I moves added
+  "razor wind":    { power: 80,  acc: 75,  pp: 10, type: "normal",   cat: "physical", effect: null },  // 2-turn charge (simplified)
+  "mimic":         { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: null },
+  "dizzy punch":   { power: 70,  acc: 100, pp: 10, type: "normal",   cat: "physical", effect: { status: "confusion", chance: 20 } },
 
   // Extra moves needed by learnsets
   "focus energy":  { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: { sharpen: true } },
@@ -152,10 +166,11 @@ const MOVES = {
   "vice grip":     { power: 55,  acc: 100, pp: 30, type: "normal",   cat: "physical", effect: null },
   "wing attack":   { power: 35,  acc: 100, pp: 35, type: "flying",   cat: "physical", effect: null },
   "light screen":  { power: 0,   acc: 100, pp: 30, type: "psychic",  cat: "status",   effect: { reflect: true } },
-  "double team":   { power: 0,   acc: 100, pp: 15, type: "normal",   cat: "status",   effect: { stat: "acc", target: "self", stages: 1 } },
-  "fire punch":    { power: 75,  acc: 100, pp: 15, type: "fire",     cat: "physical", effect: { status: "burn", chance: 10 } },
-  "ice punch":     { power: 75,  acc: 100, pp: 15, type: "ice",      cat: "physical", effect: { status: "freeze", chance: 10 } },
-  "thunder punch": { power: 75,  acc: 100, pp: 15, type: "electric", cat: "physical", effect: { status: "paralysis", chance: 10 } },
+  "double team":   { power: 0,   acc: 100, pp: 15, type: "normal",   cat: "status",   effect: { stat: "eva", target: "self", stages: 1 } },
+  // [C14] Fire/Ice/Thunder Punch: typed by move type; Fire/Ice/Electric are Special in Gen I
+  "fire punch":    { power: 75,  acc: 100, pp: 15, type: "fire",     cat: "special",  effect: { status: "burn", chance: 10 } },
+  "ice punch":     { power: 75,  acc: 100, pp: 15, type: "ice",      cat: "special",  effect: { status: "freeze", chance: 10 } },
+  "thunder punch": { power: 75,  acc: 100, pp: 15, type: "electric", cat: "special",  effect: { status: "paralysis", chance: 10 } },
 
   // Grass
   // Vine Whip: 35 BP in Gen I (not 45 — Gen IV+); PP: 10 in Gen I
@@ -181,8 +196,8 @@ const MOVES = {
   "thunderbolt":    { power: 95, acc: 100, pp: 15, type: "electric", cat: "special",  effect: { status: "paralysis", chance: 10 } },
 
   // Flying / HM moves
-  // Gust: Normal type in Gen I (became Flying in Gen II)
-  "gust":          { power: 40,  acc: 100, pp: 35, type: "normal",   cat: "special",  effect: null },
+  // [C14] Gust: Normal type in Gen I (became Flying in Gen II); Normal → Physical in Gen I
+  "gust":          { power: 40,  acc: 100, pp: 35, type: "normal",   cat: "physical", effect: null },
   "peck":          { power: 35,  acc: 100, pp: 35, type: "flying",   cat: "physical", effect: null },
   "cut":           { power: 50,  acc: 95,  pp: 30, type: "normal",   cat: "physical", effect: null },
   "fly":           { power: 70,  acc: 95,  pp: 15, type: "flying",   cat: "physical", effect: null },
@@ -197,8 +212,7 @@ const MOVES = {
 
   // Rock / Ground
   "rock throw":    { power: 50,  acc: 90,  pp: 15, type: "rock",     cat: "physical", effect: null },
-  "rock tomb":     { power: 50,  acc: 80,  pp: 10, type: "rock",     cat: "physical", effect: { stat: "spd", target: "enemy", stages: -1 } },
-  "magnitude":     { power: 70,  acc: 100, pp: 30, type: "ground",   cat: "physical", effect: null },
+  // [C15] Rock Tomb: Gen III move — removed; Magnitude: Gen II — removed
   "dig":           { power: 100, acc: 100, pp: 10, type: "ground",   cat: "physical", effect: null },
   "earthquake":    { power: 100, acc: 100, pp: 10, type: "ground",   cat: "physical", effect: null },
   "screech":       { power: 0,   acc: 85,  pp: 40, type: "normal",   cat: "status",   effect: { stat: "def", target: "enemy", stages: -2 } },
