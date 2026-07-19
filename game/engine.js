@@ -677,10 +677,10 @@ function newGame(seed) {
     rngSeed,
     rngCounter: 0,
     screen: 'starter_select',
-    areaId: 'pallet_town',
+    areaId: 'oaks_lab',  // [D4] authentic start — player begins inside Oak's lab
     player: {
-      x: 8, y: 9,    // standing in front of Oak's table
-      facing: 'south',  // [E10] player's last move direction
+      x: 5, y: 7,    // [D4] standing near the starter Poké Balls
+      facing: 'north',  // [E10] player's last move direction
       party: [],
       bag: {
         poke_ball: 5,    great_ball: 0,  ultra_ball: 0,  master_ball: 0,
@@ -735,6 +735,23 @@ function getRivalParty(state) {
     { species: rivalStarter, level: 9 },
     { species: 'pidgey',     level: 9 },
   ];
+}
+
+// [D4] Resolve NPC dialogue, supporting flag-conditional branches.
+// npc.flagDialogue is an array of branch objects:
+//   { requireFlag, denyFlag, requireItem, lines }  — first matching branch wins
+//   { default: true, lines }                        — fallback
+// Returns the resolved lines array, or null to fall through to npc.dialogue.
+function resolveNpcDialogue(npc, player) {
+  if (!Array.isArray(npc.flagDialogue)) return null;
+  for (const branch of npc.flagDialogue) {
+    if (branch.default) return branch.lines;
+    const flagOk    = !branch.requireFlag || !!player.flags[branch.requireFlag];
+    const denyOk    = !branch.denyFlag    || !player.flags[branch.denyFlag];
+    const itemOk    = !branch.requireItem || (player.bag[branch.requireItem] || 0) > 0;
+    if (flagOk && denyOk && itemOk) return branch.lines;
+  }
+  return [];
 }
 
 // Returns a new state with rival battle triggered if entering route_22, or null.
@@ -799,8 +816,13 @@ function processAction(state, action) {
     if (state.pokedex) state.pokedex.seen[sp] = true;  // [G1] Pokédex: starter is seen
     state.screen = 'overworld';
     state.player.flags.chose_starter = sp;
-    state.message = `OAK: So, you chose ${starter.name}! It's a fine choice! Take good care of it. Now, ${starter.name} — your new trainer awaits! Head north through PALLET TOWN to begin your journey.`;
+    // [D4] Rival picks the counter-starter
+    const counterMap = { bulbasaur:'charmander', charmander:'squirtle', squirtle:'bulbasaur' };
+    const rivalSp = counterMap[sp] || 'charmander';
+    const rivalName = POKEMON[rivalSp]?.name || rivalSp.toUpperCase();
+    state.message = `OAK: So, you chose ${starter.name}! It's a fine choice! Take good care of it.\n\nGARY: Hmm! Then I'll take ${rivalName}! I won't lose to you!\n\nOAK: Now, head to VIRIDIAN CITY. Stop by the POKé MART and pick up the parcel being held for me — then come back here.`;
     log(`Received ${starter.name} from Prof. Oak!`);
+    log(`GARY chose ${rivalName}!`);
     return state;
   }
 
@@ -812,19 +834,41 @@ function processAction(state, action) {
     }
     const d = state.dialogue;
     const line = d.lines[d.index];
-    // Check for item give
-    if (typeof line === 'object' && line.give) {
-      state.player.bag[line.give] = (state.player.bag[line.give] || 0) + line.qty;
-      state.player.flags[`got_${line.give}_from_${d.npcId}`] = true;
-      log(`Received ${line.qty} ${line.give.toUpperCase()}!`);
+    // Process the current line's actions
+    if (typeof line === 'object') {
+      // Give item — optional giveIf flag condition
+      if (line.give && (!line.giveIf || state.player.flags[line.giveIf])) {
+        state.player.bag[line.give] = (state.player.bag[line.give] || 0) + (line.qty || 1);
+        state.player.flags[`got_${line.give}_from_${d.npcId}`] = true;
+        log(`Received ${(line.qty || 1)} ${line.give.replace(/_/g,' ').toUpperCase()}!`);
+      }
+      // [D4] Take item from bag (no "got" flag — just removes it)
+      if (line.take) {
+        state.player.bag[line.take] = Math.max(0, (state.player.bag[line.take] || 0) - 1);
+        log(`Handed over ${line.take.replace(/_/g,' ').toUpperCase()}!`);
+      }
+      // [D4] Set a flag without giving/taking an item
+      if (line.setFlag) {
+        state.player.flags[line.setFlag] = true;
+      }
     }
     d.index++;
+    // [D4] Auto-skip consecutive action-only lines (take/setFlag with no give text)
+    while (d.index < d.lines.length) {
+      const next = d.lines[d.index];
+      if (typeof next === 'string' || (typeof next === 'object' && next.give)) break;
+      if (typeof next === 'object') {
+        if (next.take)    state.player.bag[next.take] = Math.max(0, (state.player.bag[next.take] || 0) - 1);
+        if (next.setFlag) state.player.flags[next.setFlag] = true;
+      }
+      d.index++;
+    }
     if (d.index >= d.lines.length) {
       state.dialogue = null;
       state.message = '...';
     } else {
       const next = d.lines[d.index];
-      state.message = typeof next === 'string' ? next : `(Received ${next.give}!)`;
+      state.message = typeof next === 'string' ? next : `(Received ${next.give?.replace(/_/g,' ')}!)`;
     }
     return state;
   }
@@ -921,22 +965,28 @@ function processAction(state, action) {
           log(state.message);
           return state;
         }
-        // Regular dialogue (or after-battle dialogue for defeated trainer)
-        const dialogueSource = (npcHere.trainerBattle && state.player.flags[npcHere.trainerBattle.rewardFlag])
-          ? (npcHere.dialogueAfter || npcHere.dialogue)
-          : npcHere.dialogue;
+        // [D4] Resolve dialogue — supports flagDialogue branches or normal dialogue/afterBattle
+        const flagLines = resolveNpcDialogue(npcHere, state.player);
+        const dialogueSource = flagLines !== null
+          ? flagLines
+          : (npcHere.trainerBattle && state.player.flags[npcHere.trainerBattle.rewardFlag])
+            ? (npcHere.dialogueAfter || npcHere.dialogue)
+            : npcHere.dialogue;
         const lines = [...(dialogueSource || [])];
         state.dialogue = { lines, index:0, npcId: npcHere.id };
         state.dialogue.lines = lines.filter(l => {
           if (typeof l === 'object' && l.give) {
+            // [D4] giveIf: skip give line if condition flag not set
+            if (l.giveIf && !state.player.flags[l.giveIf]) return false;
             return !state.player.flags[`got_${l.give}_from_${npcHere.id}`];
           }
           return true;
         });
         if (!state.dialogue.lines.length) { state.dialogue = null; state.message = '...'; return state; }
-        state.message = typeof state.dialogue.lines[0] === 'string'
-          ? state.dialogue.lines[0]
-          : `(Received ${state.dialogue.lines[0].give}!)`;
+        const firstLine = state.dialogue.lines[0];
+        state.message = typeof firstLine === 'string'
+          ? firstLine
+          : firstLine.give ? `(Received ${firstLine.give.replace(/_/g,' ')}!)` : '...';
         return state;
       }
 
@@ -1142,13 +1192,22 @@ function processAction(state, action) {
         const tx = state.player.x + dx, ty = state.player.y + dy;
         const npc = getNpcAt(area, tx, ty);
         if (npc) {
-          const lines = [...npc.dialogue].filter(l => {
-            if (typeof l === 'object' && l.give) return !state.player.flags[`got_${l.give}_from_${npc.id}`];
+          // [D4] Resolve flagDialogue branches or fall through to static dialogue
+          const flagLines = resolveNpcDialogue(npc, state.player);
+          const rawLines = flagLines !== null ? flagLines : (npc.dialogue || []);
+          const lines = [...rawLines].filter(l => {
+            if (typeof l === 'object' && l.give) {
+              if (l.giveIf && !state.player.flags[l.giveIf]) return false;
+              return !state.player.flags[`got_${l.give}_from_${npc.id}`];
+            }
             return true;
           });
           if (!lines.length) { state.message = `${npc.name}: ...`; return state; }
           state.dialogue = { lines, index:0, npcId: npc.id };
-          state.message = typeof lines[0] === 'string' ? lines[0] : `(Received ${lines[0].give}!)`;
+          const firstLine = lines[0];
+          state.message = typeof firstLine === 'string'
+            ? firstLine
+            : firstLine.give ? `(Received ${firstLine.give.replace(/_/g,' ')}!)` : '...';
           return state;
         }
         const sign = getSignAt(area, tx, ty);

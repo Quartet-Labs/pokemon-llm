@@ -157,9 +157,9 @@ const VIRIDIAN_CITY = {
     { x:18, y:11, dest:'poke_mart',      destX:4,  destY:5,  areaName:'Poké Mart'      },
   ],
   connections: {
-    south: { area:'route_1',         entryX:7,  entryY:0  },
-    north: { area:'viridian_forest', entryX:9,  entryY:30 },
-    west:  { area:'route_22',        entryX:19, entryY:7  },
+    south: { area:'route_1',   entryX:7,  entryY:0  },
+    north: { area:'route_2',   entryX:7,  entryY:22 },  // [E2] now goes through Route 2
+    west:  { area:'route_22',  entryX:19, entryY:7  },
   },
 };
 
@@ -230,8 +230,8 @@ const VIRIDIAN_FOREST = {
     { id:'vforest_tm45',     x:3,  y:5,  item:'tm45',      qty:1 },
   ],
   connections: {
-    south: { area:'viridian_city', entryX:9,  entryY:1  },
-    north: { area:'pewter_city',   entryX:10, entryY:22 },
+    south: { area:'route_2',     entryX:7,  entryY:1  },  // [E2] now exits to Route 2
+    north: { area:'pewter_city', entryX:10, entryY:22 },
   },
   warps: [],
 };
@@ -604,7 +604,39 @@ const OAKS_LAB = {
   objects: [],
   npcs: [
     { id:'oak_lab', x:5, y:3, name:'Prof. Oak', dir:'south',
-      dialogue:["OAK: Ah, welcome! This is my lab. Those 3 Poké Balls on the table each contain a starter POKéMON. Use the starter_select action to choose one!"] },
+      // [D4] Flag-conditional dialogue: parcel return → Pokédex; post-starter hint; default welcome
+      flagDialogue: [
+        // Player brings Oak's Parcel back → grant Pokédex
+        { requireItem: 'oaks_parcel', denyFlag: 'has_pokedex',
+          lines: [
+            "OAK: Oh! My parcel from the VIRIDIAN CITY POKé MART! You carried it all this way — thank you!",
+            { take: 'oaks_parcel' },
+            "OAK: Ah, this reminds me — I was going to give you something anyway.",
+            "OAK: Here, take this device. It's called a POKéDEX! It automatically records data on any POKéMON you've seen or caught. It's a hi-tech encyclopedia!",
+            { setFlag: 'has_pokedex' },
+            "OAK: Your very own POKéDEX! Fill it up — there are 151 POKéMON in the world. I know you can do it!",
+          ]
+        },
+        // Already has Pokédex
+        { requireFlag: 'has_pokedex',
+          lines: [
+            "OAK: You already have the POKéDEX! Go out there and complete it. There are 151 POKéMON in the world. Can you find them all?",
+          ]
+        },
+        // Has starter, not yet got parcel
+        { requireFlag: 'chose_starter', denyFlag: 'has_pokedex',
+          lines: [
+            "OAK: Ah, you've made your choice! Now, head north to VIRIDIAN CITY. Visit the POKé MART — they're holding a parcel for me. Bring it back and I'll have a gift for you!",
+          ]
+        },
+        // Default: pre-starter
+        { default: true,
+          lines: [
+            "OAK: Ah, welcome! This is my lab. Those 3 Poké Balls on the table each contain a starter POKéMON. Use the starter_select action to choose one!",
+          ]
+        },
+      ],
+    },
     { id:'oak_lab_aide', x:8, y:6, name:"Oak's Aide", dir:'west',
       dialogue:["OAK'S AIDE: The PROFESSOR is studying POKéMON distribution. Ask him about starting your journey!"] },
   ],
@@ -669,7 +701,22 @@ const POKE_MART = {
   objects: [],
   npcs: [
     { id:'viridian_mart_clerk_inside', x:4, y:2, name:'POKé MART Clerk', dir:'south',
-      dialogue:["Welcome to the VIRIDIAN CITY POKé MART! Use mart_view to see items, mart_buy to purchase."] },
+      // [D4] Gives Oak's Parcel once the player has picked a starter
+      flagDialogue: [
+        { requireFlag: 'chose_starter',
+          denyFlag: 'got_oaks_parcel_from_viridian_mart_clerk_inside',
+          lines: [
+            "CLERK: Oh! Are you from PALLET TOWN? PROF. OAK asked us to hold this parcel for him — would you please bring it to him?",
+            { give: 'oaks_parcel', qty: 1 },
+            "CLERK: Please make sure PROF. OAK gets that! Now, is there anything else I can help you with?",
+            "CLERK: Welcome to the VIRIDIAN CITY POKé MART! Use mart_view to see items, mart_buy to purchase.",
+          ]
+        },
+        { default: true,
+          lines: ["CLERK: Welcome to the VIRIDIAN CITY POKé MART! Use mart_view to see items, mart_buy to purchase."]
+        },
+      ],
+    },
   ],
   signs: [],
   warps: [
@@ -956,10 +1003,71 @@ const ROUTE_23 = {
   },
 };
 
+// ── Route 2 (15 wide x 24 tall) — [E2] between Viridian City and Viridian Forest ──
+// Red/Blue: tall grass with Pidgey/Rattata/Caterpie/Weedle; gatehouse in the middle
+const ROUTE_2 = {
+  id: 'route_2',
+  name: 'Route 2',
+  width: 15,
+  height: 24,
+  encounterRate: 15,
+  tiles: (() => {
+    const rows = [];
+    for (let y = 0; y < 24; y++) {
+      let row = '';
+      for (let x = 0; x < 15; x++) {
+        if (x === 0 || x === 14) { row += 'T'; continue; }
+        // Central path cols 6-8
+        if (x >= 6 && x <= 8) { row += 'P'; continue; }
+        // Tall grass in north half (y 0-10) and south half (y 14-23)
+        const inGrass = (y >= 1 && y <= 10 && x >= 2 && x <= 5) ||
+                        (y >= 1 && y <= 10 && x >= 9 && x <= 12) ||
+                        (y >= 14 && y <= 22 && x >= 2 && x <= 5) ||
+                        (y >= 14 && y <= 22 && x >= 9 && x <= 12);
+        if (inGrass) { row += 'G'; continue; }
+        // Gatehouse area (rows 11-12) — solid building across the path
+        if (y >= 11 && y <= 12) { row += (x >= 6 && x <= 8) ? 'P' : 'B'; continue; }
+        row += 'T';
+      }
+      rows.push(row);
+    }
+    return rows;
+  })(),
+  objects: [],
+  npcs: [
+    { id:'youngster_r2', x:3, y:5, name:'Youngster', dir:'east',
+      dialogue:["I'm training my POKéMON to get stronger before I challenge BROCK!"] },
+    { id:'lass_r2', x:11, y:16, name:'Lass', dir:'south',
+      dialogue:["There's a secret path through here that leads to a special item! If only I could Cut that tree..."] },
+  ],
+  signs: [
+    { x:7, y:1,  text:"ROUTE 2\nVIRIDIAN CITY ↓   VIRIDIAN FOREST ↑" },
+    { x:7, y:22, text:"ROUTE 2\nVIRIDIAN CITY ↓   VIRIDIAN FOREST ↑" },
+  ],
+  items: [
+    { id:'r2_antidote', x:2, y:18, item:'antidote', qty:1 },
+    { id:'r2_tm45',     x:12, y:3, item:'tm45',     qty:1 },  // TM45 Thunderwave from pickup
+  ],
+  encounters: {
+    tall_grass: [
+      { species:'pidgey',   level:[3,5], rate:45 },
+      { species:'rattata',  level:[3,4], rate:30 },
+      { species:'caterpie', level:[3,4], rate:13 },
+      { species:'weedle',   level:[3,4], rate:12 },
+    ],
+  },
+  connections: {
+    north: { area:'viridian_forest', entryX:9,  entryY:30 },
+    south: { area:'viridian_city',   entryX:9,  entryY:1  },
+  },
+  warps: [],
+};
+
 // ── Area registry ─────────────────────────────────────────────────────────────
 const AREAS = {
   pallet_town:      PALLET_TOWN,
   route_1:          ROUTE_1,
+  route_2:          ROUTE_2,
   viridian_city:    VIRIDIAN_CITY,
   viridian_forest:  VIRIDIAN_FOREST,
   pewter_city:      PEWTER_CITY,

@@ -372,12 +372,15 @@ const POKEMON = {
   // ── #74-76 Geodude line ──────────────────────────────────────────────────
   geodude:    { id:74, name:"GEODUDE",    type:["rock","ground"],  hp:40, atk:80, def:100,spd:20, spc:30,  baseExp:86,  growthRate:'medium_fast', catchRate:255,
                 evolvesTo:{ species:'graveler', level:25 },
-                learnset:{ 1:['tackle','defense curl'], 11:['rock throw'], 16:['self destruct'], 21:['harden'], 26:['earthquake'], 31:['explosion'] },
+                // [B2] Gen I (Bulbapedia): Defense Curl @11, Rock Throw @16, Self-Destruct @21,
+                //      Harden @26, Earthquake @31, Explosion @36 — previous data was shifted 5 levels early
+                learnset:{ 1:['tackle'], 11:['defense curl'], 16:['rock throw'], 21:['self destruct'], 26:['harden'], 31:['earthquake'], 36:['explosion'] },
                 moves:["tackle","defense curl","rock throw","earthquake"] },
 
   graveler:   { id:75, name:"GRAVELER",   type:["rock","ground"],  hp:55, atk:95, def:115,spd:35, spc:45,  baseExp:134, growthRate:'medium_fast', catchRate:120,
                 evolvesTo:{ species:'golem', trade:true },
-                learnset:{ 1:['tackle','defense curl','rock throw','self destruct'], 21:['harden'], 26:['earthquake'], 31:['explosion'] },
+                // [B2] Inherits all Geodude moves by Lv 25; Harden/Earthquake/Explosion corrected levels
+                learnset:{ 1:['tackle','defense curl','rock throw','self destruct'], 26:['harden'], 31:['earthquake'], 36:['explosion'] },
                 moves:["tackle","defense curl","rock throw","earthquake"] },
 
   golem:      { id:76, name:"GOLEM",      type:["rock","ground"],  hp:80, atk:110,def:130,spd:45, spc:55,  baseExp:177, growthRate:'medium_fast', catchRate:45,
@@ -407,11 +410,13 @@ const POKEMON = {
   // ── #81-82 Magnemite line ────────────────────────────────────────────────
   magnemite:  { id:81, name:"MAGNEMITE",  type:["electric"],       hp:25, atk:35, def:70, spd:45, spc:95,  baseExp:89,  growthRate:'medium_fast', catchRate:190,
                 evolvesTo:{ species:'magneton', level:30 },
-                learnset:{ 1:['tackle','thunder shock'], 21:['thunder shock'], 25:['supersonic'], 29:['thunder wave'], 35:['swift'], 41:['screech'], 51:['thunderbolt'] },
+                // [B2] @21 was duplicate Thunder Shock — Gen I teaches Sonic Boom at Lv 21
+                learnset:{ 1:['tackle','thunder shock'], 21:['sonic boom'], 25:['supersonic'], 29:['thunder wave'], 35:['swift'], 41:['screech'], 51:['thunderbolt'] },
                 moves:["tackle","thunder shock","supersonic","thunder wave"] },
 
   magneton:   { id:82, name:"MAGNETON",   type:["electric"],       hp:50, atk:60, def:95, spd:70, spc:120, baseExp:161, growthRate:'medium_fast', catchRate:60,
-                learnset:{ 1:['tackle','thunder shock','supersonic','thunder wave'], 35:['swift'], 41:['screech'], 51:['thunderbolt'] },
+                // [B2] Add sonic boom to inherited moves (learned by Magnemite at Lv 21, before evo at 30)
+                learnset:{ 1:['tackle','thunder shock','sonic boom','supersonic','thunder wave'], 35:['swift'], 41:['screech'], 51:['thunderbolt'] },
                 moves:["thunder shock","thunder wave","screech","thunderbolt"] },
 
   // ── #83 Farfetch'd ───────────────────────────────────────────────────────
@@ -622,7 +627,8 @@ const POKEMON = {
 
   // ── #124 Jynx ────────────────────────────────────────────────────────────
   jynx:       { id:124,name:"JYNX",       type:["ice","psychic"],  hp:65, atk:50, def:35, spd:95, spc:95,  baseExp:137, growthRate:'medium_fast', catchRate:45,
-                learnset:{ 1:['pound','lick'], 18:['lovely kiss'], 23:['lick'], 31:['double slap'], 39:['ice punch'], 47:['blizzard'], 58:['psychic'] },
+                // [B2] @23 was duplicate Lick — Gen I: Double Slap @23, Ice Punch @31, Body Slam @39
+                learnset:{ 1:['pound','lick'], 18:['lovely kiss'], 23:['double slap'], 31:['ice punch'], 39:['body slam'], 47:['blizzard'], 58:['psychic'] },
                 moves:["pound","lovely kiss","lick","ice punch"] },
 
   // ── #125 Electabuzz ──────────────────────────────────────────────────────
