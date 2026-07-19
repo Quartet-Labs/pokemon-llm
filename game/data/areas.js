@@ -136,9 +136,17 @@ const VIRIDIAN_CITY = {
   npcs: [
     { id:'old_man', x:5, y:5, name:'Old Man', dir:'south', spin: true,
       // [G2 gate] Blocks north exit until player has Pokédex
+      // [F6] Gives TM42 (Dream Eater) once when awake
       flagDialogue: [
+        { requireFlag: 'has_pokedex', denyFlag: 'got_tm42_from_old_man',
+          lines: [
+            "TRAINER: Ahhh, finally had my morning coffee! I feel like a new man!",
+            "TRAINER: Heading to PEWTER CITY? Take the north path through VIRIDIAN FOREST — but watch out for BUG POKéMON! Here, take this — it might help with tough opponents!",
+            { give: 'tm42', qty: 1 },
+            { setFlag: 'got_tm42_from_old_man' },
+          ] },
         { requireFlag: 'has_pokedex',
-          lines: ["TRAINER: Ahhh, finally had my morning coffee! I feel like a new man! Heading to PEWTER CITY? Take the north path through VIRIDIAN FOREST — but watch out for BUG POKéMON!"] },
+          lines: ["TRAINER: Ah, you again! Safe travels through VIRIDIAN FOREST, young one!"] },
         { default: true,
           lines: ["TRAINER: Snooooze... Zzzz... (The old man seems to be sleeping. He's blocking the northern path.)"] },
       ],

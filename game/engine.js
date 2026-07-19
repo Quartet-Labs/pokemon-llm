@@ -1011,10 +1011,18 @@ function processAction(state, action) {
     // Process the current line's actions
     if (typeof line === 'object') {
       // Give item — optional giveIf flag condition
+      // TMs/HMs go to player.tms (single-use count); everything else to player.bag
       if (line.give && (!line.giveIf || state.player.flags[line.giveIf])) {
-        state.player.bag[line.give] = (state.player.bag[line.give] || 0) + (line.qty || 1);
-        state.player.flags[`got_${line.give}_from_${d.npcId}`] = true;
-        log(`Received ${(line.qty || 1)} ${line.give.replace(/_/g,' ').toUpperCase()}!`);
+        const giveItem = line.give;
+        const giveQty  = line.qty || 1;
+        if (giveItem.startsWith('tm') || giveItem.startsWith('hm')) {
+          if (!state.player.tms) state.player.tms = {};
+          state.player.tms[giveItem] = (state.player.tms[giveItem] || 0) + giveQty;
+        } else {
+          state.player.bag[giveItem] = (state.player.bag[giveItem] || 0) + giveQty;
+        }
+        state.player.flags[`got_${giveItem}_from_${d.npcId}`] = true;
+        log(`Received ${giveQty} ${giveItem.replace(/_/g,' ').toUpperCase()}!`);
       }
       // [D4] Take item from bag (no "got" flag — just removes it)
       if (line.take) {
@@ -1191,8 +1199,14 @@ function processAction(state, action) {
                 if (!state.player.flags[flagKey]) {
                   state.player.flags[flagKey] = true;
                   const qty = item.qty || 1;
-                  state.player.bag[item.item] = (state.player.bag[item.item] || 0) + qty;
-                  state.message = `Jumped off the ledge! Found a ${item.item.replace(/_/g,' ').toUpperCase()}! (×${qty})`;
+                  const iname = item.item;
+                  if (iname.startsWith('tm') || iname.startsWith('hm')) {
+                    if (!state.player.tms) state.player.tms = {};
+                    state.player.tms[iname] = (state.player.tms[iname] || 0) + qty;
+                  } else {
+                    state.player.bag[iname] = (state.player.bag[iname] || 0) + qty;
+                  }
+                  state.message = `Jumped off the ledge! Found a ${iname.replace(/_/g,' ').toUpperCase()}! (×${qty})`;
                   log(state.message);
                   return state;
                 }
@@ -1349,8 +1363,14 @@ function processAction(state, action) {
             if (!state.player.flags[flagKey]) {
               state.player.flags[flagKey] = true;
               const qty = item.qty || 1;
-              state.player.bag[item.item] = (state.player.bag[item.item] || 0) + qty;
-              state.message = `Found a ${item.item.replace(/_/g,' ').toUpperCase()}! (×${qty})`;
+              const iname = item.item;
+              if (iname.startsWith('tm') || iname.startsWith('hm')) {
+                if (!state.player.tms) state.player.tms = {};
+                state.player.tms[iname] = (state.player.tms[iname] || 0) + qty;
+              } else {
+                state.player.bag[iname] = (state.player.bag[iname] || 0) + qty;
+              }
+              state.message = `Found a ${iname.replace(/_/g,' ').toUpperCase()}! (×${qty})`;
               log(state.message);
               return state;
             }
