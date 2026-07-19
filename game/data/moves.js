@@ -104,7 +104,7 @@ const MOVES = {
   // [C14] Tri Attack: Normal type → Physical in Gen I
   "tri attack":    { power: 80,  acc: 100, pp: 10, type: "normal",   cat: "physical", effect: null },
   "super fang":    { power: 1,   acc: 90,  pp: 10, type: "normal",   cat: "physical", effect: { super_fang: true } },
-  "substitute":    { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: null },
+  "substitute":    { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: { substitute: true } },
   "struggle":      { power: 50,  acc: 100, pp: 999,type: "normal",   cat: "physical", effect: null },
 
   // Ghost

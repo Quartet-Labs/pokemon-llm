@@ -527,12 +527,20 @@ function checkCanAct(pokemon, msgs) {
       pokemon.confused = false;
       msgs.push(`${pokemon.name} snapped out of its confusion!`);
     } else if (roll(2) === 1) {
-      // Hit self: typeless physical, 40 BP, ignore stat stages for simplicity
+      // Hit self: typeless physical, 40 BP, uses own Atk/Def
       const selfDmg = Math.max(1, Math.floor(
         (Math.floor(2 * pokemon.level / 5 + 2) * pokemon.atk * 40 / pokemon.def / 50) + 2
       ));
-      pokemon.currentHp = Math.max(0, pokemon.currentHp - selfDmg);
-      msgs.push(`${pokemon.name} is confused and hurt itself! (-${selfDmg} HP)`);
+      // [H8] Gen I: confusion self-hit damages the Substitute, not real HP
+      if (pokemon.substituteHp > 0) {
+        const subDmg = Math.min(selfDmg, pokemon.substituteHp);
+        pokemon.substituteHp = Math.max(0, pokemon.substituteHp - subDmg);
+        msgs.push(`${pokemon.name} is confused and hit its SUBSTITUTE! (-${subDmg} HP)`);
+        if (pokemon.substituteHp <= 0) msgs.push(`The SUBSTITUTE broke!`);
+      } else {
+        pokemon.currentHp = Math.max(0, pokemon.currentHp - selfDmg);
+        msgs.push(`${pokemon.name} is confused and hurt itself! (-${selfDmg} HP)`);
+      }
       return false;
     } else {
       msgs.push(`${pokemon.name} is confused!`);
@@ -630,6 +638,17 @@ function applyMoveEffect(moveName, target, source) {
   if (!mv?.effect) return [];
   const msgs = [];
   const e = mv.effect;
+
+  // [C7/H8] Substitute blocks status inflictions and stat changes that target the defender.
+  // (Damaging moves that hit the sub return early from doAttack before reaching here.)
+  const blockedBySub = target.substituteHp > 0;
+  if (blockedBySub) {
+    const targetsDefender = (e.status) || (e.stat && e.target !== 'self') || (e.disable);
+    if (targetsDefender) {
+      msgs.push(`The SUBSTITUTE blocked the attack!`);
+      return msgs;
+    }
+  }
 
   // Status effects (primary and volatile)
   if (e.status && roll(100) <= (e.chance || 0)) {
@@ -796,6 +815,20 @@ function applyMoveEffect(moveName, target, source) {
     } else {
       msgs.push(`${source.name} used MIRROR MOVE! It used ${mirrorMv.toUpperCase()}!`);
       msgs.push(...applyMoveEffect(mirrorMv, target, source));
+    }
+  }
+
+  // [C7/H8] Substitute — create a proxy HP shield (costs 25% of max HP)
+  if (e.substitute) {
+    if (source.substituteHp > 0) {
+      msgs.push(`${source.name} already has a SUBSTITUTE!`);
+    } else if (source.currentHp <= Math.floor(source.maxHp / 4)) {
+      msgs.push(`But it failed! ${source.name} doesn't have enough HP!`);
+    } else {
+      const cost = Math.max(1, Math.floor(source.maxHp / 4));
+      source.currentHp -= cost;
+      source.substituteHp = cost;
+      msgs.push(`${source.name} made a SUBSTITUTE! (sub HP: ${cost})`);
     }
   }
 
@@ -2253,6 +2286,10 @@ function processBattleAction(state, action, log) {
     // [C7] Track last move used (after lockin override + PP redirect, before execution)
     attacker.lastMoveUsed = mvName;
 
+    // Resolve move data after PP redirect (mvName may have changed to 'struggle')
+    const mv = MOVES[mvName];
+    if (!mv && mvName !== 'struggle') { msgs.push('Unknown move!'); return; }
+
     // #8: Whirlwind — ends wild battles; fails vs trainers
     // [C12] Flee moves: Whirlwind/Roar/Teleport end wild battles
     if (mvName === 'whirlwind' || mv?.effect?.flee === 'wild') {
@@ -2293,9 +2330,6 @@ function processBattleAction(state, action, log) {
       msgs.push(`${attacker.name} took recoil damage! (-${recoil} HP)`);
       return;
     }
-
-    const mv = MOVES[mvName];
-    if (!mv) { msgs.push('Unknown move!'); return; }
 
     // #57: Fire moves thaw frozen targets (Gen I mechanic)
     if (mv.type === 'fire' && defender.status === 'freeze') {
@@ -2406,14 +2440,24 @@ function processBattleAction(state, action, log) {
           hits = e.multi_hit;  // fixed count (e.g. 2 for Double Kick)
         }
         let totalDmg = 0;
+        let subBrokeOnHit = false;
         const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
         for (let h = 0; h < hits; h++) {
           if (defender.currentHp <= 0) { hits = h; break; }
           const { dmg: hDmg } = calcDamage(attacker, mvName, defender, opts);
-          defender.currentHp = Math.max(0, defender.currentHp - hDmg);
-          totalDmg += hDmg;
+          // [C7/H8] Each hit of multi-hit routes through sub; sub breaking ends the chain
+          if (defender.substituteHp > 0) {
+            const subDmg = Math.min(hDmg, defender.substituteHp);
+            defender.substituteHp = Math.max(0, defender.substituteHp - subDmg);
+            totalDmg += subDmg;
+            if (defender.substituteHp <= 0) { subBrokeOnHit = true; hits = h + 1; break; }
+          } else {
+            defender.currentHp = Math.max(0, defender.currentHp - hDmg);
+            totalDmg += hDmg;
+          }
         }
         msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! Hit ${hits} time(s)! (-${totalDmg} HP total)`);
+        if (subBrokeOnHit) msgs.push(`The SUBSTITUTE broke!`);
         // Secondary effects once (e.g. Twineedle poison)
         msgs.push(...applyMoveEffect(mvName, defender, attacker));
         return;
@@ -2428,19 +2472,53 @@ function processBattleAction(state, action, log) {
         }
         const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
         const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
-        defender.currentHp = Math.max(0, defender.currentHp - dmg);
-        const healAmt = Math.max(1, Math.floor(dmg / e.drain));
-        attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + healAmt);
         const effMsg = effectiveness > 1 ? " It's super effective!"
                      : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
                      : effectiveness === 0 ? " It has no effect!" : '';
         const critMsg = crit ? ' A critical hit!' : '';
+        // [C7/H8] Drain absorbed by sub — no healing for attacker
+        if (defender.substituteHp > 0) {
+          const subDmg = Math.min(dmg, defender.substituteHp);
+          defender.substituteHp = Math.max(0, defender.substituteHp - subDmg);
+          msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${subDmg} HP to sub)${critMsg}${effMsg}`);
+          if (defender.substituteHp <= 0) msgs.push(`The SUBSTITUTE broke!`);
+          return;
+        }
+        defender.currentHp = Math.max(0, defender.currentHp - dmg);
+        const healAmt = Math.max(1, Math.floor(dmg / e.drain));
+        attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + healAmt);
         msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${dmg} HP)${critMsg}${effMsg} Drained ${healAmt} HP!`);
         return;
       }
 
       const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
       const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
+      const effMsg = effectiveness > 1 ? " It's super effective!"
+                   : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
+                   : effectiveness === 0 ? " It has no effect!" : '';
+      const critMsg = crit ? ' A critical hit!' : '';
+      // [C7/H8] Substitute — absorb damage before it reaches the real Pokémon
+      if (defender.substituteHp > 0) {
+        const subDmg = Math.min(dmg, defender.substituteHp);
+        defender.substituteHp = Math.max(0, defender.substituteHp - subDmg);
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${subDmg} HP to sub)${critMsg}${effMsg}`);
+        if (defender.substituteHp <= 0) msgs.push(`The SUBSTITUTE broke!`);
+        // [H8] Counter still tracks sub damage in Gen I
+        const mvCatSub = MOVES[mvName]?.cat;
+        if (mvCatSub === 'physical') {
+          defender.lastDamageTaken = subDmg;
+          defender.lastPhysicalMoveType = MOVES[mvName]?.type ?? null;
+        }
+        // Explosion/Self-Destruct still KOs the attacker
+        if (mvName === 'explosion' || mvName === 'self destruct') {
+          attacker.currentHp = 0;
+          msgs.push(`${attacker.name} fainted from the explosion!`);
+        }
+        // Hyper Beam recharge still applies (the attacker still fired the move)
+        if (e?.recharge) { attacker.recharging = true; msgs.push(`${attacker.name} must recharge!`); }
+        // Secondary effects (status, bind, drain, recoil) are blocked by sub
+        return;
+      }
       defender.currentHp = Math.max(0, defender.currentHp - dmg);
       lastBindDmg = dmg;  // [A8] save for trapping setup
       // [C7/H7] Counter: track last physical damage received + move type for type restriction
@@ -2449,10 +2527,6 @@ function processBattleAction(state, action, log) {
         defender.lastDamageTaken = dmg;
         defender.lastPhysicalMoveType = MOVES[mvName]?.type ?? null;
       }
-      const effMsg = effectiveness > 1 ? " It's super effective!"
-                   : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
-                   : effectiveness === 0 ? " It has no effect!" : '';
-      const critMsg = crit ? ' A critical hit!' : '';
       msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${dmg} HP)${critMsg}${effMsg}`);
       // #C3: Explosion/Self-Destruct faint the user
       if (mvName === 'explosion' || mvName === 'self destruct') {
@@ -3070,6 +3144,7 @@ function getView(state) {
         name: active.name, species: active.species, level: active.level,
         hp: `${active.currentHp}/${active.maxHp}`, status: active.status,
         confused: active.confused || undefined,
+        substitute: active.substituteHp > 0 ? `sub HP: ${active.substituteHp}` : undefined,
         biding: active.bideState ? `charging (${active.bideState.turnsLeft} turn(s) left)` : undefined,
         bound: active.boundState ? `bound (${active.boundState.turnsLeft} turn(s) left)` : undefined,
         trapping: active.trappingState ? `locked in (${active.trappingState.move}, ${active.trappingState.turnsLeft} turn(s) left)` : undefined,
@@ -3089,6 +3164,7 @@ function getView(state) {
         maxHp: undefined,
         hpPct: Math.round(state.battle.enemy.currentHp / state.battle.enemy.maxHp * 100),
         status: state.battle.enemy.status, type: state.battle.enemy.type,
+        substitute: state.battle.enemy.substituteHp > 0 ? 'has substitute' : undefined,
         bound: state.battle.enemy.boundState ? `bound (${state.battle.enemy.boundState.turnsLeft} turn(s) left)` : undefined,
       },
       // [A17] Shift offer: free switch after KO'ing trainer's Pokémon
