@@ -1180,7 +1180,47 @@ function processAction(state, action) {
       return state;
     }
 
-    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, pc_view, pc_withdraw, pc_deposit, forget_move, cut`;
+    // [B6] Nickname Pokémon
+    if (type === 'nickname_pokemon') {
+      const pIdx = action.partyIndex ?? 0;
+      const pokemon = state.player.party[pIdx];
+      if (!pokemon) return { ...state, message: 'No Pokémon at that slot.' };
+      const nick = (action.nickname || '').trim().slice(0, 10);  // Gen I: 10 char max
+      if (!nick) return { ...state, message: 'Nickname cannot be empty.' };
+      const oldNick = pokemon.name;
+      pokemon.name = nick;
+      return { ...state, message: `${oldNick} was nicknamed ${nick}!` };
+    }
+
+    // [F4] Mart sell — half buy-price
+    if (type === 'mart_sell') {
+      const { item, qty = 1 } = action;
+      if (!item) return { ...state, message: 'Specify an item to sell.' };
+      const areaId = state.areaId;
+      const martTier = getMartTierForArea(areaId);
+      const catalog = MART_CATALOG[martTier] || [];
+      const entry = catalog.find(e => e.item === item);
+      const sellPrice = entry ? Math.floor(entry.price / 2) : 50;  // default 50 if not in catalog
+      const ownedBag = state.player.bag?.[item] ?? 0;
+      const ownedItems = state.player.items?.[item] ?? 0;
+      const owned = ownedBag + ownedItems;
+      if (owned < qty) return { ...state, message: `You don't have ${qty}× ${item.replace(/_/g,' ')}.` };
+      let toSell = qty;
+      if (ownedBag > 0) {
+        const fromBag = Math.min(toSell, ownedBag);
+        state.player.bag[item] -= fromBag;
+        toSell -= fromBag;
+      }
+      if (toSell > 0 && ownedItems > 0) {
+        const fromItems = Math.min(toSell, ownedItems);
+        state.player.items[item] -= fromItems;
+      }
+      const earned = sellPrice * qty;
+      state.player.money = Math.min(999999, state.player.money + earned);  // [F8] cap
+      return { ...state, message: `Sold ${qty}× ${item.replace(/_/g,' ')} for ₽${earned}.` };
+    }
+
+    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, mart_sell, pc_view, pc_withdraw, pc_deposit, forget_move, cut, nickname_pokemon`;
     return state;
   }
 
@@ -1280,6 +1320,31 @@ function useItemOverworld(state, action) {
     target.confusedTurns = 0;
     bag.full_heal--;
     state.message = `Used Full Heal on ${target.name}. Cured ${cured}!`;
+
+  } else if (item === 'pp_up' || item === 'pp_max') {
+    // [C19] PP Up / PP Max — raise a move's maximum PP
+    const pIdx = action.target_index ?? 0;
+    const mIdx = action.moveIndex ?? 0;
+    const pokemon = state.player.party[pIdx];
+    if (!pokemon) return { ...state, message: 'No Pokémon at that slot.' };
+    const mv = pokemon.moves?.[mIdx];
+    if (!mv) return { ...state, message: 'No move at that slot.' };
+    const ownedCount = (bag?.[item] ?? 0) + (state.player.items?.[item] ?? 0);
+    if (ownedCount < 1) return { ...state, message: `You have no ${itemName}!` };
+    const basePP = MOVES[mv]?.pp ?? 20;
+    pokemon.ppUps = pokemon.ppUps || {};
+    const ups = pokemon.ppUps[mv] || 0;
+    if (ups >= 3) return { ...state, message: `${mv.toUpperCase()}'s PP is already maxed!` };
+    const newUps = item === 'pp_max' ? 3 : ups + 1;
+    pokemon.ppUps[mv] = newUps;
+    const newMaxPP = Math.floor(basePP * (1 + newUps * 0.2));
+    const currentPP = pokemon.pp?.[mv] ?? basePP;
+    const gain = newMaxPP - Math.floor(basePP * (1 + ups * 0.2));
+    if (pokemon.pp) pokemon.pp[mv] = Math.min(newMaxPP, currentPP + gain);
+    // Deduct from bag first, then items
+    if ((bag?.[item] ?? 0) > 0) bag[item]--;
+    else if ((state.player.items?.[item] ?? 0) > 0) state.player.items[item]--;
+    state.message = `${pokemon.name}'s ${mv.toUpperCase()} PP was raised!`;
 
   } else if (item.startsWith('tm') || item.startsWith('hm')) {
     // TM/HM use: { type: 'use_item', item: 'tm29', target_index: 0 }
@@ -1806,15 +1871,15 @@ function processBattleAction(state, action, log) {
             ? Math.max(...allParty.map(p => p.level))
             : (battle.enemy?.level ?? 1);
           const earned = battle.basePrize * highestLv * 2;
-          state.player.money += earned;
+          state.player.money = Math.min(999999, state.player.money + earned);  // [F8] cap ₽999,999
           msgs.push(`${battle.trainerName} paid ₽${earned}!`);
         } else if (battle.reward) {
-          state.player.money += battle.reward;
+          state.player.money = Math.min(999999, state.player.money + battle.reward);  // [F8] cap
           msgs.push(`Received ₽${battle.reward} from ${battle.trainerName}.`);
         }
         // [C17] Pay Day gold collected at battle end
         if (battle.payDayGold) {
-          state.player.money += battle.payDayGold;
+          state.player.money = Math.min(999999, state.player.money + battle.payDayGold);  // [F8] cap
           msgs.push(`You picked up ${battle.payDayGold} coin(s) from Pay Day!`);
         }
         if (battle.rewardFlag) state.player.flags[battle.rewardFlag] = true;
@@ -1829,7 +1894,7 @@ function processBattleAction(state, action, log) {
 
       // [C17] Pay Day gold for wild battles
       if (!battle.isTrainer && battle.payDayGold) {
-        state.player.money += battle.payDayGold;
+        state.player.money = Math.min(999999, state.player.money + battle.payDayGold);  // [F8] cap
         msgs.push(`You picked up ${battle.payDayGold} coin(s) from Pay Day!`);
       }
 
@@ -2130,7 +2195,14 @@ function processBattleAction(state, action, log) {
     if (next.currentHp <= 0) { state.message = `${next.name} has fainted!`; return state; }
     if (action.party_index === battle.playerPartyIndex) { state.message = 'Already in battle!'; return state; }
     msgs.push(`Come back, ${active.name}! Go, ${next.name}!`);
+    const prevPartyIndex = battle.playerPartyIndex;
     battle.playerPartyIndex = action.party_index;
+    // [G8] Track EXP participants — record both the outgoing and incoming Pokémon
+    if (!battle.expParticipants) {
+      // First switch: seed with the outgoing Pokémon's index
+      battle.expParticipants = [prevPartyIndex];
+    }
+    if (!battle.expParticipants.includes(action.party_index)) battle.expParticipants.push(action.party_index);
     // [A17] Shift offer: free switch after KO'ing trainer's Pokémon — no enemy attack this turn
     if (state.shiftOffer) {
       state.shiftOffer = false;
@@ -2208,7 +2280,10 @@ function getView(state) {
       enemy: {
         name: state.battle.enemy.name, species: state.battle.enemy.species,
         level: state.battle.enemy.level,
-        hp: `${state.battle.enemy.currentHp}/${state.battle.enemy.maxHp}`,
+        // [A18] Don't expose exact HP — show percentage bar only (Gen I style)
+        currentHp: undefined,
+        maxHp: undefined,
+        hpPct: Math.round(state.battle.enemy.currentHp / state.battle.enemy.maxHp * 100),
         status: state.battle.enemy.status, type: state.battle.enemy.type,
         bound: state.battle.enemy.boundState ? `bound (${state.battle.enemy.boundState.turnsLeft} turn(s) left)` : undefined,
       },
@@ -2225,10 +2300,12 @@ function getView(state) {
       'move (direction: north|south|east|west)',
       'talk',
       'cut',
-      'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal|tm##|hm##, target_index: 0-5)',
+      'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal|pp_up|pp_max|tm##|hm##, target_index: 0-5, moveIndex: 0-3 for pp_up/pp_max)',
       'mart_view',
       'mart_buy (item: ..., quantity: N)',
+      'mart_sell (item: ..., qty: N)',
       'forget_move (partyIndex: 0-5, moveIndex: 0-3, newMove: "move name")',
+      'nickname_pokemon (partyIndex: 0-5, nickname: "NAME")',
       'pc_view',
       'pc_withdraw (index: 0-N)',
       'pc_deposit (party_index: 0-5)',

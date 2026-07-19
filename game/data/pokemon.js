@@ -373,12 +373,12 @@ const POKEMON = {
   geodude:    { id:74, name:"GEODUDE",    type:["rock","ground"],  hp:40, atk:80, def:100,spd:20, spc:30,  baseExp:86,  growthRate:'medium_fast', catchRate:255,
                 evolvesTo:{ species:'graveler', level:25 },
                 learnset:{ 1:['tackle','defense curl'], 11:['rock throw'], 16:['self destruct'], 21:['harden'], 26:['earthquake'], 31:['explosion'] },
-                moves:["tackle","defense curl","rock throw","magnitude"] },
+                moves:["tackle","defense curl","rock throw","earthquake"] },
 
   graveler:   { id:75, name:"GRAVELER",   type:["rock","ground"],  hp:55, atk:95, def:115,spd:35, spc:45,  baseExp:134, growthRate:'medium_fast', catchRate:120,
                 evolvesTo:{ species:'golem', trade:true },
                 learnset:{ 1:['tackle','defense curl','rock throw','self destruct'], 21:['harden'], 26:['earthquake'], 31:['explosion'] },
-                moves:["tackle","defense curl","rock throw","magnitude"] },
+                moves:["tackle","defense curl","rock throw","earthquake"] },
 
   golem:      { id:76, name:"GOLEM",      type:["rock","ground"],  hp:80, atk:110,def:130,spd:45, spc:55,  baseExp:177, growthRate:'medium_fast', catchRate:45,
                 learnset:{ 1:['tackle','defense curl','rock throw','self destruct'] },
@@ -765,23 +765,19 @@ const POKEMON = {
 // Gen I uses 10-slot encounter tables; rates approximated from slot counts × 10%.
 const ENCOUNTER_TABLES = {
   route_1: {
-    // Source: Bulbapedia — Route 1 (Gen I): Pidgey 50%, Rattata 50% in Red/Blue
+    // [B8] Source: Bulbapedia — Route 1 (Gen I Red): Pidgey 55%, Rattata 45%
     tall_grass: [
-      { species:'pidgey',  levelMin:2, levelMax:5, rate:50 },
-      { species:'rattata', levelMin:2, levelMax:4, rate:50 },
+      { species:'pidgey',  levelMin:2, levelMax:5, rate:55 },
+      { species:'rattata', levelMin:2, levelMax:5, rate:45 },
     ],
   },
   viridian_forest: {
-    // Source: Bulbapedia — Viridian Forest (Gen I, Red version)
-    // Red: Caterpie heavy, Weedle also present, Pikachu rare
+    // [B8] Source: Bulbapedia — Viridian Forest (Gen I Red): Caterpie-heavy, no Pikachu in Red
     tall_grass: [
-      { species:'caterpie',  levelMin:3, levelMax:5, rate:35 },
-      { species:'weedle',    levelMin:3, levelMax:5, rate:35 },
-      { species:'metapod',   levelMin:4, levelMax:6, rate:10 },
-      { species:'kakuna',    levelMin:4, levelMax:6, rate:10 },
-      { species:'pidgey',    levelMin:4, levelMax:8, rate:7  },
-      { species:'pikachu',   levelMin:3, levelMax:5, rate:2  },
-      { species:'pidgeotto', levelMin:9, levelMax:9, rate:1  },
+      { species:'caterpie',  levelMin:3, levelMax:5, rate:45 },
+      { species:'metapod',   levelMin:4, levelMax:7, rate:20 },
+      { species:'weedle',    levelMin:3, levelMax:5, rate:25 },
+      { species:'kakuna',    levelMin:4, levelMax:7, rate:10 },
     ],
   },
   route_2_north: {
