@@ -485,6 +485,7 @@ function newGame(seed) {
       badges: 0,
       steps: 0,
       flags: {},
+      pc: [],   // PC box storage — up to 240 Pokémon (Gen I: 8 boxes × 30)
     },
     battle: null,
     dialogue: null,
@@ -740,7 +741,57 @@ function processAction(state, action) {
       return martBuy(state, action);
     }
 
-    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy`;
+    if (type === 'pc_view') {
+      const pc = state.player.pc || [];
+      if (!pc.length) {
+        state.message = 'The PC is empty.';
+      } else {
+        const list = pc.map((p, i) => `[${i}] ${p.name} Lv.${p.level} HP:${p.currentHp}/${p.maxHp}`).join('\n');
+        state.message = `PC Storage:\n${list}`;
+      }
+      return state;
+    }
+
+    if (type === 'pc_withdraw') {
+      const pc = state.player.pc || [];
+      const idx = action.index ?? 0;
+      if (idx < 0 || idx >= pc.length) {
+        state.message = 'No Pokémon at that PC slot.';
+        return state;
+      }
+      if (state.player.party.length >= 6) {
+        state.message = 'Your party is full! Deposit a Pokémon first.';
+        return state;
+      }
+      const pokemon = pc[idx];
+      state.player.pc = pc.filter((_, i) => i !== idx);
+      state.player.party.push(pokemon);
+      state.message = `${pokemon.name} was withdrawn from the PC.`;
+      return state;
+    }
+
+    if (type === 'pc_deposit') {
+      const pIdx = action.partyIndex ?? action.party_index ?? 0;
+      if (pIdx < 0 || pIdx >= state.player.party.length) {
+        state.message = 'No Pokémon at that party slot.';
+        return state;
+      }
+      if (state.player.party.length <= 1) {
+        state.message = "Can't deposit your last Pokémon!";
+        return state;
+      }
+      if ((state.player.pc || []).length >= 240) {
+        state.message = 'PC storage is full!';
+        return state;
+      }
+      const pokemon = state.player.party[pIdx];
+      state.player.party = state.player.party.filter((_, i) => i !== pIdx);
+      state.player.pc = [...(state.player.pc || []), pokemon];
+      state.message = `${pokemon.name} was deposited into the PC.`;
+      return state;
+    }
+
+    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, pc_view, pc_withdraw, pc_deposit`;
     return state;
   }
 
@@ -1277,10 +1328,15 @@ function processBattleAction(state, action, log) {
     if (result.caught) {
       battle.outcome = 'caught';
       msgs.push(`${enemy.name} was caught!`);
+      const caught = JSON.parse(JSON.stringify(enemy));
       if (state.player.party.length < 6) {
-        state.player.party.push(JSON.parse(JSON.stringify(enemy)));
+        state.player.party.push(caught);
+        msgs.push(`${caught.name} was added to your party!`);
+      } else if ((state.player.pc || []).length < 240) {
+        state.player.pc = [...(state.player.pc || []), caught];
+        msgs.push(`${caught.name} was sent to the PC!`);
       } else {
-        msgs.push(`${enemy.name} was sent to the PC box (party full).`);
+        msgs.push(`PC storage is full! ${caught.name} was released.`);
       }
       state.screen = 'overworld'; state.battle = null;
     } else {
@@ -1383,6 +1439,7 @@ function getView(state) {
       bag: state.player.bag,
       money: state.player.money,
       badges: state.player.badges,
+      pc_count: (state.player.pc || []).length,
       party: state.player.party.map(p => {
         const gr = p.growthRate || 'medium_fast';
         const nextLvExp = p.level < 100 ? expForLevel(p.level + 1, gr) : null;
@@ -1429,6 +1486,18 @@ function getView(state) {
         ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)']
         : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball|ultra_ball|master_ball)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
     };
+  }
+  if (state.screen === 'overworld') {
+    view.available_actions = [
+      'move (direction: up|down|left|right)',
+      'talk',
+      'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)',
+      'mart_view',
+      'mart_buy (item: ..., quantity: N)',
+      'pc_view',
+      'pc_withdraw (index: 0-N)',
+      'pc_deposit (party_index: 0-5)',
+    ];
   }
   if (state.dialogue) {
     view.dialogue = {
