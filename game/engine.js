@@ -339,6 +339,8 @@ function makePokemon(speciesKey, level, opts = {}) {
     focusEnergy: false,    // Focus Energy: Gen I bug — quartered (not quadrupled) crit rate
     substituteHp: 0,       // Substitute proxy HP (0 = no sub)
     lastDamageTaken: 0,    // Counter: tracks last physical damage received
+    lastPhysicalMoveType: null, // Counter: type of last physical move (must be Normal/Fighting)
+    glitchInvulnerable: false, // [H9] Fly/Dig glitch: invulnerability persists if release fails
     disabledMove: null,    // Disable: which move is disabled
     disabledTurns: 0,      // Disable: turns remaining
     lastMoveUsed: null,    // Mirror Move: opponent's last move
@@ -369,6 +371,8 @@ function resetVolatileState(pokemon) {
   pokemon.focusEnergy = false;
   pokemon.substituteHp = 0;
   pokemon.lastDamageTaken = 0;
+  pokemon.lastPhysicalMoveType = null;
+  pokemon.glitchInvulnerable = false;
   pokemon.disabledMove = null;
   pokemon.disabledTurns = 0;
   pokemon.lastMoveUsed = null;
@@ -400,7 +404,9 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
   // #55: Gen I uses BASE Speed (not stat-modified Speed) for crit calculation
   const critMult = mv.effect?.crit_rate || 1;
   const baseSpd = POKEMON[attacker.species]?.spd ?? attacker.spd;
-  const critThreshold = Math.min(255, Math.floor(baseSpd * critMult / 2));
+  let critThreshold = Math.min(255, Math.floor(baseSpd * critMult / 2));
+  // [H2] Gen I Focus Energy bug: flag is supposed to ×4 crits but actually ÷4 due to bit-shift error
+  if (attacker.focusEnergy) critThreshold = Math.max(1, Math.floor(critThreshold / 4));
   const isCrit = (roll(256) - 1) < critThreshold;
 
   // #17: Special moves use spc/spc; physical use atk/def
@@ -733,10 +739,13 @@ function applyMoveEffect(moveName, target, source) {
     }
   }
 
-  // [C7] Counter — deal 2× the last physical damage the user received
+  // [C7/H7] Counter — deal 2× the last physical damage the user received
+  // Gen I restriction: only counters Normal or Fighting type physical moves
   if (e.counter) {
+    const lastType = source.lastPhysicalMoveType;
     const counterDmg = 2 * (source.lastDamageTaken || 0);
-    if (counterDmg <= 0) {
+    const validType = lastType === 'normal' || lastType === 'fighting';
+    if (counterDmg <= 0 || !validType) {
       msgs.push(`${source.name} used COUNTER! But it failed!`);
     } else {
       target.currentHp = Math.max(0, target.currentHp - counterDmg);
@@ -2212,9 +2221,12 @@ function processBattleAction(state, action, log) {
       const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
       const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
       defender.currentHp = Math.max(0, defender.currentHp - dmg);
-      // [C7] Counter: track last physical damage received by the defender
+      // [C7/H7] Counter: track last physical damage received + move type for type restriction
       const mvCat = MOVES[mvName]?.cat;
-      if (mvCat === 'physical') defender.lastDamageTaken = dmg;
+      if (mvCat === 'physical') {
+        defender.lastDamageTaken = dmg;
+        defender.lastPhysicalMoveType = MOVES[mvName]?.type ?? null;
+      }
       const effMsg = effectiveness > 1 ? " It's super effective!"
                    : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
                    : effectiveness === 0 ? " It has no effect!" : '';
@@ -2384,11 +2396,17 @@ function processBattleAction(state, action, log) {
     // [C8] Two-turn move: if charging, override move choice with the stored move (turn 2)
     let moveName;
     let isReleasing = false;   // [C8] true on turn 2 of a two-turn move (skip re-charge check)
+    let releaseInvulnerable = false;  // [H9] was the releasing move invulnerable?
     if (active.chargingMove) {
       moveName = active.chargingMove.move;
+      releaseInvulnerable = !!active.chargingMove.invulnerable;
       active.chargingMove = null;   // clear before executing
       isReleasing = true;
+      // [H9] Pre-set glitch flag; cleared only if the attack actually fires this turn
+      if (releaseInvulnerable) active.glitchInvulnerable = true;
     } else {
+      // Normal turn — clear any lingering glitch invulnerability
+      active.glitchInvulnerable = false;
       moveName = active.moves[action.move_index ?? 0];
     }
     if (!moveName) { state.message = 'Invalid move index (0-3).'; return state; }
@@ -2510,11 +2528,18 @@ function processBattleAction(state, action, log) {
 
     if (playerFirst) {
       doAttack(active, moveName, enemy, true);
+      // [H9] If attack fired successfully, clear the glitch invulnerability
+      if (!getActive().chargingMove) getActive().glitchInvulnerable = false;
       if (state.battle && !checkFaint()) {
         // #56: enemy can't act if bound
         if (!getEnemy().boundState) {
-          doAttack(getEnemy(), enemyMv, getActive(), false);
-          checkFaint();
+          // [H9] Gen I glitch: Fly/Dig invulnerability persists if release turn fails
+          if (getActive().glitchInvulnerable && enemyMv !== 'swift') {
+            msgs.push(`${getEnemy().name} used ${enemyMv.toUpperCase()}! But it missed! (target is in the ${moveName === 'fly' ? 'air' : 'ground'}!)`);
+          } else {
+            doAttack(getEnemy(), enemyMv, getActive(), false);
+            checkFaint();
+          }
         }
       }
     } else {
@@ -2524,6 +2549,8 @@ function processBattleAction(state, action, log) {
       }
       if (state.battle && !checkFaint()) {
         doAttack(getActive(), moveName, getEnemy(), true);
+        // [H9] Clear glitch invulnerability after player attacks on non-playerFirst turn
+        if (!getActive().chargingMove) getActive().glitchInvulnerable = false;
         if (state.battle) checkFaint();
       }
     }
