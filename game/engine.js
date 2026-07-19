@@ -59,6 +59,12 @@ const ITEM_NAMES = {
   ultra_ball:    'Ultra Ball',
   potion:        'Potion',
   super_potion:  'Super Potion',
+  hyper_potion:  'Hyper Potion',
+  max_potion:    'Max Potion',
+  full_restore:  'Full Restore',
+  revive:        'Revive',
+  max_revive:    'Max Revive',
+  rare_candy:    'Rare Candy',
   antidote:      'Antidote',
   paralyze_heal: 'Parlyz Heal',
   burn_heal:     'Burn Heal',
@@ -870,8 +876,9 @@ function newGame(seed) {
       party: [],
       bag: {
         poke_ball: 5,    great_ball: 0,  ultra_ball: 0,  master_ball: 0,
-        potion: 5,       super_potion: 0,
-        antidote: 0,     paralyze_heal: 0, burn_heal: 0, awakening: 0, full_heal: 0,
+        potion: 5,       super_potion: 0,  hyper_potion: 0, max_potion: 0, full_restore: 0,
+        revive: 0,       max_revive: 0,    rare_candy: 0,
+        antidote: 0,     paralyze_heal: 0, burn_heal: 0, awakening: 0,  full_heal: 0,
         // legacy key kept for save-state compat
         pokeball: 0,
         // evolution stones
@@ -1800,8 +1807,8 @@ function useItemOverworld(state, action) {
   const bag = state.player.bag;
   const itemName = ITEM_NAMES[item] || item;
 
-  if (item === 'potion' || item === 'super_potion') {
-    const heal = item === 'potion' ? 20 : 50;
+  if (item === 'potion' || item === 'super_potion' || item === 'hyper_potion') {
+    const heal = item === 'potion' ? 20 : item === 'super_potion' ? 50 : 200;
     if (!(bag[item] > 0)) { state.message = `You have no ${itemName}s.`; return state; }
     if (target.currentHp <= 0) { state.message = `${target.name} has fainted!`; return state; }
     if (target.currentHp >= target.maxHp) { state.message = `${target.name}'s HP is already full!`; return state; }
@@ -1809,6 +1816,47 @@ function useItemOverworld(state, action) {
     target.currentHp += healed;
     bag[item]--;
     state.message = `Used ${itemName} on ${target.name}. +${healed} HP. (${target.currentHp}/${target.maxHp})`;
+
+  } else if (item === 'max_potion') {
+    if (!(bag.max_potion > 0)) { state.message = 'You have no Max Potions.'; return state; }
+    if (target.currentHp <= 0) { state.message = `${target.name} has fainted!`; return state; }
+    if (target.currentHp >= target.maxHp) { state.message = `${target.name}'s HP is already full!`; return state; }
+    const healed = target.maxHp - target.currentHp;
+    target.currentHp = target.maxHp;
+    bag.max_potion--;
+    state.message = `Used Max Potion on ${target.name}. +${healed} HP. HP fully restored!`;
+
+  } else if (item === 'full_restore') {
+    if (!(bag.full_restore > 0)) { state.message = 'You have no Full Restores.'; return state; }
+    if (target.currentHp <= 0) { state.message = `${target.name} has fainted!`; return state; }
+    const hpHealed = target.maxHp - target.currentHp;
+    target.currentHp = target.maxHp;
+    const cured = target.status;
+    target.status = null; target.statusTurns = 0;
+    target.confused = false; target.confusedTurns = 0;
+    bag.full_restore--;
+    state.message = `Used Full Restore on ${target.name}. HP fully restored${cured ? ` and ${cured} cured` : ''}!`;
+
+  } else if (item === 'revive' || item === 'max_revive') {
+    if (!(bag[item] > 0)) { state.message = `You have no ${itemName}s.`; return state; }
+    if (target.currentHp > 0) { state.message = `${target.name} hasn't fainted!`; return state; }
+    const reviveHp = item === 'max_revive' ? target.maxHp : Math.max(1, Math.floor(target.maxHp / 2));
+    target.currentHp = reviveHp;
+    target.status = null; target.statusTurns = 0;
+    bag[item]--;
+    state.message = `Used ${itemName} on ${target.name}. ${target.name} was revived with ${reviveHp} HP!`;
+
+  } else if (item === 'rare_candy') {
+    if (!(bag.rare_candy > 0)) { state.message = 'You have no Rare Candies.'; return state; }
+    if (target.level >= 100) { state.message = `${target.name} is already at Level 100!`; return state; }
+    bag.rare_candy--;
+    const msgs = [];
+    target.level++;
+    target.exp = expForLevel(target.level, target.growthRate);
+    recalcStats(target);
+    msgs.push(`${target.name} grew to Level ${target.level}!`);
+    tryLevelUp(target, msgs, state);
+    state.message = msgs.join(' ');
 
   } else if (item === 'antidote') {
     if (!(bag.antidote > 0)) { state.message = 'You have no Antidotes.'; return state; }
@@ -1977,7 +2025,7 @@ function useItemOverworld(state, action) {
     }
 
     // fallback — unknown item
-    state.message = `Can't use ${itemName} here. Try: potion, super_potion, antidote, paralyze_heal, burn_heal, awakening, full_heal, escape_rope, or an evolution stone.`;
+    state.message = `Can't use ${itemName} here. Try: potion, super_potion, hyper_potion, max_potion, full_restore, revive, max_revive, rare_candy, antidote, paralyze_heal, burn_heal, awakening, full_heal, escape_rope, or an evolution stone.`;
   }
   return state;
 }
@@ -2848,8 +2896,8 @@ function processBattleAction(state, action, log) {
     const itemName = ITEM_NAMES[item] || item;
     let used = false;
 
-    if ((item === 'potion' || item === 'super_potion') && bag[item] > 0) {
-      const heal = item === 'potion' ? 20 : 50;
+    if ((item === 'potion' || item === 'super_potion' || item === 'hyper_potion') && bag[item] > 0) {
+      const heal = item === 'potion' ? 20 : item === 'super_potion' ? 50 : 200;
       if (target.currentHp > 0) {
         const healed = Math.min(heal, target.maxHp - target.currentHp);
         target.currentHp += healed;
@@ -2857,6 +2905,25 @@ function processBattleAction(state, action, log) {
         msgs.push(`Used ${itemName} on ${target.name}. +${healed} HP.`);
         used = true;
       }
+    } else if ((item === 'max_potion' || item === 'full_restore') && (bag[item] ?? 0) > 0 && target.currentHp > 0) {
+      const hpBefore = target.currentHp;
+      target.currentHp = target.maxHp;
+      bag[item]--;
+      if (item === 'full_restore') {
+        const cured = target.status; target.status = null; target.statusTurns = 0;
+        target.confused = false; target.confusedTurns = 0;
+        msgs.push(`Used Full Restore on ${target.name}. HP fully restored${cured ? ` and ${cured} cured` : ''}!`);
+      } else {
+        msgs.push(`Used Max Potion on ${target.name}. +${target.maxHp - hpBefore} HP. HP fully restored!`);
+      }
+      used = true;
+    } else if ((item === 'revive' || item === 'max_revive') && (bag[item] ?? 0) > 0 && target.currentHp <= 0) {
+      const reviveHp = item === 'max_revive' ? target.maxHp : Math.max(1, Math.floor(target.maxHp / 2));
+      target.currentHp = reviveHp;
+      target.status = null; target.statusTurns = 0;
+      bag[item]--;
+      msgs.push(`Used ${itemName} on ${target.name}. ${target.name} was revived with ${reviveHp} HP!`);
+      used = true;
     } else if (item === 'antidote' && bag.antidote > 0 && target.status === 'poison') {
       target.status = null;
       bag.antidote--;
