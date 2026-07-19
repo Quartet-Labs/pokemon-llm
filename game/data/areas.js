@@ -303,10 +303,10 @@ function buildRoute1() {
     let row = '';
     for (let x = 0; x < 20; x++) {
       if (x === 0 || x === 19) { row += 'T'; continue; }
+      // [E4] Ledges at specific rows (must come before path check — was dead code)
+      if ((y === 10 || y === 20) && x >= 7 && x <= 12) { row += 'L'; continue; }
       // Path corridor
       if (x >= 7 && x <= 12) { row += 'P'; continue; }
-      // Ledges at specific rows (can jump south)
-      if ((y === 10 || y === 20) && x >= 7 && x <= 12) { row += 'L'; continue; }
       // Tall grass patches — S-curve pattern
       const inGrassPatch = (
         (y >= 5  && y <= 12 && x >= 2  && x <= 6) ||
@@ -792,6 +792,7 @@ const PEWTER_GYM = {
         "Its bearer's POKéMON become more powerful!",
         "The technique FLASH can now be used any time!",
         "Wait! Take this with you! TM34 contains BIDE.",
+        { give: 'tm34', qty: 1 },
         "There are all kinds of trainers in the world! Go to the GYM in CERULEAN and test your abilities!",
       ],
     },
