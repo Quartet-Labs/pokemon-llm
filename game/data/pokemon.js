@@ -809,15 +809,19 @@ const ENCOUNTER_TABLES = {
   },
 };
 
-function rollEncounter(areaId, terrain) {
+// #B9: rollFn(n) mirrors the engine's roll(n) — returns 1..n — for seeded RNG support.
+// Callers in engine.js pass the seeded roll() function; defaults to Math.random() fallback.
+function rollEncounter(areaId, terrain, rollFn) {
   const table = ENCOUNTER_TABLES[areaId]?.[terrain];
   if (!table) return null;
-  const roll = Math.random() * 100;
+  const rng = rollFn || ((n) => Math.floor(Math.random() * n) + 1);
+  const pct = rng(100);  // 1..100
   let cumulative = 0;
   for (const entry of table) {
     cumulative += entry.rate;
-    if (roll < cumulative) {
-      const level = entry.levelMin + Math.floor(Math.random() * (entry.levelMax - entry.levelMin + 1));
+    if (pct <= cumulative) {
+      const range = entry.levelMax - entry.levelMin;
+      const level = entry.levelMin + (range > 0 ? rng(range + 1) - 1 : 0);
       return { species: entry.species, level };
     }
   }
