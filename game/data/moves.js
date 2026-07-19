@@ -180,10 +180,12 @@ const MOVES = {
   "thunder wave":   { power: 0,  acc: 90,  pp: 20, type: "electric", cat: "status",   effect: { status: "paralysis", chance: 100 } },
   "thunderbolt":    { power: 95, acc: 100, pp: 15, type: "electric", cat: "special",  effect: { status: "paralysis", chance: 10 } },
 
-  // Flying
+  // Flying / HM moves
   // Gust: Normal type in Gen I (became Flying in Gen II)
   "gust":          { power: 40,  acc: 100, pp: 35, type: "normal",   cat: "special",  effect: null },
   "peck":          { power: 35,  acc: 100, pp: 35, type: "flying",   cat: "physical", effect: null },
+  "cut":           { power: 50,  acc: 95,  pp: 30, type: "normal",   cat: "physical", effect: null },
+  "fly":           { power: 70,  acc: 95,  pp: 15, type: "flying",   cat: "physical", effect: null },
 
   // Poison
   "poison sting":  { power: 15,  acc: 100, pp: 35, type: "poison",   cat: "physical", effect: { status: "poison", chance: 30 } },

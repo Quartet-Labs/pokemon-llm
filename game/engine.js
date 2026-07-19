@@ -1,6 +1,7 @@
 'use strict';
 const { POKEMON, rollEncounter } = require('./data/pokemon');
 const { MOVES, getEffectiveness } = require('./data/moves');
+const { TMS, TM_COMPAT } = require('./data/tms.js');
 const {
   AREAS, isWalkable, hasEncounter, getSurroundings,
   getAreaTile, getWarpAt, getSignAt, getNpcAt, T,
@@ -35,6 +36,14 @@ const MART_CATALOG = {
     { item: 'super_potion',  price: 700  },
     { item: 'great_ball',    price: 600  },
     { item: 'ultra_ball',    price: 1200 },
+    { item: 'tm15',          price: 7500 },  // Hyper Beam
+    { item: 'tm24',          price: 5000 },  // Thunderbolt
+    { item: 'tm25',          price: 5500 },  // Thunder
+    { item: 'tm26',          price: 5000 },  // Earthquake
+    { item: 'tm29',          price: 3500 },  // Psychic
+    { item: 'tm38',          price: 5500 },  // Fire Blast
+    { item: 'tm08',          price: 4000 },  // Body Slam
+    { item: 'tm48',          price: 3000 },  // Rock Slide
   ],
 };
 
@@ -485,6 +494,7 @@ function newGame(seed) {
       badges: 0,
       steps: 0,
       flags: {},
+      tms: {},  // e.g. { tm29: 1, tm15: 1 } — TMs the player owns
       pc: [],   // PC box storage — up to 240 Pokémon (Gen I: 8 boxes × 30)
     },
     battle: null,
@@ -791,7 +801,25 @@ function processAction(state, action) {
       return state;
     }
 
-    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, pc_view, pc_withdraw, pc_deposit`;
+    if (type === 'forget_move') {
+      // { type: 'forget_move', partyIndex: 0, moveIndex: 2, newMove: 'psychic' }
+      const pIdx = action.partyIndex ?? 0;
+      const mIdx = action.moveIndex ?? 0;
+      const newMv = action.newMove;
+      const pokemon = state.player.party[pIdx];
+      if (!pokemon) return { ...state, message: 'No Pokémon at that slot.' };
+      if (mIdx < 0 || mIdx >= (pokemon.moves || []).length) return { ...state, message: 'Invalid move index.' };
+      if (!newMv || !MOVES[newMv]) return { ...state, message: `Unknown move: ${newMv}` };
+      const forgot = pokemon.moves[mIdx];
+      pokemon.moves[mIdx] = newMv;
+      if (pokemon.pp) {
+        delete pokemon.pp[forgot];
+        pokemon.pp[newMv] = MOVES[newMv].pp ?? 20;
+      }
+      return { ...state, message: `${pokemon.name} forgot ${forgot.toUpperCase()} and learned ${newMv.toUpperCase()}!` };
+    }
+
+    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, pc_view, pc_withdraw, pc_deposit, forget_move`;
     return state;
   }
 
@@ -892,6 +920,42 @@ function useItemOverworld(state, action) {
     bag.full_heal--;
     state.message = `Used Full Heal on ${target.name}. Cured ${cured}!`;
 
+  } else if (item.startsWith('tm') || item.startsWith('hm')) {
+    // TM/HM use: { type: 'use_item', item: 'tm29', target_index: 0 }
+    const tmData = TMS[item];
+    if (!tmData) return { ...state, message: `Unknown TM/HM: ${item}` };
+    const count = state.player.tms?.[item] ?? 0;
+    if (count < 1) return { ...state, message: `You don't have ${tmData.name}!` };
+
+    // Check compatibility
+    const compat = TM_COMPAT[target.species] || [];
+    if (!compat.includes(item)) {
+      return { ...state, message: `${target.name} can't learn ${tmData.name} (${tmData.move.toUpperCase()}).` };
+    }
+
+    // Check move exists
+    const mvName = tmData.move;
+    if (!MOVES[mvName]) return { ...state, message: `Move ${mvName} not yet implemented.` };
+
+    // Check if already knows it
+    if ((target.moves || []).includes(mvName)) {
+      return { ...state, message: `${target.name} already knows ${mvName.toUpperCase()}!` };
+    }
+
+    // Teach the move (or prompt to forget one if 4 moves)
+    if ((target.moves || []).length < 4) {
+      target.moves = [...(target.moves || []), mvName];
+      if (target.pp) target.pp[mvName] = MOVES[mvName].pp ?? 20;
+      // TMs are single-use (Gen I); HMs are not consumed
+      if (item.startsWith('tm')) {
+        state.player.tms[item] = (state.player.tms[item] || 1) - 1;
+        if (state.player.tms[item] <= 0) delete state.player.tms[item];
+      }
+      return { ...state, message: `${target.name} learned ${mvName.toUpperCase()} from ${tmData.name}!` };
+    } else {
+      return { ...state, message: `${target.name} already knows 4 moves. Use forget_move to replace one first.` };
+    }
+
   } else {
     // Stone evolution items
     const STONE_MAP = {
@@ -951,6 +1015,32 @@ function martBuy(state, action) {
   const { item, quantity = 1 } = action;
   if (!item) { state.message = 'Specify an item to buy. Use mart_view to see the catalog.'; return state; }
   const qty = Math.max(1, Math.floor(quantity));
+
+  // TM/HM purchasing
+  if (item.startsWith('tm') || item.startsWith('hm')) {
+    const tmData = TMS[item];
+    if (!tmData || tmData.price <= 0) {
+      state.message = `CLERK: Sorry, ${item.toUpperCase()} is not for sale here.`;
+      return state;
+    }
+    const catalog = MART_CATALOG[tier];
+    const tmEntry = catalog.find(e => e.item === item);
+    if (!tmEntry) {
+      const avail = catalog.map(e => e.item).join(', ');
+      state.message = `CLERK: Sorry, we don't carry ${item.toUpperCase()} here. We stock: ${avail}.`;
+      return state;
+    }
+    const totalCost = tmData.price * qty;
+    if (state.player.money < totalCost) {
+      state.message = `CLERK: That costs ₽${totalCost} but you only have ₽${state.player.money}. You need ₽${totalCost - state.player.money} more.`;
+      return state;
+    }
+    state.player.money -= totalCost;
+    state.player.tms = state.player.tms || {};
+    state.player.tms[item] = (state.player.tms[item] || 0) + qty;
+    state.message = `CLERK: Bought ${qty}× ${tmData.name} (${tmData.move.toUpperCase()}) for ₽${totalCost}. You have ₽${state.player.money} remaining.`;
+    return state;
+  }
 
   const catalog = MART_CATALOG[tier];
   const entry = catalog.find(e => e.item === item);
@@ -1437,6 +1527,8 @@ function getView(state) {
         ? getSurroundings(area, state.player.x, state.player.y)
         : undefined,
       bag: state.player.bag,
+      tms: state.player.tms || {},
+      tm_count: Object.keys(state.player.tms || {}).length,
       money: state.player.money,
       badges: state.player.badges,
       pc_count: (state.player.pc || []).length,
@@ -1491,9 +1583,10 @@ function getView(state) {
     view.available_actions = [
       'move (direction: up|down|left|right)',
       'talk',
-      'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)',
+      'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal|tm##|hm##, target_index: 0-5)',
       'mart_view',
       'mart_buy (item: ..., quantity: N)',
+      'forget_move (partyIndex: 0-5, moveIndex: 0-3, newMove: "move name")',
       'pc_view',
       'pc_withdraw (index: 0-N)',
       'pc_deposit (party_index: 0-5)',
