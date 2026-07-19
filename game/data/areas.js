@@ -639,6 +639,8 @@ const OAKS_LAB = {
     },
     { id:'oak_lab_aide', x:8, y:6, name:"Oak's Aide", dir:'west',
       dialogue:["OAK'S AIDE: The PROFESSOR is studying POKéMON distribution. Ask him about starting your journey!"] },
+    { id:'pc_terminal_oaks_lab', x:3, y:2, name:"PC", dir:'south',
+      dialogue:["OAK's PC. Use pc_view, pc_deposit, pc_withdraw to manage your POKéMON."] },
   ],
   signs: [
     { x:3, y:4, text:"BULBASAUR — The Seed POKéMON" },

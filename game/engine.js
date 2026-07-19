@@ -1245,6 +1245,16 @@ function processAction(state, action) {
       return martBuy(state, action);
     }
 
+    // [G3] PC actions restricted to areas with a PC terminal (Pokémon Centers / Oak's Lab)
+    if (type === 'pc_view' || type === 'pc_withdraw' || type === 'pc_deposit') {
+      const pcArea = AREAS[state.areaId];
+      const hasPcTerminal = pcArea?.npcs?.some(n => n.id && n.id.includes('pc_terminal'));
+      if (!hasPcTerminal) {
+        state.message = "There's no PC here. Visit a POKéMON CENTER or lab to use BILL's PC.";
+        return state;
+      }
+    }
+
     if (type === 'pc_view') {
       const pc = state.player.pc || [];
       if (!pc.length) {
