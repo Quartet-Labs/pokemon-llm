@@ -311,7 +311,10 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
   // #12: Boulder Badge → +12.5% ATK on physical moves for the player
   const badgeBoost = isSpecial ? 1 : (opts.badgeBoost || 1);
 
-  const atkStat = atkBase * atkStage * burnPenalty * badgeBoost;
+  // [H3] Gen I badge-boost stacking: badge boost is baked into the stored stat, then re-applied
+  // after stat-stage changes, effectively double-applying when stages are non-neutral.
+  const atkBaseBoost = badgeBoost !== 1 ? Math.floor(atkBase * badgeBoost) : atkBase;
+  const atkStat = atkBaseBoost * atkStage * (badgeBoost !== 1 && atkStage !== 1 ? badgeBoost : 1) * burnPenalty;
   const defStat = defBase * defStage;
 
   // #C3: Explosion/Self-Destruct halve the defender's effective Defense (Gen I mechanic)
@@ -412,8 +415,14 @@ function applyStatusEnd(pokemon, opponent) {
     msgs.push(`${pokemon.name} is hurt by ${label}! (-${dmg} HP)`);
   }
   // [A13] Leech Seed drain + heal opponent
+  // [H5] Gen I quirk: if also Toxic-poisoned, Leech Seed shares the escalating counter.
+  // Toxic counter is incremented once here, then both Leech Seed and Toxic use the same N.
+  if (pokemon.status === 'toxic') {
+    pokemon.toxicCounter = (pokemon.toxicCounter || 0) + 1;
+  }
   if (pokemon.leechSeeded && pokemon.currentHp > 0) {
-    const drainDmg = Math.max(1, Math.floor(pokemon.maxHp / 16));
+    const lsN = (pokemon.status === 'toxic') ? pokemon.toxicCounter : 1;
+    const drainDmg = Math.max(1, Math.floor(pokemon.maxHp * lsN / 16));
     pokemon.currentHp = Math.max(0, pokemon.currentHp - drainDmg);
     msgs.push(`${pokemon.name} had its energy drained by Leech Seed! (-${drainDmg} HP)`);
     if (opponent && opponent.currentHp > 0) {
@@ -436,9 +445,9 @@ function applyStatusEnd(pokemon, opponent) {
       msgs.push(`${pokemon.name} is hurt by the bind! (-${dmg} HP)`);
     }
   }
-  // [A12] Toxic — escalating N/16 damage per turn
+  // [A12] Toxic — escalating N/16 damage per turn; counter already incremented above if leechSeeded
   if (pokemon.status === 'toxic') {
-    pokemon.toxicCounter = (pokemon.toxicCounter || 0) + 1;
+    if (!pokemon.leechSeeded) pokemon.toxicCounter = (pokemon.toxicCounter || 0) + 1;  // [H5] shared counter
     const dmg = Math.max(1, Math.floor(pokemon.maxHp * pokemon.toxicCounter / 16));
     pokemon.currentHp = Math.max(0, pokemon.currentHp - dmg);
     msgs.push(`${pokemon.name} is badly poisoned! (-${dmg} HP)`);
@@ -506,10 +515,16 @@ function applyMoveEffect(moveName, target, source) {
   }
 
   // [C6] Recover/Soft-Boiled/Milk Drink — heal fraction of max HP
+  // [H6] Gen I quirk: fails if HP deficit ≡ 0 (mod 256) and not already full
   if (e.heal) {
-    const healAmt = Math.floor(source.maxHp / e.heal);
-    source.currentHp = Math.min(source.maxHp, source.currentHp + healAmt);
-    msgs.push(`${source.name} restored ${healAmt} HP!`);
+    const missing = source.maxHp - source.currentHp;
+    if (missing > 0 && missing % 256 === 0) {
+      msgs.push(`But it failed! (HP deficit is a multiple of 256)`); // [H6] Gen I quirk
+    } else {
+      const healAmt = Math.floor(source.maxHp / e.heal);
+      source.currentHp = Math.min(source.maxHp, source.currentHp + healAmt);
+      msgs.push(`${source.name} restored ${healAmt} HP!`);
+    }
   }
 
   // [C6] Rest — full heal + sleep 2 turns; clears confusion
@@ -592,6 +607,7 @@ function newGame(seed) {
     areaId: 'pallet_town',
     player: {
       x: 8, y: 9,    // standing in front of Oak's table
+      facing: 'south',  // [E10] player's last move direction
       party: [],
       bag: {
         poke_ball: 5,    great_ball: 0,  ultra_ball: 0,  master_ball: 0,
@@ -1029,13 +1045,18 @@ function processAction(state, action) {
         }
       }
 
+      // [E10] Track facing direction for interact checks
+      if (action.direction) state.player.facing = action.direction;
       state.message = `Moved ${action.direction}. (${nx},${ny}) — ${area.name}`;
       return state;
     }
 
     if (type === 'talk') {
-      // Interact with NPC/sign one tile north (or in all directions)
-      const dirs = [[0,-1],[1,0],[-1,0],[0,1]];
+      // [E10] Interact with the tile the player is facing, with all-direction fallback
+      const FACE_DELTA = { north:[0,-1], south:[0,1], east:[1,0], west:[-1,0] };
+      const [fdx,fdy] = FACE_DELTA[state.player.facing || 'south'] || [0,-1];
+      const facedDirs = [[fdx,fdy],[0,-1],[1,0],[-1,0],[0,1]];  // faced tile first
+      const dirs = [...new Set(facedDirs.map(JSON.stringify))].map(JSON.parse);
       for (const [dx,dy] of dirs) {
         const tx = state.player.x + dx, ty = state.player.y + dy;
         const npc = getNpcAt(area, tx, ty);
@@ -1798,8 +1819,8 @@ function processBattleAction(state, action, log) {
         attacker.currentHp = Math.max(0, attacker.currentHp - recoilDmg);
         msgs.push(`${attacker.name} was hurt by recoil! (-${recoilDmg} HP)`);
       }
-      // [C9] Hyper Beam recharge
-      if (e?.recharge) {
+      // [C9] Hyper Beam recharge — [H4] skip if the defender was KO'd (Gen I quirk)
+      if (e?.recharge && defender.currentHp > 0) {
         attacker.recharging = true;
         msgs.push(`${attacker.name} must recharge!`);
       }
