@@ -12,22 +12,24 @@ function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
 // ── Poké Mart catalog (#20 #21) ───────────────────────────────────────────────
 // Keys match area IDs that have marts; the clerk's `martTier` tag maps here.
+// [F3] Authentic Gen I R/B stock per Bulbapedia mart pages
 const MART_CATALOG = {
   viridian: [
+    // Viridian: Poké Ball/Antidote/Parlyz Heal/Burn Heal (no Potion in R/B — Yellow-only)
     { item: 'poke_ball',     price: 200 },
-    { item: 'potion',        price: 300 },
     { item: 'antidote',      price: 100 },
     { item: 'paralyze_heal', price: 200 },
+    { item: 'burn_heal',     price: 250 },
   ],
   pewter: [
+    // Pewter: Poké Ball/Potion/Escape Rope/Antidote/Burn Heal/Awakening/Parlyz Heal
     { item: 'poke_ball',     price: 200 },
-    { item: 'great_ball',    price: 600 },
     { item: 'potion',        price: 300 },
-    { item: 'super_potion',  price: 700 },
+    { item: 'escape_rope',   price: 550 },
     { item: 'antidote',      price: 100 },
-    // [F3] Pewter mart stock completed
+    { item: 'burn_heal',     price: 250 },
+    { item: 'awakening',     price: 250 },
     { item: 'paralyze_heal', price: 200 },
-    { item: 'full_heal',     price: 600 },
   ],
   celadon: [
     { item: 'fire_stone',    price: 2100 },
@@ -59,6 +61,9 @@ const ITEM_NAMES = {
   super_potion:  'Super Potion',
   antidote:      'Antidote',
   paralyze_heal: 'Parlyz Heal',
+  burn_heal:     'Burn Heal',
+  awakening:     'Awakening',
+  escape_rope:   'Escape Rope',
   full_heal:     'Full Heal',
   fire_stone:    'Fire Stone',
   water_stone:   'Water Stone',
@@ -88,10 +93,15 @@ const TWO_TURN_MOVES = {
 };
 
 // Resolve which mart tier is available for a given area, or null if none.
-function getMartTierForArea(areaId) {
-  if (areaId === 'viridian_city') return 'viridian';
-  if (areaId === 'pewter_city')   return 'pewter';
-  if (areaId === 'celadon_city')  return 'celadon';
+// [F3] poke_mart / pewter_mart interiors also resolve; Viridian gated by Oak's Parcel delivery.
+function getMartTierForArea(areaId, state) {
+  if (areaId === 'viridian_city' || areaId === 'poke_mart') {
+    // Viridian mart is locked until the player has delivered Oak's Parcel (has_pokedex flag)
+    if (state && !state.player.flags?.has_pokedex) return null;
+    return 'viridian';
+  }
+  if (areaId === 'pewter_city' || areaId === 'pewter_mart') return 'pewter';
+  if (areaId === 'celadon_city') return 'celadon';
   return null;
 }
 
@@ -861,7 +871,7 @@ function newGame(seed) {
       bag: {
         poke_ball: 5,    great_ball: 0,  ultra_ball: 0,  master_ball: 0,
         potion: 5,       super_potion: 0,
-        antidote: 0,     paralyze_heal: 0, full_heal: 0,
+        antidote: 0,     paralyze_heal: 0, burn_heal: 0, awakening: 0, full_heal: 0,
         // legacy key kept for save-state compat
         pokeball: 0,
         // evolution stones
@@ -1696,7 +1706,7 @@ function processAction(state, action) {
       const { item, qty = 1 } = action;
       if (!item) return { ...state, message: 'Specify an item to sell.' };
       const areaId = state.areaId;
-      const martTier = getMartTierForArea(areaId);
+      const martTier = getMartTierForArea(areaId, state);
       const catalog = MART_CATALOG[martTier] || [];
       const entry = catalog.find(e => e.item === item);
       const sellPrice = entry ? Math.floor(entry.price / 2) : 50;  // default 50 if not in catalog
@@ -1756,11 +1766,13 @@ function handleWarp(state, warp, area) {
   }
   if (destId === 'poke_mart') {
     // The mart tier is resolved from the city the player is in
-    const tier = getMartTierForArea(state.areaId);
+    const tier = getMartTierForArea(state.areaId, state);
     if (tier) {
       const catalog = MART_CATALOG[tier];
       const lines = catalog.map(e => `${ITEM_NAMES[e.item] || e.item} ₽${e.price}`).join(', ');
       state.message = `CLERK: Welcome to the POKé MART! We have: ${lines}. Use mart_buy to purchase. You have ₽${state.player.money}.`;
+    } else if (state.areaId === 'viridian_city' || state.areaId === 'poke_mart') {
+      state.message = "CLERK: Oh, I'm sorry — I can't help you right now. Could you please bring PROF. OAK's parcel to him first?";
     } else {
       state.message = "CLERK: Welcome to the POKé MART! Use mart_view to see what's available.";
     }
@@ -1809,6 +1821,21 @@ function useItemOverworld(state, action) {
     target.status = null;
     bag.paralyze_heal--;
     state.message = `Used Parlyz Heal on ${target.name}. ${target.name} is cured of paralysis!`;
+
+  } else if (item === 'burn_heal') {
+    if (!(bag.burn_heal > 0)) { state.message = 'You have no Burn Heals.'; return state; }
+    if (target.status !== 'burn') { state.message = `${target.name} is not burned.`; return state; }
+    target.status = null;
+    bag.burn_heal--;
+    state.message = `Used Burn Heal on ${target.name}. ${target.name}'s burn was healed!`;
+
+  } else if (item === 'awakening') {
+    if (!(bag.awakening > 0)) { state.message = 'You have no Awakenings.'; return state; }
+    if (target.status !== 'sleep') { state.message = `${target.name} is not asleep.`; return state; }
+    target.status = null;
+    target.statusTurns = 0;
+    bag.awakening--;
+    state.message = `Used Awakening on ${target.name}. ${target.name} woke up!`;
 
   } else if (item === 'full_heal') {
     if (!(bag.full_heal > 0)) { state.message = 'You have no Full Heals.'; return state; }
@@ -1898,6 +1925,23 @@ function useItemOverworld(state, action) {
       return { ...state, message: `${target.name} already knows 4 moves. Use forget_move to replace one first.` };
     }
 
+  } else if (item === 'escape_rope') {
+    // [F3] Escape Rope — teleport to last visited Pokémon Center area
+    if (!((bag.escape_rope ?? 0) > 0)) { state.message = 'You have no Escape Ropes.'; return state; }
+    const lc = state.player.lastCenter;
+    if (!lc || !AREAS[lc.areaId]) {
+      state.message = "Can't use Escape Rope here. You haven't visited a POKéMON CENTER yet!";
+      return state;
+    }
+    bag.escape_rope = (bag.escape_rope || 1) - 1;
+    state.areaId = lc.areaId;
+    state.player.x = lc.x;
+    state.player.y = lc.y;
+    state.screen = 'overworld';
+    state.dialogue = null;
+    state.message = 'Used Escape Rope! Returned to the last POKéMON CENTER area.';
+    return state;
+
   } else {
     // Stone evolution items
     const STONE_MAP = {
@@ -1930,16 +1974,20 @@ function useItemOverworld(state, action) {
       return { ...state, message: msgs.join(' ') };
     }
 
-    state.message = `Can't use ${itemName} here. Try: potion, super_potion, antidote, paralyze_heal, full_heal, or an evolution stone.`;
+    // fallback — unknown item
+    state.message = `Can't use ${itemName} here. Try: potion, super_potion, antidote, paralyze_heal, burn_heal, awakening, full_heal, escape_rope, or an evolution stone.`;
   }
   return state;
 }
 
 // ── Mart actions (#20 #21) ────────────────────────────────────────────────────
 function martView(state) {
-  const tier = getMartTierForArea(state.areaId);
+  const tier = getMartTierForArea(state.areaId, state);
   if (!tier) {
-    state.message = "There's no Poké Mart here. Travel to Viridian City or Pewter City.";
+    const isViridian = state.areaId === 'viridian_city' || state.areaId === 'poke_mart';
+    state.message = isViridian
+      ? "CLERK: Sorry, we're not open for business right now. Please bring PROF. OAK's parcel to him first!"
+      : "There's no Poké Mart here. Travel to Viridian City or Pewter City.";
     return state;
   }
   const catalog = MART_CATALOG[tier];
@@ -1949,9 +1997,12 @@ function martView(state) {
 }
 
 function martBuy(state, action) {
-  const tier = getMartTierForArea(state.areaId);
+  const tier = getMartTierForArea(state.areaId, state);
   if (!tier) {
-    state.message = "There's no Poké Mart here. Travel to Viridian City or Pewter City.";
+    const isViridian = state.areaId === 'viridian_city' || state.areaId === 'poke_mart';
+    state.message = isViridian
+      ? "CLERK: Sorry, we're not open for business right now. Please bring PROF. OAK's parcel to him first!"
+      : "There's no Poké Mart here. Travel to Viridian City or Pewter City.";
     return state;
   }
   const { item, quantity = 1 } = action;
@@ -2814,6 +2865,16 @@ function processBattleAction(state, action, log) {
       bag.paralyze_heal--;
       msgs.push(`Used Parlyz Heal on ${target.name}. Cured paralysis!`);
       used = true;
+    } else if (item === 'burn_heal' && bag.burn_heal > 0 && target.status === 'burn') {
+      target.status = null;
+      bag.burn_heal--;
+      msgs.push(`Used Burn Heal on ${target.name}. Burn healed!`);
+      used = true;
+    } else if (item === 'awakening' && bag.awakening > 0 && target.status === 'sleep') {
+      target.status = null; target.statusTurns = 0;
+      bag.awakening--;
+      msgs.push(`Used Awakening on ${target.name}. ${target.name} woke up!`);
+      used = true;
     } else if (item === 'full_heal' && bag.full_heal > 0 && (target.status || target.confused)) {
       const cured = target.status || 'confusion';
       target.status = null; target.statusTurns = 0;
@@ -2945,8 +3006,8 @@ function getView(state) {
       shift_offer: state.shiftOffer || undefined,
       // #5: no throw_ball in trainer battles
       available_actions: isTrainer
-        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)', 'switch_pokemon (party_index: 0-5) — alias for switch']
-        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball|ultra_ball|master_ball)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
+        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|burn_heal|awakening|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)', 'switch_pokemon (party_index: 0-5) — alias for switch']
+        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball|ultra_ball|master_ball)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|burn_heal|awakening|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
     };
   }
   if (state.screen === 'overworld') {
@@ -2954,7 +3015,7 @@ function getView(state) {
       'move (direction: north|south|east|west)',
       'talk',
       'cut',
-      'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal|pp_up|pp_max|tm##|hm##, target_index: 0-5, moveIndex: 0-3 for pp_up/pp_max)',
+      'use_item (item: potion|super_potion|antidote|paralyze_heal|burn_heal|awakening|full_heal|pp_up|pp_max|tm##|hm##, target_index: 0-5, moveIndex: 0-3 for pp_up/pp_max)',
       'mart_view',
       'mart_buy (item: ..., quantity: N)',
       'mart_sell (item: ..., qty: N)',
