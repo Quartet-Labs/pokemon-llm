@@ -25,6 +25,17 @@ const MART_CATALOG = {
     { item: 'super_potion',  price: 700 },
     { item: 'antidote',      price: 100 },
   ],
+  celadon: [
+    { item: 'fire_stone',    price: 2100 },
+    { item: 'water_stone',   price: 2100 },
+    { item: 'thunder_stone', price: 2100 },
+    { item: 'leaf_stone',    price: 2100 },
+    { item: 'moon_stone',    price: 2100 },
+    { item: 'potion',        price: 300  },
+    { item: 'super_potion',  price: 700  },
+    { item: 'great_ball',    price: 600  },
+    { item: 'ultra_ball',    price: 1200 },
+  ],
 };
 
 // Friendly display names for items
@@ -37,12 +48,18 @@ const ITEM_NAMES = {
   antidote:      'Antidote',
   paralyze_heal: 'Parlyz Heal',
   full_heal:     'Full Heal',
+  fire_stone:    'Fire Stone',
+  water_stone:   'Water Stone',
+  thunder_stone: 'Thunder Stone',
+  leaf_stone:    'Leaf Stone',
+  moon_stone:    'Moon Stone',
 };
 
 // Resolve which mart tier is available for a given area, or null if none.
 function getMartTierForArea(areaId) {
   if (areaId === 'viridian_city') return 'viridian';
   if (areaId === 'pewter_city')   return 'pewter';
+  if (areaId === 'celadon_city')  return 'celadon';
   return null;
 }
 
@@ -93,7 +110,85 @@ function tryLevelUp(pokemon, msgs) {
     // Heal HP gained from the stat increase
     pokemon.currentHp = Math.min(pokemon.maxHp, pokemon.currentHp + (pokemon.maxHp - oldMaxHp));
     msgs.push(`${pokemon.name} grew to Lv.${pokemon.level}!`);
+
+    // Learn new moves from learnset at this level
+    const learnset = base.learnset || {};
+    const newMoves = learnset[pokemon.level] || [];
+    for (const mv of newMoves) {
+      if (!(pokemon.moves || []).includes(mv) && MOVES[mv]) {
+        if ((pokemon.moves || []).length < 4) {
+          pokemon.moves = [...(pokemon.moves || []), mv];
+          if (pokemon.pp) pokemon.pp[mv] = MOVES[mv]?.pp ?? 20;
+          msgs.push(`${pokemon.name} learned ${mv.toUpperCase()}!`);
+        } else {
+          msgs.push(`${pokemon.name} wants to learn ${mv.toUpperCase()}, but already knows 4 moves!`);
+        }
+      }
+    }
+
+    // Check for level-based evolution
+    tryEvolve(pokemon, msgs);
   }
+}
+
+function tryEvolve(pokemon, msgs) {
+  const base = POKEMON[pokemon.species];
+  if (!base) return false;
+  const evo = base.evolvesTo;
+  if (!evo) return false;
+
+  // Handle array (Eevee) or single object
+  const candidates = Array.isArray(evo) ? evo : [evo];
+
+  for (const candidate of candidates) {
+    // Only auto-evolve on level for level-based evolutions
+    if (!candidate.level) continue;
+    if (pokemon.level >= candidate.level) {
+      return doEvolve(pokemon, candidate.species, msgs);
+    }
+  }
+  return false;
+}
+
+function doEvolve(pokemon, targetSpecies, msgs) {
+  const newBase = POKEMON[targetSpecies];
+  if (!newBase) return false;
+
+  const oldName = pokemon.name;
+  const lv = pokemon.level;
+
+  // Update species and name
+  pokemon.species = targetSpecies;
+  pokemon.name = newBase.name;
+  pokemon.types = newBase.type;
+  pokemon.type  = newBase.type;
+  pokemon.growthRate = newBase.growthRate || 'medium_fast';
+
+  // Recalculate stats at current level
+  pokemon.maxHp = Math.floor((newBase.hp  * 2 * lv) / 100) + lv + 10;
+  pokemon.atk   = Math.floor((newBase.atk * 2 * lv) / 100) + 5;
+  pokemon.def   = Math.floor((newBase.def * 2 * lv) / 100) + 5;
+  pokemon.spd   = Math.floor((newBase.spd * 2 * lv) / 100) + 5;
+  pokemon.spc   = Math.floor(((newBase.spc ?? newBase.atk) * 2 * lv) / 100) + 5;
+  // HP bonus from stat increase
+  const hpGain = pokemon.maxHp - (pokemon.currentHp || 0);
+  pokemon.currentHp = Math.min(pokemon.maxHp, (pokemon.currentHp || 0) + Math.max(0, hpGain));
+
+  // Carry over learned moves; also learn any moves the new species learns at
+  // level 1 that aren't already known
+  const newLearnset = newBase.learnset || {};
+  const evo1Moves = newLearnset[1] || [];
+  for (const mv of evo1Moves) {
+    if (!(pokemon.moves || []).includes(mv)) {
+      if ((pokemon.moves || []).length < 4) {
+        pokemon.moves = [...(pokemon.moves || []), mv];
+        if (pokemon.pp) pokemon.pp[mv] = MOVES[mv]?.pp ?? 20;
+      }
+    }
+  }
+
+  msgs.push(`Congratulations! ${oldName} evolved into ${newBase.name}!`);
+  return true;
 }
 
 function makePokemon(speciesKey, level) {
@@ -381,6 +476,8 @@ function newGame(seed) {
         antidote: 0,     paralyze_heal: 0, full_heal: 0,
         // legacy key kept for save-state compat
         pokeball: 0,
+        // evolution stones
+        fire_stone: 0, water_stone: 0, thunder_stone: 0, leaf_stone: 0, moon_stone: 0,
       },
       // #19: canonical ball inventory (mirrors bag ball keys for catch mechanic)
       items: { poke_ball: 5, great_ball: 0, ultra_ball: 0, master_ball: 0 },
@@ -745,7 +842,38 @@ function useItemOverworld(state, action) {
     state.message = `Used Full Heal on ${target.name}. Cured ${cured}!`;
 
   } else {
-    state.message = `Can't use ${itemName} here. Try: potion, super_potion, antidote, paralyze_heal, full_heal`;
+    // Stone evolution items
+    const STONE_MAP = {
+      fire_stone:    'fire_stone',
+      water_stone:   'water_stone',
+      thunder_stone: 'thunder_stone',
+      leaf_stone:    'leaf_stone',
+      moon_stone:    'moon_stone',
+    };
+
+    if (STONE_MAP[item]) {
+      const stone = item;
+      const stoneTarget = state.player.party[targetIndex ?? 0];
+      if (!stoneTarget) return { ...state, message: 'No Pokémon at that party slot.' };
+      const count = state.player.bag?.[stone] ?? state.player.items?.[stone] ?? 0;
+      if (count < 1) return { ...state, message: `No ${stone.replace(/_/g, ' ')} left!` };
+
+      const base = POKEMON[stoneTarget.species];
+      const evo = base?.evolvesTo;
+      const candidates = Array.isArray(evo) ? evo : evo ? [evo] : [];
+      const match = candidates.find(c => c.stone === stone);
+      if (!match) return { ...state, message: `${stoneTarget.name} can't evolve with that stone.` };
+
+      // Deduct stone
+      if (state.player.bag?.[stone] !== undefined) state.player.bag[stone]--;
+      else if (state.player.items?.[stone] !== undefined) state.player.items[stone]--;
+
+      const msgs = [];
+      doEvolve(stoneTarget, match.species, msgs);
+      return { ...state, message: msgs.join(' ') };
+    }
+
+    state.message = `Can't use ${itemName} here. Try: potion, super_potion, antidote, paralyze_heal, full_heal, or an evolution stone.`;
   }
   return state;
 }
