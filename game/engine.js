@@ -214,11 +214,41 @@ function doEvolve(pokemon, targetSpecies, msgs) {
   return true;
 }
 
-function makePokemon(speciesKey, level) {
+// [B1] Gen I level-appropriate movesets: last 4 moves learned at or below `level`
+function getMovesAtLevel(base, level) {
+  const learnset = base.learnset;
+  if (!learnset) return (base.moves || []).slice(0, 4);
+  // Walk learnset in ascending level order; later entries overwrite earlier ones
+  const learned = [];
+  const levels = Object.keys(learnset).map(Number).sort((a, b) => a - b);
+  for (const lv of levels) {
+    if (lv <= level) {
+      for (const mv of learnset[lv]) {
+        const idx = learned.indexOf(mv);
+        if (idx !== -1) learned.splice(idx, 1);  // remove old slot, re-add at end
+        learned.push(mv);
+      }
+    }
+  }
+  // Fallback to static base.moves if learnset produced nothing (shouldn't happen)
+  return learned.length ? learned.slice(-4) : (base.moves || []).slice(0, 4);
+}
+
+function makePokemon(speciesKey, level, opts = {}) {
   const base = POKEMON[speciesKey];
   if (!base) throw new Error(`Unknown species: ${speciesKey}`);
-  const maxHp = Math.floor((base.hp * 2 * level) / 100) + level + 10;
-  const moves = base.moves.slice(0, 4);
+  // [A2] Gen I DVs: 0-15 per stat (randomly assigned unless caller supplies them)
+  const dvs = opts.dvs ?? {
+    atk: roll(16) - 1,
+    def: roll(16) - 1,
+    spd: roll(16) - 1,
+    spc: roll(16) - 1,
+  };
+  // HP DV derived from lowest bit of each other DV
+  const hpDV = ((dvs.atk & 1) << 3) | ((dvs.def & 1) << 2) | ((dvs.spd & 1) << 1) | (dvs.spc & 1);
+  // Gen I stat formula with DVs: floor((base+dv)*2*level/100) + 5 (+level+10 for HP)
+  const maxHp = Math.floor(((base.hp + hpDV) * 2 * level) / 100) + level + 10;
+  const moves = getMovesAtLevel(base, level);
   // Build PP map from move data (default 20 if not defined)
   const pp = {};
   for (const mv of moves) pp[mv] = MOVES[mv]?.pp ?? 20;
@@ -229,11 +259,12 @@ function makePokemon(speciesKey, level) {
     level,
     maxHp,
     currentHp: maxHp,
-    atk:  Math.floor((base.atk * 2 * level) / 100) + 5,
-    def:  Math.floor((base.def * 2 * level) / 100) + 5,
-    spd:  Math.floor((base.spd * 2 * level) / 100) + 5,
+    atk:  Math.floor(((base.atk + dvs.atk) * 2 * level) / 100) + 5,
+    def:  Math.floor(((base.def + dvs.def) * 2 * level) / 100) + 5,
+    spd:  Math.floor(((base.spd + dvs.spd) * 2 * level) / 100) + 5,
     // #17: Special stat for special moves (Gen I uses one Spc for both offence/defence)
-    spc:  Math.floor(((base.spc ?? base.atk) * 2 * level) / 100) + 5,
+    spc:  Math.floor((((base.spc ?? base.atk) + dvs.spc) * 2 * level) / 100) + 5,
+    dvs,  // [A2] store DVs on the Pokémon (used for breeding / display later)
     moves,
     pp,                    // #15: PP tracking
     status: null,
@@ -552,7 +583,8 @@ function selectWildMove(enemy) {
 }
 
 // ── #19: Gen I catch mechanics ────────────────────────────────────────────────
-// Formula: f = floor((3*maxHP - 2*currentHP) * effectiveCatchRate * ballMult / (3*maxHP))
+// Formula: f = floor((3*maxHP - 2*currentHP) * catchRate * ballMult / (3*maxHP)) + statusBonus
+// [A1] Status bonus is added AFTER the HP/catchRate division (not before). Gen I quirk.
 // Ball shakes 4 times: each shake passes if roll(256)-1 <= f. Caught iff all 4 pass.
 function attemptCatch(ball, target) {
   const ballMult = { poke_ball: 1, great_ball: 1.5, ultra_ball: 2, master_ball: Infinity }[ball] ?? 1;
@@ -561,14 +593,14 @@ function attemptCatch(ball, target) {
   const base = POKEMON[target.species];
   const catchRate = base?.catchRate ?? 45;
 
+  // [A1] Status bonus added AFTER HP calculation (Gen I authentic order)
   let statusBonus = 0;
   if (target.status === 'sleep' || target.status === 'freeze') statusBonus = 10;
   else if (target.status === 'paralysis' || target.status === 'burn' || target.status === 'poison') statusBonus = 5;
 
-  const effectiveCatchRate = Math.min(255, catchRate + statusBonus);
-
   const f = Math.max(0, Math.min(255,
-    Math.floor((3 * target.maxHp - 2 * target.currentHp) * effectiveCatchRate * ballMult / (3 * target.maxHp))
+    Math.floor((3 * target.maxHp - 2 * target.currentHp) * catchRate * ballMult / (3 * target.maxHp))
+    + statusBonus
   ));
 
   if (f >= 255) return { caught: true, shakes: 4 };
