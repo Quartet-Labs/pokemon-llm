@@ -165,7 +165,7 @@ const MOVES = {
   "hypnosis":      { power: 0,   acc: 60,  pp: 20, type: "psychic",  cat: "status",   effect: { status: "sleep", chance: 100 } },
   "vice grip":     { power: 55,  acc: 100, pp: 30, type: "normal",   cat: "physical", effect: null },
   "wing attack":   { power: 35,  acc: 100, pp: 35, type: "flying",   cat: "physical", effect: null },
-  "light screen":  { power: 0,   acc: 100, pp: 30, type: "psychic",  cat: "status",   effect: { reflect: true } },
+  "light screen":  { power: 0,   acc: 100, pp: 30, type: "psychic",  cat: "status",   effect: { light_screen: true } },
   "double team":   { power: 0,   acc: 100, pp: 15, type: "normal",   cat: "status",   effect: { stat: "eva", target: "self", stages: 1 } },
   // [C14] Fire/Ice/Thunder Punch: typed by move type; Fire/Ice/Electric are Special in Gen I
   "fire punch":    { power: 75,  acc: 100, pp: 15, type: "fire",     cat: "special",  effect: { status: "burn", chance: 10 } },

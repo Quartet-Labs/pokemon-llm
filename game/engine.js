@@ -332,6 +332,16 @@ function makePokemon(speciesKey, level, opts = {}) {
     leechSeeded: false,
     // [C11] Thrash/Petal Dance lock-in state
     lockinState: null,     // { move: string, turnsLeft: int } while rampaging
+    // [C7] Signature move cluster volatile states
+    mistTurns: 0,          // Mist: blocks stat drops for N turns
+    reflectTurns: 0,       // Reflect: halves physical damage for N turns
+    lightScreenTurns: 0,   // Light Screen: halves special damage for N turns
+    focusEnergy: false,    // Focus Energy: Gen I bug — quartered (not quadrupled) crit rate
+    substituteHp: 0,       // Substitute proxy HP (0 = no sub)
+    lastDamageTaken: 0,    // Counter: tracks last physical damage received
+    disabledMove: null,    // Disable: which move is disabled
+    disabledTurns: 0,      // Disable: turns remaining
+    lastMoveUsed: null,    // Mirror Move: opponent's last move
   };
 }
 
@@ -352,6 +362,16 @@ function resetVolatileState(pokemon) {
   pokemon.leechSeeded = false;
   pokemon.lockinState = null;
   pokemon.chargingMove = null;  // [C8] clear two-turn charge state between battles
+  // [C7] Clear signature move volatile states
+  pokemon.mistTurns = 0;
+  pokemon.reflectTurns = 0;
+  pokemon.lightScreenTurns = 0;
+  pokemon.focusEnergy = false;
+  pokemon.substituteHp = 0;
+  pokemon.lastDamageTaken = 0;
+  pokemon.disabledMove = null;
+  pokemon.disabledTurns = 0;
+  pokemon.lastMoveUsed = null;
 }
 
 // [E6] Heal all party members to full (Nurse Joy / center heal)
@@ -422,7 +442,14 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
     Math.floor(levelCoef * atkStat * mv.power / effectiveDefStat / 50 + 2)
     * stab * eff * rand
   );
-  return { dmg: Math.max(1, raw), effectiveness: eff, crit: isCrit };
+
+  // [C7] Reflect / Light Screen — halve incoming physical / special damage (crits bypass in Gen I)
+  let screenMult = 1;
+  if (!isCrit) {
+    if (!isSpecial && (defender.reflectTurns ?? 0) > 0) screenMult = 0.5;
+    if (isSpecial  && (defender.lightScreenTurns ?? 0) > 0) screenMult = 0.5;
+  }
+  return { dmg: Math.max(1, Math.floor(raw * screenMult)), effectiveness: eff, crit: isCrit };
 }
 
 // #6 + #16: Check if a pokemon can act this turn; pushes messages to msgs array
@@ -540,6 +567,27 @@ function applyStatusEnd(pokemon, opponent) {
   }
   // [A11] Flinch — always clear at end of turn (safe to double-clear)
   pokemon.flinched = false;
+
+  // [C7] Decrement volatile screen / disable turns
+  if (pokemon.mistTurns > 0) {
+    pokemon.mistTurns--;
+    if (pokemon.mistTurns === 0) msgs.push(`${pokemon.name}'s MIST faded!`);
+  }
+  if (pokemon.reflectTurns > 0) {
+    pokemon.reflectTurns--;
+    if (pokemon.reflectTurns === 0) msgs.push(`${pokemon.name}'s REFLECT faded!`);
+  }
+  if (pokemon.lightScreenTurns > 0) {
+    pokemon.lightScreenTurns--;
+    if (pokemon.lightScreenTurns === 0) msgs.push(`${pokemon.name}'s LIGHT SCREEN faded!`);
+  }
+  if (pokemon.disabledTurns > 0) {
+    pokemon.disabledTurns--;
+    if (pokemon.disabledTurns === 0) {
+      msgs.push(`${pokemon.name}'s ${(pokemon.disabledMove || 'move').toUpperCase()} is no longer disabled!`);
+      pokemon.disabledMove = null;
+    }
+  }
   return msgs;
 }
 
@@ -595,8 +643,14 @@ function applyMoveEffect(moveName, target, source) {
     const applyChance = e.statChance ? roll(100) <= e.statChance : true;
     if (applyChance) {
       const tgt = e.target === 'self' ? source : target;
-      tgt.statStages[e.stat] = clamp((tgt.statStages[e.stat] || 0) + e.stages, -6, 6);
-      msgs.push(`${tgt.name}'s ${e.stat.toUpperCase()} ${e.stages > 0 ? 'rose' : 'fell'}!`);
+      // [C7] Mist — block opponent-inflicted stat DROPS (not self-buffs, not status)
+      const isOpponentDrop = tgt === target && e.stages < 0 && (target.mistTurns ?? 0) > 0;
+      if (isOpponentDrop) {
+        msgs.push(`${target.name} is protected by MIST! Stat drop was blocked!`);
+      } else {
+        tgt.statStages[e.stat] = clamp((tgt.statStages[e.stat] || 0) + e.stages, -6, 6);
+        msgs.push(`${tgt.name}'s ${e.stat.toUpperCase()} ${e.stages > 0 ? 'rose' : 'fell'}!`);
+      }
     }
   }
 
@@ -620,6 +674,93 @@ function applyMoveEffect(moveName, target, source) {
     source.statusTurns = 2;   // wakes after 2 turns (Gen I)
     source.confused = false; source.confusedTurns = 0;
     msgs.push(`${source.name} went to sleep and is fully restored!`);
+  }
+
+  // [C7] Haze — reset all stat stages for both combatants
+  if (e.haze) {
+    const ZERO = { atk:0, def:0, spd:0, spc:0, acc:0, eva:0 };
+    source.statStages = { ...ZERO };
+    target.statStages = { ...ZERO };
+    source.confused = false; target.confused = false;
+    msgs.push(`${source.name} used HAZE! All stat changes were eliminated!`);
+  }
+
+  // [C7] Mist — protect from stat drops for 5 turns
+  if (e.mist) {
+    if (source.mistTurns > 0) {
+      msgs.push(`But it failed! ${source.name} is already under MIST's protection.`);
+    } else {
+      source.mistTurns = 5;
+      msgs.push(`${source.name} became shrouded in MIST!`);
+    }
+  }
+
+  // [C7] Reflect — halve incoming physical damage for 5 turns
+  if (e.reflect) {
+    if (source.reflectTurns > 0) {
+      msgs.push(`But it failed! ${source.name} already has REFLECT.`);
+    } else {
+      source.reflectTurns = 5;
+      msgs.push(`${source.name} is protected by REFLECT!`);
+    }
+  }
+
+  // [C7] Light Screen — halve incoming special damage for 5 turns
+  if (e.light_screen) {
+    if (source.lightScreenTurns > 0) {
+      msgs.push(`But it failed! ${source.name} already has LIGHT SCREEN.`);
+    } else {
+      source.lightScreenTurns = 5;
+      msgs.push(`${source.name} is protected by LIGHT SCREEN!`);
+    }
+  }
+
+  // [C7] Focus Energy — Gen I bug: actually QUARTERED the crit rate instead of quadrupling
+  if (e.sharpen) {
+    source.focusEnergy = true;
+    msgs.push(`${source.name} is getting pumped! (Gen I: crit rate reduced by bug)`);
+  }
+
+  // [C7] Disable — prevent target from using their last move (1-8 turns)
+  if (e.disable) {
+    const lastMv = target.lastMoveUsed;
+    if (!lastMv || target.disabledMove) {
+      msgs.push(`${source.name} used DISABLE! But it failed!`);
+    } else {
+      target.disabledMove = lastMv;
+      target.disabledTurns = 1 + roll(8);  // 1-8 turns (Gen I range)
+      msgs.push(`${target.name}'s ${lastMv.toUpperCase()} was disabled for ${target.disabledTurns} turns!`);
+    }
+  }
+
+  // [C7] Counter — deal 2× the last physical damage the user received
+  if (e.counter) {
+    const counterDmg = 2 * (source.lastDamageTaken || 0);
+    if (counterDmg <= 0) {
+      msgs.push(`${source.name} used COUNTER! But it failed!`);
+    } else {
+      target.currentHp = Math.max(0, target.currentHp - counterDmg);
+      msgs.push(`${source.name} used COUNTER! (-${counterDmg} HP)!`);
+    }
+  }
+
+  // [C7] Metronome — randomly pick and execute any move from the master list
+  if (e.metronome) {
+    const allMoves = Object.keys(MOVES).filter(m => m !== 'metronome' && m !== 'struggle');
+    const pickedName = allMoves[Math.floor(roll(allMoves.length) - 1)];
+    msgs.push(`${source.name} used METRONOME! It used ${pickedName.toUpperCase()}!`);
+    msgs.push(...applyMoveEffect(pickedName, target, source));
+  }
+
+  // [C7] Mirror Move — use whatever the target last used
+  if (e.mirror) {
+    const mirrorMv = target.lastMoveUsed;
+    if (!mirrorMv || mirrorMv === 'mirror move') {
+      msgs.push(`${source.name} used MIRROR MOVE! But it failed!`);
+    } else {
+      msgs.push(`${source.name} used MIRROR MOVE! It used ${mirrorMv.toUpperCase()}!`);
+      msgs.push(...applyMoveEffect(mirrorMv, target, source));
+    }
   }
 
   return msgs;
@@ -1848,6 +1989,12 @@ function processBattleAction(state, action, log) {
     if (!state.battle) return;            // battle already ended (whirlwind etc.)
     if (!checkCanAct(attacker, msgs)) return;  // paralysis / sleep / freeze / flinch / confusion
 
+    // [C7] Disable — blocked move can't be used this turn
+    if (attacker.disabledMove && mvName === attacker.disabledMove) {
+      msgs.push(`${attacker.name}'s ${mvName.toUpperCase()} is disabled!`);
+      return;
+    }
+
     // [C11] Thrash/Petal Dance lock-in — override move selection if rampaging
     if (attacker.lockinState) {
       mvName = attacker.lockinState.move;
@@ -1879,6 +2026,9 @@ function processBattleAction(state, action, log) {
         attacker.pp[mvName]--;
       }
     }
+
+    // [C7] Track last move used (after lockin override + PP redirect, before execution)
+    attacker.lastMoveUsed = mvName;
 
     // #8: Whirlwind — ends wild battles; fails vs trainers
     if (mvName === 'whirlwind') {
@@ -2062,6 +2212,9 @@ function processBattleAction(state, action, log) {
       const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
       const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
       defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      // [C7] Counter: track last physical damage received by the defender
+      const mvCat = MOVES[mvName]?.cat;
+      if (mvCat === 'physical') defender.lastDamageTaken = dmg;
       const effMsg = effectiveness > 1 ? " It's super effective!"
                    : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
                    : effectiveness === 0 ? " It has no effect!" : '';
