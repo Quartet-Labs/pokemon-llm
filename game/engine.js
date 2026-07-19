@@ -275,6 +275,11 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
   const atkStat = atkBase * atkStage * burnPenalty * badgeBoost;
   const defStat = defBase * defStage;
 
+  // #C3: Explosion/Self-Destruct halve the defender's effective Defense (Gen I mechanic)
+  const effectiveDefStat = (moveName === 'explosion' || moveName === 'self destruct')
+    ? Math.max(1, Math.floor(defStat / 2))
+    : defStat;
+
   const eff = getEffectiveness(mv.type, defender.type);
   const stab = attacker.type.includes(mv.type) ? 1.5 : 1;
   // #3: random factor must be 217..255 inclusive; roll(39) gives 1..39 so +216 = 217..255
@@ -282,7 +287,7 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
   const rand = randomFactor / 255;
 
   const raw = Math.floor(
-    Math.floor(Math.floor(2 * attacker.level / 5 + 2) * atkStat * mv.power / defStat / 50 + 2)
+    Math.floor(Math.floor(2 * attacker.level / 5 + 2) * atkStat * mv.power / effectiveDefStat / 50 + 2)
     * stab * eff * rand
     * (isCrit ? 2 : 1)
   );
@@ -750,7 +755,7 @@ function processAction(state, action) {
           if (hasEncounter(area, nx, landY) && roll(100) <= (area.encounterRate ?? 20)) {
             const tile = getAreaTile(area, nx, landY);
             const terrain = tile === T.TALL_GRASS ? 'tall_grass' : 'grass';
-            const encounter = rollEncounter(state.areaId, terrain);
+            const encounter = rollEncounter(state.areaId, terrain, roll);  // #B9: pass seeded roll
             if (encounter) {
               const wild = makePokemon(encounter.species, encounter.level);
               state.screen = 'battle';
@@ -776,7 +781,7 @@ function processAction(state, action) {
           state.message = `Surfing on the water! (${nx},${ny})`;
           log(state.message);
           if (roll(100) <= (area.encounterRate ?? 10)) {
-            const encounter = rollEncounter(state.areaId, 'water');
+            const encounter = rollEncounter(state.areaId, 'water', roll);  // #B9: pass seeded roll
             if (encounter) {
               const wild = makePokemon(encounter.species, encounter.level);
               state.screen = 'battle';
@@ -908,7 +913,7 @@ function processAction(state, action) {
       if (hasEncounter(area, nx, ny) && roll(100) <= (area.encounterRate ?? 20)) {
         const tile = getAreaTile(area, nx, ny);
         const terrain = tile === T.TALL_GRASS ? 'tall_grass' : 'grass';
-        const encounter = rollEncounter(state.areaId, terrain);
+        const encounter = rollEncounter(state.areaId, terrain, roll);  // #B9: pass seeded roll
         if (encounter) {
           const wild = makePokemon(encounter.species, encounter.level);
           state.screen = 'battle';
@@ -1017,6 +1022,25 @@ function processAction(state, action) {
       if (!pokemon) return { ...state, message: 'No Pokémon at that slot.' };
       if (mIdx < 0 || mIdx >= (pokemon.moves || []).length) return { ...state, message: 'Invalid move index.' };
       if (!newMv || !MOVES[newMv]) return { ...state, message: `Unknown move: ${newMv}` };
+
+      // #G11: Validate that the new move is learnable by this species
+      const base = POKEMON[pokemon.species];
+      const learnset = base?.learnset || {};
+      const learnableMoves = new Set();
+      for (const [lvStr, mvList] of Object.entries(learnset)) {
+        if (parseInt(lvStr) <= pokemon.level) for (const m of mvList) learnableMoves.add(m);
+      }
+      // Also allow TM moves if player owns the TM and species is compatible
+      const compatTms = TM_COMPAT[pokemon.species] || [];
+      for (const tmKey of compatTms) {
+        if ((state.player.tms?.[tmKey] ?? 0) > 0 && TMS[tmKey]?.move) {
+          learnableMoves.add(TMS[tmKey].move);
+        }
+      }
+      if (!learnableMoves.has(newMv)) {
+        return { ...state, message: `${pokemon.name} can't learn ${newMv.toUpperCase()} — not in its learnset or available TMs.` };
+      }
+
       const forgot = pokemon.moves[mIdx];
       pokemon.moves[mIdx] = newMv;
       if (pokemon.pp) {
@@ -1404,7 +1428,7 @@ function processBattleAction(state, action, log) {
 
     // #15: Struggle — typeless 50-power physical, 50% recoil damage
     if (mvName === 'struggle') {
-      const rand = (roll(39) + 217) / 255;
+      const rand = (216 + roll(39)) / 255;  // 217..255 inclusive (#3)
       const dmg = Math.max(1, Math.floor(
         (Math.floor(2 * attacker.level / 5 + 2) * attacker.atk * 50 / defender.def / 50 + 2) * rand
       ));
@@ -1426,15 +1450,20 @@ function processBattleAction(state, action, log) {
     }
 
     // #1: Accuracy check with Gen I acc/eva stage modifiers
+    // Gen I: ALL moves (except always_hit like Swift) are affected by acc/eva stages.
+    // The < 100 guard was incorrect — Double Team must work against Thunderbolt.
     const moveAcc = mv.acc ?? 100;
-    if (moveAcc < 100 && !mv.effect?.always_hit) {
+    if (!mv.effect?.always_hit) {
       const ACC_STAGES = [33, 36, 43, 50, 66, 100, 150, 200, 250, 300, 350];
       const atkStageIdx = clamp((attacker.statStages?.acc ?? 0) + 5, 0, 10);
       const defStageIdx = clamp(-(defender.statStages?.eva ?? 0) + 5, 0, 10);
-      const modifiedAcc = Math.min(100, Math.floor(moveAcc * ACC_STAGES[atkStageIdx] / ACC_STAGES[defStageIdx]));
-      if (roll(100) > modifiedAcc) {
-        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
-        return;
+      // Only apply check if stages are non-neutral OR move acc < 100
+      if (moveAcc < 100 || atkStageIdx !== 5 || defStageIdx !== 5) {
+        const modifiedAcc = Math.min(100, Math.floor(moveAcc * ACC_STAGES[atkStageIdx] / ACC_STAGES[defStageIdx]));
+        if (roll(100) > modifiedAcc) {
+          msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
+          return;
+        }
       }
     }
 
@@ -1447,6 +1476,11 @@ function processBattleAction(state, action, log) {
                    : effectiveness === 0 ? " It has no effect!" : '';
       const critMsg = crit ? ' A critical hit!' : '';
       msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${dmg} HP)${critMsg}${effMsg}`);
+      // #C3: Explosion/Self-Destruct faint the user
+      if (mvName === 'explosion' || mvName === 'self destruct') {
+        attacker.currentHp = 0;
+        msgs.push(`${attacker.name} fainted from the explosion!`);
+      }
       msgs.push(...applyMoveEffect(mvName, defender, attacker));
     } else {
       msgs.push(`${attacker.name} used ${mvName.toUpperCase()}!`);
@@ -1672,11 +1706,15 @@ function processBattleAction(state, action, log) {
     const active = getActive();
     const enemy  = getEnemy();
     const ball = action.ball || 'poke_ball';
-    if ((state.player.items?.[ball] ?? 0) < 1) {
+    // #F2: bag is the canonical ball store (mart_buy writes here); items is a legacy fallback
+    const ballCount = (state.player.bag?.[ball] ?? 0) + (state.player.items?.[ball] ?? 0);
+    if (ballCount < 1) {
       state.message = `No ${ball.replace(/_/g, ' ')} left!`;
       return state;
     }
-    state.player.items[ball]--;
+    // Decrement from bag first, then items
+    if ((state.player.bag?.[ball] ?? 0) > 0) state.player.bag[ball]--;
+    else state.player.items[ball]--;
 
     // #19: Real Gen I catch formula
     const result = attemptCatch(ball, enemy);
