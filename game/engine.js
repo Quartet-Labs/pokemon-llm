@@ -76,6 +76,17 @@ const ITEM_NAMES = {
   calcium:       'Calcium',
 };
 
+// [C8] Two-turn move definitions (charge message + invulnerability flag + optional charge buff)
+// Invulnerable: target can't be hit except by Swift during the charging turn.
+const TWO_TURN_MOVES = {
+  'fly':        { msg: (n) => `${n} flew up high!`,              invulnerable: true  },
+  'dig':        { msg: (n) => `${n} burrowed underground!`,      invulnerable: true  },
+  'solar beam': { msg: (n) => `${n} absorbed light!`                                 },
+  'skull bash': { msg: (n) => `${n} tucked in its head!`,        chargeBuff: { stat:'def', stages:1 } },
+  'razor wind': { msg: (n) => `${n} made a whirlwind!`                               },
+  'sky attack': { msg: (n) => `${n} glowed!`                                         },
+};
+
 // Resolve which mart tier is available for a given area, or null if none.
 function getMartTierForArea(areaId) {
   if (areaId === 'viridian_city') return 'viridian';
@@ -311,6 +322,8 @@ function makePokemon(speciesKey, level, opts = {}) {
     bideState: null,       // { turnsLeft, damageAccum } while charging
     // #23: Bind/Wrap multi-turn state
     boundState: null,      // { turnsLeft } while trapped
+    // [C8] Two-turn move charging state (Fly/Dig/Solar Beam/Skull Bash/Razor Wind/Sky Attack)
+    chargingMove: null,   // null | { move: string, invulnerable: bool }
     // [C9] Hyper Beam recharge — must skip next turn after use
     recharging: false,
     // [A12] Toxic counter — escalates N/16 each turn (resets between battles)
@@ -338,6 +351,7 @@ function resetVolatileState(pokemon) {
   pokemon.toxicCounter = 0;
   pokemon.leechSeeded = false;
   pokemon.lockinState = null;
+  pokemon.chargingMove = null;  // [C8] clear two-turn charge state between battles
 }
 
 // #14 + #17: damage with crits, special stat, burn penalty, badge boost
@@ -2063,7 +2077,16 @@ function processBattleAction(state, action, log) {
 
     const active = getActive();
     const enemy  = getEnemy();
-    const moveName = active.moves[action.move_index ?? 0];
+    // [C8] Two-turn move: if charging, override move choice with the stored move (turn 2)
+    let moveName;
+    let isReleasing = false;   // [C8] true on turn 2 of a two-turn move (skip re-charge check)
+    if (active.chargingMove) {
+      moveName = active.chargingMove.move;
+      active.chargingMove = null;   // clear before executing
+      isReleasing = true;
+    } else {
+      moveName = active.moves[action.move_index ?? 0];
+    }
     if (!moveName) { state.message = 'Invalid move index (0-3).'; return state; }
     battle.turn++;
 
@@ -2112,6 +2135,38 @@ function processBattleAction(state, action, log) {
       msgs.push(`${active.name} is bound and can't move!`);
       if (!getEnemy().boundState) {
         doAttack(getEnemy(), enemyMv, getActive(), false);
+        checkFaint();
+      }
+      if (state.battle) {
+        msgs.push(...applyStatusEnd(getActive(), getEnemy()));
+        msgs.push(...applyStatusEnd(getEnemy(), getActive()));
+        checkFaint();
+      }
+      state.message = msgs.filter(Boolean).join(' ');
+      msgs.forEach(log);
+      return state;
+    }
+
+    // [C8] Two-turn move — CHARGE TURN (turn 1): set charging state, enemy attacks, return early
+    // isReleasing=true means we're already on the release turn → skip charge logic
+    const twoTurnDef = !isReleasing && TWO_TURN_MOVES[moveName];
+    if (twoTurnDef) {
+      msgs.push(`${active.name} used ${moveName.toUpperCase()}!`);
+      msgs.push(twoTurnDef.msg(active.name));
+      // Optional charge-turn buff (Skull Bash: +1 Def)
+      if (twoTurnDef.chargeBuff) {
+        const { stat, stages } = twoTurnDef.chargeBuff;
+        active.statStages[stat] = clamp((active.statStages[stat] || 0) + stages, -6, 6);
+        msgs.push(`${active.name}'s ${stat.toUpperCase()} rose!`);
+      }
+      active.chargingMove = { move: moveName, invulnerable: !!twoTurnDef.invulnerable };
+      // PP deducted on release turn (turn 2) by doAttack — net: 1 PP per use
+      // Enemy attacks — miss if player is invulnerable (Swift can still hit in Gen I)
+      if (twoTurnDef.invulnerable && enemyMv !== 'swift') {
+        msgs.push(`${enemy.name} used ${enemyMv.toUpperCase()}!`);
+        msgs.push(`But it missed!`);
+      } else {
+        doAttack(enemy, enemyMv, active, false);
         checkFaint();
       }
       if (state.battle) {
