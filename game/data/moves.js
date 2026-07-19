@@ -15,7 +15,7 @@ const MOVES = {
   "quick attack":  { power: 40,  acc: 100, pp: 30, type: "normal",   cat: "physical", effect: { priority: 1 } },
   "hyper fang":    { power: 80,  acc: 90,  pp: 15, type: "normal",   cat: "physical", effect: { status: "flinch", chance: 10 } },
   "pay day":       { power: 40,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: null },
-  "fury attack":   { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: null },
+  "fury attack":   { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: { multi_hit: [2,5] } },
   // Whirlwind: flee effect ends wild battles (trainer battles: fails)
   "whirlwind":     { power: 0,   acc: 85,  pp: 20, type: "normal",   cat: "status",   effect: { flee: "wild" } },
   "smokescreen":   { power: 0,   acc: 100, pp: 20, type: "normal",   cat: "status",   effect: { stat: "acc", target: "enemy", stages: -1 } },
@@ -29,14 +29,14 @@ const MOVES = {
   "bide":          { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: null },
   "slash":         { power: 70,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: { crit_rate: 8 } },
   "sand attack":   { power: 0,   acc: 100, pp: 15, type: "normal",   cat: "status",   effect: { stat: "acc", target: "enemy", stages: -1 } },
-  // Supersonic: 55% chance to confuse (Gen I accuracy)
-  "supersonic":    { power: 0,   acc: 55,  pp: 20, type: "normal",   cat: "status",   effect: { status: "confusion", chance: 55 } },
+  // Supersonic: acc 55%, confusion chance 100% (was double-gated at 55×55≈30%) [C16]
+  "supersonic":    { power: 0,   acc: 55,  pp: 20, type: "normal",   cat: "status",   effect: { status: "confusion", chance: 100 } },
 
   // New Normal moves
   "pound":         { power: 40,  acc: 100, pp: 35, type: "normal",   cat: "physical", effect: null },
   "karate chop":   { power: 50,  acc: 100, pp: 25, type: "normal",   cat: "physical", effect: { crit_rate: 8 } },
   "double slap":   { power: 15,  acc: 85,  pp: 10, type: "normal",   cat: "physical", effect: null },
-  "comet punch":   { power: 18,  acc: 85,  pp: 15, type: "normal",   cat: "physical", effect: null },
+  "comet punch":   { power: 18,  acc: 85,  pp: 15, type: "normal",   cat: "physical", effect: { multi_hit: [2,5] } },
   "mega punch":    { power: 80,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: null },
   "slam":          { power: 80,  acc: 75,  pp: 20, type: "normal",   cat: "physical", effect: null },
   "stomp":         { power: 65,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: { status: "flinch", chance: 30 } },
@@ -46,9 +46,9 @@ const MOVES = {
   "horn drill":    { power: 1,   acc: 30,  pp: 5,  type: "normal",   cat: "physical", effect: { ohko: true } },
   "body slam":     { power: 85,  acc: 100, pp: 15, type: "normal",   cat: "physical", effect: { status: "paralysis", chance: 30 } },
   "wrap":          { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: { bind: true } },
-  "take down":     { power: 90,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: null },
+  "take down":     { power: 90,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: { recoil: 4 } },
   "thrash":        { power: 90,  acc: 100, pp: 20, type: "normal",   cat: "physical", effect: null },
-  "double edge":   { power: 100, acc: 100, pp: 15, type: "normal",   cat: "physical", effect: null },
+  "double edge":   { power: 100, acc: 100, pp: 15, type: "normal",   cat: "physical", effect: { recoil: 4 } },
   "roar":          { power: 0,   acc: 100, pp: 20, type: "normal",   cat: "status",   effect: { flee: "wild" } },
   "sing":          { power: 0,   acc: 55,  pp: 15, type: "normal",   cat: "status",   effect: { status: "sleep", chance: 100 } },
   "sonic boom":    { power: 1,   acc: 90,  pp: 20, type: "normal",   cat: "special",  effect: { fixed_damage: 20 } },
@@ -57,33 +57,33 @@ const MOVES = {
   "psybeam":       { power: 65,  acc: 100, pp: 20, type: "psychic",  cat: "special",  effect: { status: "confusion", chance: 10 } },
   "bubble beam":   { power: 65,  acc: 100, pp: 20, type: "water",    cat: "special",  effect: { stat: "spd", target: "enemy", stages: -1, statChance: 33 } },
   "aurora beam":   { power: 65,  acc: 100, pp: 20, type: "ice",      cat: "special",  effect: { stat: "atk", target: "enemy", stages: -1, statChance: 33 } },
-  "hyper beam":    { power: 150, acc: 90,  pp: 5,  type: "normal",   cat: "special",  effect: null },
+  "hyper beam":    { power: 150, acc: 90,  pp: 5,  type: "normal",   cat: "special",  effect: { recharge: true } },
   "drill peck":    { power: 80,  acc: 100, pp: 20, type: "flying",   cat: "physical", effect: null },
-  "submission":    { power: 80,  acc: 80,  pp: 25, type: "fighting", cat: "physical", effect: null },
+  "submission":    { power: 80,  acc: 80,  pp: 25, type: "fighting", cat: "physical", effect: { recoil: 4 } },
   "low kick":      { power: 50,  acc: 90,  pp: 20, type: "fighting", cat: "physical", effect: { status: "flinch", chance: 30 } },
   "counter":       { power: 1,   acc: 100, pp: 20, type: "fighting", cat: "physical", effect: { counter: true } },
   "seismic toss":  { power: 1,   acc: 100, pp: 20, type: "fighting", cat: "physical", effect: { level_damage: true } },
   "strength":      { power: 80,  acc: 100, pp: 15, type: "normal",   cat: "physical", effect: null },
-  "absorb":        { power: 20,  acc: 100, pp: 20, type: "grass",    cat: "special",  effect: { drain: 50 } },
-  "mega drain":    { power: 40,  acc: 100, pp: 15, type: "grass",    cat: "special",  effect: { drain: 50 } },
+  "absorb":        { power: 20,  acc: 100, pp: 20, type: "grass",    cat: "special",  effect: { drain: 2 } },
+  "mega drain":    { power: 40,  acc: 100, pp: 15, type: "grass",    cat: "special",  effect: { drain: 2 } },
   "growth":        { power: 0,   acc: 100, pp: 40, type: "normal",   cat: "status",   effect: { stat: "spc", target: "self", stages: 1 } },
   "solar beam":    { power: 120, acc: 100, pp: 10, type: "grass",    cat: "special",  effect: null },
   "poison powder": { power: 0,   acc: 75,  pp: 35, type: "poison",   cat: "status",   effect: { status: "poison", chance: 100 } },
   "spore":         { power: 0,   acc: 100, pp: 15, type: "grass",    cat: "status",   effect: { status: "sleep", chance: 100 } },
   "flash":         { power: 0,   acc: 70,  pp: 20, type: "normal",   cat: "status",   effect: { stat: "acc", target: "enemy", stages: -1 } },
-  "psywave":       { power: 1,   acc: 80,  pp: 15, type: "psychic",  cat: "special",  effect: { level_damage: true } },
+  "psywave":       { power: 1,   acc: 80,  pp: 15, type: "psychic",  cat: "special",  effect: { psywave: true } },
   "splash":        { power: 0,   acc: 100, pp: 40, type: "normal",   cat: "status",   effect: null },
   "acid armor":    { power: 0,   acc: 100, pp: 40, type: "poison",   cat: "status",   effect: { stat: "def", target: "self", stages: 2 } },
   "waterfall":     { power: 80,  acc: 100, pp: 15, type: "water",    cat: "physical", effect: null },
   "clamp":         { power: 35,  acc: 75,  pp: 10, type: "water",    cat: "physical", effect: { bind: true } },
   "swift":         { power: 60,  acc: 100, pp: 20, type: "normal",   cat: "special",  effect: { always_hit: true } },
   "skull bash":    { power: 100, acc: 100, pp: 15, type: "normal",   cat: "physical", effect: null },
-  "spike cannon":  { power: 20,  acc: 100, pp: 15, type: "normal",   cat: "physical", effect: null },
+  "spike cannon":  { power: 20,  acc: 100, pp: 15, type: "normal",   cat: "physical", effect: { multi_hit: [2,5] } },
   "constrict":     { power: 10,  acc: 100, pp: 35, type: "normal",   cat: "physical", effect: { stat: "spd", target: "enemy", stages: -1, statChance: 33 } },
   "amnesia":       { power: 0,   acc: 100, pp: 20, type: "psychic",  cat: "status",   effect: { stat: "spc", target: "self", stages: 2 } },
   "kinesis":       { power: 0,   acc: 65,  pp: 15, type: "psychic",  cat: "status",   effect: { stat: "acc", target: "enemy", stages: -1 } },
-  "soft boiled":   { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: { heal: 50 } },
-  "high jump kick":{ power: 85,  acc: 90,  pp: 20, type: "fighting", cat: "physical", effect: null },
+  "soft boiled":   { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: { heal: 2 } },
+  "high jump kick":{ power: 85,  acc: 90,  pp: 20, type: "fighting", cat: "physical", effect: { crash: 1 } },
   "lick":          { power: 20,  acc: 100, pp: 30, type: "ghost",    cat: "physical", effect: { status: "paralysis", chance: 30 } },
   "smog":          { power: 20,  acc: 70,  pp: 20, type: "poison",   cat: "special",  effect: { status: "poison", chance: 40 } },
   "sludge":        { power: 65,  acc: 100, pp: 20, type: "poison",   cat: "special",  effect: { status: "poison", chance: 30 } },
@@ -91,14 +91,14 @@ const MOVES = {
   "fire blast":    { power: 120, acc: 85,  pp: 5,  type: "fire",     cat: "special",  effect: { status: "burn", chance: 30 } },
   "crabhammer":    { power: 90,  acc: 85,  pp: 10, type: "water",    cat: "physical", effect: { crit_rate: 8 } },
   "explosion":     { power: 250, acc: 100, pp: 5,  type: "normal",   cat: "physical", effect: null },
-  "fury swipes":   { power: 18,  acc: 80,  pp: 15, type: "normal",   cat: "physical", effect: null },
-  "bonemerang":    { power: 50,  acc: 90,  pp: 10, type: "ground",   cat: "physical", effect: null },
+  "fury swipes":   { power: 18,  acc: 80,  pp: 15, type: "normal",   cat: "physical", effect: { multi_hit: [2,5] } },
+  "bonemerang":    { power: 50,  acc: 90,  pp: 10, type: "ground",   cat: "physical", effect: { multi_hit: 2 } },
   "rest":          { power: 0,   acc: 100, pp: 10, type: "psychic",  cat: "status",   effect: { rest: true } },
   "rock slide":    { power: 75,  acc: 90,  pp: 10, type: "rock",     cat: "physical", effect: { status: "flinch", chance: 30 } },
   "sharpen":       { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: { stat: "atk", target: "self", stages: 1 } },
   "conversion":    { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: null },
   "tri attack":    { power: 80,  acc: 100, pp: 10, type: "normal",   cat: "special",  effect: null },
-  "super fang":    { power: 1,   acc: 90,  pp: 10, type: "normal",   cat: "physical", effect: { half_hp: true } },
+  "super fang":    { power: 1,   acc: 90,  pp: 10, type: "normal",   cat: "physical", effect: { super_fang: true } },
   "substitute":    { power: 0,   acc: 100, pp: 10, type: "normal",   cat: "status",   effect: null },
   "struggle":      { power: 50,  acc: 100, pp: 999,type: "normal",   cat: "physical", effect: null },
 
@@ -110,8 +110,8 @@ const MOVES = {
   "dragon rage":   { power: 1,   acc: 100, pp: 10, type: "dragon",   cat: "special",  effect: { fixed_damage: 40 } },
 
   // Fighting
-  "double kick":   { power: 30,  acc: 100, pp: 30, type: "fighting", cat: "physical", effect: null },
-  "jump kick":     { power: 70,  acc: 95,  pp: 25, type: "fighting", cat: "physical", effect: null },
+  "double kick":   { power: 30,  acc: 100, pp: 30, type: "fighting", cat: "physical", effect: { multi_hit: 2 } },
+  "jump kick":     { power: 70,  acc: 95,  pp: 25, type: "fighting", cat: "physical", effect: { crash: 1 } },
   "rolling kick":  { power: 60,  acc: 85,  pp: 15, type: "fighting", cat: "physical", effect: { status: "flinch", chance: 30 } },
 
   // Psychic
@@ -142,11 +142,11 @@ const MOVES = {
   "whirlpool":     { power: 15,  acc: 70,  pp: 15, type: "water",    cat: "special",  effect: { bind: true } },
   "mist":          { power: 0,   acc: 100, pp: 30, type: "ice",      cat: "status",   effect: { mist: true } },
   "acid":          { power: 40,  acc: 100, pp: 30, type: "poison",   cat: "special",  effect: { stat: "def", target: "enemy", stages: -1, statChance: 33 } },
-  "pin missile":   { power: 14,  acc: 85,  pp: 20, type: "bug",      cat: "physical", effect: null },
+  "pin missile":   { power: 14,  acc: 85,  pp: 20, type: "bug",      cat: "physical", effect: { multi_hit: [2,5] } },
 
   // Extra moves needed by learnsets
   "focus energy":  { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: { sharpen: true } },
-  "recover":       { power: 0,   acc: 100, pp: 20, type: "normal",   cat: "status",   effect: { heal: 50 } },
+  "recover":       { power: 0,   acc: 100, pp: 20, type: "normal",   cat: "status",   effect: { heal: 2 } },
   "self destruct": { power: 200, acc: 100, pp: 5,  type: "normal",   cat: "physical", effect: null },
   "hypnosis":      { power: 0,   acc: 60,  pp: 20, type: "psychic",  cat: "status",   effect: { status: "sleep", chance: 100 } },
   "vice grip":     { power: 55,  acc: 100, pp: 30, type: "normal",   cat: "physical", effect: null },
@@ -189,11 +189,11 @@ const MOVES = {
 
   // Poison
   "poison sting":  { power: 15,  acc: 100, pp: 35, type: "poison",   cat: "physical", effect: { status: "poison", chance: 30 } },
-  "twineedle":     { power: 25,  acc: 100, pp: 20, type: "bug",      cat: "physical", effect: { status: "poison", chance: 20 } },
+  "twineedle":     { power: 25,  acc: 100, pp: 20, type: "bug",      cat: "physical", effect: { multi_hit: 2, status: "poison", chance: 20 } },
 
   // Bug
   "string shot":   { power: 0,   acc: 95,  pp: 40, type: "bug",      cat: "status",   effect: { stat: "spd", target: "enemy", stages: -1 } },
-  "leech life":    { power: 20,  acc: 100, pp: 15, type: "bug",      cat: "physical", effect: null },
+  "leech life":    { power: 20,  acc: 100, pp: 15, type: "bug",      cat: "physical", effect: { drain: 2 } },
 
   // Rock / Ground
   "rock throw":    { power: 50,  acc: 90,  pp: 15, type: "rock",     cat: "physical", effect: null },
@@ -213,8 +213,8 @@ const MOVES = {
   "ice beam":      { power: 95,  acc: 100, pp: 10, type: "ice",      cat: "special",  effect: { status: "freeze", chance: 10 } },
   "blizzard":      { power: 120, acc: 90,  pp: 5,  type: "ice",      cat: "special",  effect: { status: "freeze", chance: 10 } },
 
-  // Dream Eater (referenced in some learnsets)
-  "dream eater":   { power: 100, acc: 100, pp: 15, type: "psychic",  cat: "special",  effect: { drain: 50 } },
+  // Dream Eater: only works on sleeping targets; heals half damage dealt [C5]
+  "dream eater":   { power: 100, acc: 100, pp: 15, type: "psychic",  cat: "special",  effect: { drain: 2, requires_sleep: true } },
 };
 
 // ── Gen I Type Effectiveness Chart ────────────────────────────────────────────

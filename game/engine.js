@@ -235,12 +235,27 @@ function makePokemon(speciesKey, level) {
     bideState: null,       // { turnsLeft, damageAccum } while charging
     // #23: Bind/Wrap multi-turn state
     boundState: null,      // { turnsLeft } while trapped
+    // [C9] Hyper Beam recharge — must skip next turn after use
+    recharging: false,
+    // [A12] Toxic counter — escalates N/16 each turn (resets between battles)
+    toxicCounter: 0,
   };
 }
 
 function stageMultiplier(stages) {
   const TABLE = [0.25,0.28,0.33,0.40,0.50,0.66,1.0,1.5,2.0,2.5,3.0,3.5,4.0];
   return TABLE[clamp(stages + 6, 0, 12)];
+}
+
+// [A14] Reset volatile battle state — called at battle end so stat changes don't bleed across battles
+function resetVolatileState(pokemon) {
+  pokemon.statStages = { atk:0, def:0, spd:0, spc:0, acc:0 };
+  pokemon.confused = false; pokemon.confusedTurns = 0;
+  pokemon.flinched = false;
+  pokemon.boundState = null;
+  pokemon.bideState = null;
+  pokemon.recharging = false;
+  pokemon.toxicCounter = 0;
 }
 
 // #14 + #17: damage with crits, special stat, burn penalty, badge boost
@@ -323,6 +338,13 @@ function checkCanAct(pokemon, msgs) {
     return false;
   }
 
+  // [C9] Recharge — must skip a turn after Hyper Beam etc.
+  if (pokemon.recharging) {
+    pokemon.recharging = false;  // clears after one lost turn
+    msgs.push(`${pokemon.name} must recharge!`);
+    return false;
+  }
+
   // #16: Flinch — set by previous attack this turn; clears automatically
   if (pokemon.flinched) {
     pokemon.flinched = false;
@@ -375,6 +397,15 @@ function applyStatusEnd(pokemon) {
       msgs.push(`${pokemon.name} is hurt by the bind! (-${dmg} HP)`);
     }
   }
+  // [A12] Toxic — escalating N/16 damage per turn
+  if (pokemon.status === 'toxic') {
+    pokemon.toxicCounter = (pokemon.toxicCounter || 0) + 1;
+    const dmg = Math.max(1, Math.floor(pokemon.maxHp * pokemon.toxicCounter / 16));
+    pokemon.currentHp = Math.max(0, pokemon.currentHp - dmg);
+    msgs.push(`${pokemon.name} is badly poisoned! (-${dmg} HP)`);
+  }
+  // [A11] Flinch — always clear at end of turn (safe to double-clear)
+  pokemon.flinched = false;
   return msgs;
 }
 
@@ -396,6 +427,13 @@ function applyMoveEffect(moveName, target, source) {
         target.confused = true;
         target.confusedTurns = 2 + roll(3);  // 2-4 turns remaining after this
         msgs.push(`${target.name} became confused!`);
+      }
+    } else if (e.status === 'toxic') {
+      // [A12] Toxic — badly poisoned; only applies if target has no status
+      if (!target.status) {
+        target.status = 'toxic';
+        target.toxicCounter = 0;  // starts at 0; incremented each turn in applyStatusEnd
+        msgs.push(`${target.name} was badly poisoned!`);
       }
     } else if (!target.status) {
       target.status = e.status;
@@ -423,12 +461,35 @@ function applyMoveEffect(moveName, target, source) {
     }
   }
 
+  // [C6] Recover/Soft-Boiled/Milk Drink — heal fraction of max HP
+  if (e.heal) {
+    const healAmt = Math.floor(source.maxHp / e.heal);
+    source.currentHp = Math.min(source.maxHp, source.currentHp + healAmt);
+    msgs.push(`${source.name} restored ${healAmt} HP!`);
+  }
+
+  // [C6] Rest — full heal + sleep 2 turns; clears confusion
+  if (e.rest) {
+    source.currentHp = source.maxHp;
+    source.status = 'sleep';
+    source.statusTurns = 2;   // wakes after 2 turns (Gen I)
+    source.confused = false; source.confusedTurns = 0;
+    msgs.push(`${source.name} went to sleep and is fully restored!`);
+  }
+
   return msgs;
 }
 
 function enemyMove(enemy) {
   const rand = _rng ? _rng() : Math.random();
   return enemy.moves[Math.floor(rand * enemy.moves.length)];
+}
+
+// [A10] Wild Pokémon move selector — uniform random (Gen I behaviour)
+function selectWildMove(enemy) {
+  const moves = (enemy.moves || []).filter(mv => (enemy.pp?.[mv] ?? 1) > 0);
+  if (!moves.length) return 'struggle';
+  return moves[roll(moves.length) - 1];
 }
 
 // ── #19: Gen I catch mechanics ────────────────────────────────────────────────
@@ -1461,13 +1522,124 @@ function processBattleAction(state, action, log) {
       if (moveAcc < 100 || atkStageIdx !== 5 || defStageIdx !== 5) {
         const modifiedAcc = Math.min(100, Math.floor(moveAcc * ACC_STAGES[atkStageIdx] / ACC_STAGES[defStageIdx]));
         if (roll(100) > modifiedAcc) {
-          msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
+          // [C4] Crash damage on Jump Kick / Hi Jump Kick miss
+          if (mv.effect?.crash) {
+            const crashDmg = mv.effect.crash;
+            attacker.currentHp = Math.max(0, attacker.currentHp - crashDmg);
+            msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it failed! (crash: -${crashDmg} HP)`);
+          } else {
+            msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
+          }
           return;
         }
       }
     }
 
+    const e = mv.effect;
+
+    // [C12] Flee moves (Roar, Teleport) — end wild battles; fail vs trainers
+    if (e?.flee) {
+      if (battle.isTrainer) {
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it failed in a trainer battle!`);
+      } else {
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! The wild ${defender.name} fled!`);
+        state.screen = 'overworld'; state.battle = null;
+      }
+      return;
+    }
+
+    // [C1] Fixed-damage moves — bypass normal formula, applied before power check
+    if (e?.fixed_damage !== undefined) {
+      const dmg = e.fixed_damage;
+      defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${dmg} HP)`);
+      return;
+    }
+    if (e?.level_damage) {
+      const dmg = attacker.level;
+      // Type immunity still applies
+      const eff = getEffectiveness(mv.type, defender.type);
+      if (eff === 0) {
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! It had no effect!`);
+        return;
+      }
+      defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${dmg} HP)`);
+      return;
+    }
+    if (e?.psywave) {
+      // 0..1.5× user's level, uniform; minimum 1
+      const maxDmg = Math.floor(attacker.level * 1.5);
+      const dmg = Math.max(1, roll(maxDmg + 1) - 1);  // 0..maxDmg uniform, min 1
+      defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      msgs.push(`${attacker.name} used PSYWAVE! (-${dmg} HP)`);
+      return;
+    }
+    if (e?.super_fang) {
+      const dmg = Math.max(1, Math.floor(defender.currentHp / 2));
+      defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      msgs.push(`${attacker.name} used SUPER FANG! (-${dmg} HP)`);
+      return;
+    }
+
+    // [C2] OHKO moves — instant KO if user speed > target speed
+    if (e?.ohko) {
+      const userSpd = attacker.spd * (attacker.status === 'paralysis' ? 0.25 : 1);
+      const defSpd  = defender.spd * (defender.status === 'paralysis' ? 0.25 : 1);
+      if (userSpd <= defSpd) {
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it failed!`);
+        return;
+      }
+      defender.currentHp = 0;
+      msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! It's a one-hit KO!`);
+      return;
+    }
+
     if (mv.power > 0) {
+      // [C10] Multi-hit moves — determine hit count, then loop damage
+      if (e?.multi_hit) {
+        let hits;
+        if (Array.isArray(e.multi_hit)) {
+          // 2-5 hit distribution: 3/8 each for 2&3, 1/8 each for 4&5
+          const r = roll(8);
+          hits = r <= 3 ? 2 : r <= 6 ? 3 : r === 7 ? 4 : 5;
+        } else {
+          hits = e.multi_hit;  // fixed count (e.g. 2 for Double Kick)
+        }
+        let totalDmg = 0;
+        const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
+        for (let h = 0; h < hits; h++) {
+          if (defender.currentHp <= 0) { hits = h; break; }
+          const { dmg: hDmg } = calcDamage(attacker, mvName, defender, opts);
+          defender.currentHp = Math.max(0, defender.currentHp - hDmg);
+          totalDmg += hDmg;
+        }
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! Hit ${hits} time(s)! (-${totalDmg} HP total)`);
+        // Secondary effects once (e.g. Twineedle poison)
+        msgs.push(...applyMoveEffect(mvName, defender, attacker));
+        return;
+      }
+
+      // [C5] Drain moves — heal attacker by fraction of damage dealt
+      if (e?.drain) {
+        // Dream Eater fails entirely if target is not sleeping
+        if (e.requires_sleep && defender.status !== 'sleep') {
+          msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it failed — target is not asleep!`);
+          return;
+        }
+        const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
+        const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
+        defender.currentHp = Math.max(0, defender.currentHp - dmg);
+        const healAmt = Math.max(1, Math.floor(dmg / e.drain));
+        attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + healAmt);
+        const effMsg = effectiveness > 1 ? " It's super effective!"
+                     : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
+                     : effectiveness === 0 ? " It has no effect!" : '';
+        const critMsg = crit ? ' A critical hit!' : '';
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${dmg} HP)${critMsg}${effMsg} Drained ${healAmt} HP!`);
+        return;
+      }
+
       const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
       const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
       defender.currentHp = Math.max(0, defender.currentHp - dmg);
@@ -1480,6 +1652,17 @@ function processBattleAction(state, action, log) {
       if (mvName === 'explosion' || mvName === 'self destruct') {
         attacker.currentHp = 0;
         msgs.push(`${attacker.name} fainted from the explosion!`);
+      }
+      // [C4] Recoil — attacker takes fraction of damage dealt
+      if (e?.recoil) {
+        const recoilDmg = Math.max(1, Math.floor(dmg / e.recoil));
+        attacker.currentHp = Math.max(0, attacker.currentHp - recoilDmg);
+        msgs.push(`${attacker.name} was hurt by recoil! (-${recoilDmg} HP)`);
+      }
+      // [C9] Hyper Beam recharge
+      if (e?.recharge) {
+        attacker.recharging = true;
+        msgs.push(`${attacker.name} must recharge!`);
       }
       msgs.push(...applyMoveEffect(mvName, defender, attacker));
     } else {
@@ -1532,6 +1715,8 @@ function processBattleAction(state, action, log) {
         }
       }
 
+      // [A14] Reset volatile state for all party members at battle end
+      for (const p of state.player.party) resetVolatileState(p);
       state.screen = 'overworld'; state.battle = null;
       return true;
     }
@@ -1541,6 +1726,8 @@ function processBattleAction(state, action, log) {
       const alive = state.player.party.filter(p => p.currentHp > 0);
       if (!alive.length) {
         msgs.push("All your POKéMON fainted... Blacking out!");
+        // [A14] Reset volatile state before blackout heal
+        for (const p of state.player.party) resetVolatileState(p);
         state.screen = 'overworld'; state.battle = null;
         // #9: warp to last visited Pokécenter (default: Pallet)
         const center = state.player.lastCenter || { areaId: 'pallet_town', x: 8, y: 14 };
@@ -1550,12 +1737,6 @@ function processBattleAction(state, action, log) {
           p.currentHp = p.maxHp;
           p.status = null;
           p.statusTurns = 0;
-          p.confused = false;
-          p.confusedTurns = 0;
-          p.flinched = false;
-          p.bideState = null;
-          p.boundState = null;
-          p.statStages = { atk:0, def:0, spd:0, spc:0, acc:0 };
           if (p.pp) for (const mv of (p.moves || [])) p.pp[mv] = MOVES[mv]?.pp ?? 20;
         }
         state.player.money = Math.max(0, state.player.money - 50);
@@ -1574,10 +1755,13 @@ function processBattleAction(state, action, log) {
     if (!moveName) { state.message = 'Invalid move index (0-3).'; return state; }
     battle.turn++;
 
+    // [A10] Wild Pokémon use uniform random move selection; trainers use smart scorer
+    const pickEnemyMove = () => battle.isTrainer ? selectEnemyMove() : selectWildMove(getEnemy());
+
     // #22: Active Bide — overrides normal move; accumulates damage taken
     if (active.bideState) {
       const bide = active.bideState;
-      const enemyMv = selectEnemyMove();
+      const enemyMv = pickEnemyMove();
       if (bide.turnsLeft > 0) {
         bide.turnsLeft--;
         msgs.push(`${active.name} is biding its time!`);
@@ -1608,7 +1792,7 @@ function processBattleAction(state, action, log) {
     }
 
     const mv       = MOVES[moveName];
-    const enemyMv  = selectEnemyMove();
+    const enemyMv  = pickEnemyMove();
     const enemyMvD = MOVES[enemyMv];
 
     // #56: Bound player can't act — enemy still attacks; bound damage via applyStatusEnd
@@ -1632,14 +1816,25 @@ function processBattleAction(state, action, log) {
     const playerPri = mv?.effect?.priority || 0;
     const enemyPri  = enemyMvD?.effect?.priority || 0;
 
+    // [A6] Effective speed accounts for speed stat stages and paralysis quartering
+    function effectiveSpeed(pokemon) {
+      const spdStage = stageMultiplier(pokemon.statStages?.spd ?? 0);
+      const paraSlow = pokemon.status === 'paralysis' ? 0.25 : 1;
+      return Math.floor(pokemon.spd * spdStage * paraSlow);
+    }
+
     // #7: Speed ties → coin flip
     let playerFirst;
     if (playerPri !== enemyPri) {
       playerFirst = playerPri > enemyPri;
-    } else if (active.spd !== enemy.spd) {
-      playerFirst = active.spd > enemy.spd;
     } else {
-      playerFirst = roll(2) === 1;   // coin flip on exact speed tie
+      const playerSpd = effectiveSpeed(active);
+      const enemySpd  = effectiveSpeed(enemy);
+      if (playerSpd !== enemySpd) {
+        playerFirst = playerSpd > enemySpd;
+      } else {
+        playerFirst = roll(2) === 1;   // coin flip on exact speed tie
+      }
     }
 
     if (playerFirst) {
@@ -1685,11 +1880,13 @@ function processBattleAction(state, action, log) {
     }
     const esc = Math.floor((active.spd * 32) / (enemy.spd || 1)) + 30;
     if (roll(256) < esc) {
+      // [A14] Reset volatile state when running away
+      for (const p of state.player.party) resetVolatileState(p);
       state.screen = 'overworld'; state.battle = null;
       state.message = 'Got away safely!'; log(state.message);
     } else {
       msgs.push("Can't escape!");
-      doAttack(enemy, selectEnemyMove(), active, false);
+      doAttack(enemy, battle.isTrainer ? selectEnemyMove() : selectWildMove(enemy), active, false);
       checkFaint();
       state.message = msgs.join(' '); msgs.forEach(log);
     }
@@ -1735,10 +1932,12 @@ function processBattleAction(state, action, log) {
       } else {
         msgs.push(`PC storage is full! ${caught.name} was released.`);
       }
+      // [A14] Reset volatile state when battle ends via catch
+      for (const p of state.player.party) resetVolatileState(p);
       state.screen = 'overworld'; state.battle = null;
     } else {
       if (result.shakes === 0) msgs.push(`${enemy.name} broke free immediately!`);
-      doAttack(enemy, selectEnemyMove(), active, false);
+      doAttack(enemy, selectWildMove(enemy), active, false);
       checkFaint();
     }
     state.message = msgs.filter(Boolean).join(' '); msgs.forEach(log);
@@ -1786,7 +1985,7 @@ function processBattleAction(state, action, log) {
     }
 
     if (used) {
-      doAttack(enemy, selectEnemyMove(), active, false);
+      doAttack(enemy, battle.isTrainer ? selectEnemyMove() : selectWildMove(enemy), active, false);
       checkFaint();
       state.message = msgs.join(' '); msgs.forEach(log);
     } else {
@@ -1805,7 +2004,7 @@ function processBattleAction(state, action, log) {
     if (action.party_index === battle.playerPartyIndex) { state.message = 'Already in battle!'; return state; }
     msgs.push(`Come back, ${active.name}! Go, ${next.name}!`);
     battle.playerPartyIndex = action.party_index;
-    doAttack(enemy, selectEnemyMove(), next, false);
+    doAttack(enemy, battle.isTrainer ? selectEnemyMove() : selectWildMove(enemy), next, false);
     checkFaint();
     state.message = msgs.join(' '); msgs.forEach(log);
     return state;
