@@ -31,6 +31,10 @@ function makePokemon(speciesKey, level) {
   const base = POKEMON[speciesKey];
   if (!base) throw new Error(`Unknown species: ${speciesKey}`);
   const maxHp = Math.floor((base.hp * 2 * level) / 100) + level + 10;
+  const moves = base.moves.slice(0, 4);
+  // Build PP map from move data (default 20 if not defined)
+  const pp = {};
+  for (const mv of moves) pp[mv] = MOVES[mv]?.pp ?? 20;
   return {
     species: speciesKey,
     name: base.name,
@@ -41,9 +45,16 @@ function makePokemon(speciesKey, level) {
     atk:  Math.floor((base.atk * 2 * level) / 100) + 5,
     def:  Math.floor((base.def * 2 * level) / 100) + 5,
     spd:  Math.floor((base.spd * 2 * level) / 100) + 5,
-    moves: base.moves.slice(0, 4),
+    // #17: Special stat for special moves (Gen I uses one Spc for both offence/defence)
+    spc:  Math.floor(((base.spc ?? base.atk) * 2 * level) / 100) + 5,
+    moves,
+    pp,                    // #15: PP tracking
     status: null,
-    statStages: { atk:0, def:0, spd:0, acc:0 },
+    statusTurns: 0,        // sleep: turns remaining; also used for future multi-turn moves
+    confused: false,       // #16: confusion (separate from primary status)
+    confusedTurns: 0,
+    flinched: false,       // #16: per-turn flinch flag
+    statStages: { atk:0, def:0, spd:0, spc:0, acc:0 },  // #17: added spc stage
     exp: 0,
   };
 }
@@ -53,47 +64,170 @@ function stageMultiplier(stages) {
   return TABLE[clamp(stages + 6, 0, 12)];
 }
 
-function calcDamage(attacker, moveName, defender) {
+// #14 + #17: damage with crits, special stat, burn penalty, badge boost
+function calcDamage(attacker, moveName, defender, opts = {}) {
   const mv = MOVES[moveName];
-  if (!mv || mv.power === 0) return { dmg:0, effectiveness:1 };
-  const atkStat = attacker.atk * stageMultiplier(attacker.statStages.atk);
-  const defStat = defender.def * stageMultiplier(defender.statStages.def);
+  if (!mv || mv.power === 0) return { dmg:0, effectiveness:1, crit:false };
+
+  const isSpecial = mv.cat === 'special';
+
+  // #14: Critical hit — Gen I: threshold = floor(attacker.spd * critMult / 2) out of 256
+  // High-crit moves (Slash, Razor Leaf) have crit_rate: 8 → 8× threshold
+  const critMult = mv.effect?.crit_rate || 1;
+  const critThreshold = Math.min(255, Math.floor(attacker.spd * critMult / 2));
+  const isCrit = (roll(256) - 1) < critThreshold;
+
+  // #17: Special moves use spc/spc; physical use atk/def
+  const atkBase = isSpecial ? (attacker.spc ?? attacker.atk) : attacker.atk;
+  const defBase = isSpecial ? (defender.spc ?? defender.def) : defender.def;
+
+  // Crits bypass stat stages (Gen I behaviour)
+  const atkStage = isCrit ? 1 : stageMultiplier(isSpecial ? (attacker.statStages.spc ?? 0) : attacker.statStages.atk);
+  const defStage = isCrit ? 1 : stageMultiplier(isSpecial ? (defender.statStages.spc ?? 0) : defender.statStages.def);
+
+  // Burn halves physical ATK (crits bypass this in Gen I)
+  const burnPenalty = (!isCrit && attacker.status === 'burn' && !isSpecial) ? 0.5 : 1;
+
+  // #12: Boulder Badge → +12.5% ATK on physical moves for the player
+  const badgeBoost = isSpecial ? 1 : (opts.badgeBoost || 1);
+
+  const atkStat = atkBase * atkStage * burnPenalty * badgeBoost;
+  const defStat = defBase * defStage;
+
   const eff = getEffectiveness(mv.type, defender.type);
   const stab = attacker.type.includes(mv.type) ? 1.5 : 1;
   const rand = (roll(39) + 217) / 255;
+
   const raw = Math.floor(
     Math.floor(Math.floor(2 * attacker.level / 5 + 2) * atkStat * mv.power / defStat / 50 + 2)
     * stab * eff * rand
+    * (isCrit ? 2 : 1)
   );
-  return { dmg: Math.max(1, raw), effectiveness: eff };
+  return { dmg: Math.max(1, raw), effectiveness: eff, crit: isCrit };
 }
 
+// #6 + #16: Check if a pokemon can act this turn; pushes messages to msgs array
+function checkCanAct(pokemon, msgs) {
+  if (pokemon.currentHp <= 0) return false;
+
+  // #6: Player (and enemy) paralysis — 25% fully paralyzed
+  if (pokemon.status === 'paralysis' && roll(4) === 1) {
+    msgs.push(`${pokemon.name} is paralyzed! It can't move!`);
+    return false;
+  }
+
+  // #16: Sleep — can't act; decrement counter; wake up when it hits 0
+  if (pokemon.status === 'sleep') {
+    if (pokemon.statusTurns > 0) pokemon.statusTurns--;
+    if (pokemon.statusTurns === 0) {
+      pokemon.status = null;
+      msgs.push(`${pokemon.name} woke up!`);
+      // Woke this turn: still can't act (Gen I behaviour — wake-up turn is wasted)
+      return false;
+    }
+    msgs.push(`${pokemon.name} is fast asleep!`);
+    return false;
+  }
+
+  // #16: Freeze — 10% thaw chance each turn; otherwise locked
+  if (pokemon.status === 'freeze') {
+    if (roll(10) === 1) {
+      pokemon.status = null;
+      msgs.push(`${pokemon.name} thawed out!`);
+    } else {
+      msgs.push(`${pokemon.name} is frozen solid!`);
+      return false;
+    }
+  }
+
+  // #16: Flinch — set by previous attack this turn; clears automatically
+  if (pokemon.flinched) {
+    pokemon.flinched = false;
+    msgs.push(`${pokemon.name} flinched!`);
+    return false;
+  }
+
+  // #16: Confusion — 50% self-hit chance; typeless 40-power damage to self
+  if (pokemon.confused) {
+    if (pokemon.confusedTurns > 0) pokemon.confusedTurns--;
+    if (pokemon.confusedTurns <= 0) {
+      pokemon.confused = false;
+      msgs.push(`${pokemon.name} snapped out of its confusion!`);
+    } else if (roll(2) === 1) {
+      // Hit self: typeless physical, 40 BP, ignore stat stages for simplicity
+      const selfDmg = Math.max(1, Math.floor(
+        (Math.floor(2 * pokemon.level / 5 + 2) * pokemon.atk * 40 / pokemon.def / 50) + 2
+      ));
+      pokemon.currentHp = Math.max(0, pokemon.currentHp - selfDmg);
+      msgs.push(`${pokemon.name} is confused and hurt itself! (-${selfDmg} HP)`);
+      return false;
+    } else {
+      msgs.push(`${pokemon.name} is confused!`);
+    }
+  }
+
+  return true;
+}
+
+// #4: Status end-of-turn damage — Gen I: 1/16 maxHP (was incorrectly 1/8)
 function applyStatusEnd(pokemon) {
   const msgs = [];
   if (!pokemon || pokemon.currentHp <= 0) return msgs;
   if (pokemon.status === 'burn' || pokemon.status === 'poison' || pokemon.status === 'leech_seed') {
-    const dmg = Math.max(1, Math.floor(pokemon.maxHp / 8));
+    const dmg = Math.max(1, Math.floor(pokemon.maxHp / 16));  // fixed: 1/16
     pokemon.currentHp = Math.max(0, pokemon.currentHp - dmg);
-    const label = pokemon.status === 'burn' ? 'its burn' : pokemon.status === 'poison' ? 'poison' : 'Leech Seed';
+    const label = pokemon.status === 'burn' ? 'its burn'
+                : pokemon.status === 'poison' ? 'poison' : 'Leech Seed';
     msgs.push(`${pokemon.name} is hurt by ${label}! (-${dmg} HP)`);
   }
   return msgs;
 }
 
+// #16: Apply move secondary effects — handles flinch/confusion/sleep/freeze properly
 function applyMoveEffect(moveName, target, source) {
   const mv = MOVES[moveName];
   if (!mv?.effect) return [];
   const msgs = [];
   const e = mv.effect;
-  if (e.status && roll(100) <= (e.chance || 0) && !target.status) {
-    target.status = e.status;
-    msgs.push(`${target.name} is now ${e.status.replace('_',' ')}!`);
+
+  // Status effects (primary and volatile)
+  if (e.status && roll(100) <= (e.chance || 0)) {
+    if (e.status === 'flinch') {
+      // Flinch doesn't overwrite primary status; sets a per-turn flag instead
+      target.flinched = true;
+      // message shown when the flinched pokemon tries to act
+    } else if (e.status === 'confusion') {
+      if (!target.confused) {
+        target.confused = true;
+        target.confusedTurns = 2 + roll(3);  // 2-4 turns remaining after this
+        msgs.push(`${target.name} became confused!`);
+      }
+    } else if (!target.status) {
+      target.status = e.status;
+      if (e.status === 'sleep') {
+        target.statusTurns = 1 + roll(6);  // 1-7 turns (Gen I range)
+        msgs.push(`${target.name} fell asleep!`);
+      } else if (e.status === 'freeze') {
+        target.statusTurns = 0;
+        msgs.push(`${target.name} was frozen solid!`);
+      } else if (e.status === 'leech_seed') {
+        msgs.push(`${target.name} was seeded!`);
+      } else {
+        msgs.push(`${target.name} is now ${e.status.replace(/_/g, ' ')}!`);
+      }
+    }
   }
+
+  // Stat stage changes (with optional per-move chance)
   if (e.stat) {
-    const tgt = e.target === 'self' ? source : target;
-    tgt.statStages[e.stat] = clamp((tgt.statStages[e.stat] || 0) + e.stages, -6, 6);
-    msgs.push(`${tgt.name}'s ${e.stat.toUpperCase()} ${e.stages > 0 ? 'rose' : 'fell'}!`);
+    const applyChance = e.statChance ? roll(100) <= e.statChance : true;
+    if (applyChance) {
+      const tgt = e.target === 'self' ? source : target;
+      tgt.statStages[e.stat] = clamp((tgt.statStages[e.stat] || 0) + e.stages, -6, 6);
+      msgs.push(`${tgt.name}'s ${e.stat.toUpperCase()} ${e.stages > 0 ? 'rose' : 'fell'}!`);
+    }
   }
+
   return msgs;
 }
 
@@ -396,7 +530,13 @@ function handleWarp(state, warp, area) {
     for (const p of state.player.party) {
       p.currentHp = p.maxHp;
       p.status = null;
-      p.statStages = { atk:0, def:0, spd:0, acc:0 };
+      p.statusTurns = 0;
+      p.confused = false;
+      p.confusedTurns = 0;
+      p.flinched = false;
+      p.statStages = { atk:0, def:0, spd:0, spc:0, acc:0 };
+      // Restore PP
+      for (const mv of p.moves) p.pp[mv] = MOVES[mv]?.pp ?? 20;
     }
     state.message = "NURSE JOY: Welcome to the POKéMON CENTER! We've restored your POKéMON to full health. We hope to see you again!";
     return state;
@@ -435,55 +575,108 @@ function useItemOverworld(state, action) {
 
 function processBattleAction(state, action, log) {
   const battle = state.battle;
-  const active = state.player.party[battle.playerPartyIndex];
-  const enemy = battle.enemy;
   const msgs = [];
   const { type } = action;
 
-  function doPlayerAttack(moveName) {
-    const mv = MOVES[moveName];
+  // Live references — enemy can change mid-turn when trainer sends out next pokemon
+  const getActive = () => state.player.party[battle.playerPartyIndex];
+  const getEnemy  = () => battle.enemy;
+
+  // #12: Boulder Badge → +12.5% ATK on player's physical moves
+  const playerBadgeBoost = state.player.flags?.badge_boulder_badge ? 1.125 : 1;
+
+  // Pick an enemy move with PP remaining, or Struggle
+  function selectEnemyMove() {
+    const en = getEnemy();
+    if (!en.pp) return enemyMove(en);
+    const available = en.moves.filter(mv => (en.pp[mv] ?? 1) > 0);
+    return available.length ? available[Math.floor(Math.random() * available.length)] : 'struggle';
+  }
+
+  // Core attack function used by player and enemy
+  function doAttack(attacker, mvName, defender, isPlayer) {
+    if (!state.battle) return;            // battle already ended (whirlwind etc.)
+    if (!checkCanAct(attacker, msgs)) return;  // paralysis / sleep / freeze / flinch / confusion
+
+    // #15: PP deduction — redirect to Struggle if this move has 0 PP
+    if (mvName !== 'struggle') {
+      if (!attacker.pp) attacker.pp = {};
+      if ((attacker.pp[mvName] ?? 1) <= 0) {
+        mvName = 'struggle';
+      } else {
+        attacker.pp[mvName]--;
+      }
+    }
+
+    // #8: Whirlwind — ends wild battles; fails vs trainers
+    if (mvName === 'whirlwind') {
+      if (!battle.isTrainer) {
+        msgs.push(`${attacker.name} used WHIRLWIND! The wild ${defender.name} fled!`);
+        state.screen = 'overworld'; state.battle = null;
+      } else {
+        msgs.push(`${attacker.name} used WHIRLWIND! But it failed against a trainer!`);
+      }
+      return;
+    }
+
+    // #15: Struggle — typeless 50-power physical, 50% recoil damage
+    if (mvName === 'struggle') {
+      const rand = (roll(39) + 217) / 255;
+      const dmg = Math.max(1, Math.floor(
+        (Math.floor(2 * attacker.level / 5 + 2) * attacker.atk * 50 / defender.def / 50 + 2) * rand
+      ));
+      const recoil = Math.max(1, Math.floor(dmg / 2));
+      defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      attacker.currentHp = Math.max(0, attacker.currentHp - recoil);
+      msgs.push(`${attacker.name} has no PP left and used STRUGGLE! (-${dmg} HP) Recoil: -${recoil} HP!`);
+      return;
+    }
+
+    const mv = MOVES[mvName];
     if (!mv) { msgs.push('Unknown move!'); return; }
+
+    // Accuracy check (100 acc moves always hit; otherwise roll)
+    if ((mv.acc || 100) < 100 && roll(100) > mv.acc) {
+      msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
+      return;
+    }
+
     if (mv.power > 0) {
-      const { dmg, effectiveness } = calcDamage(active, moveName, enemy);
-      enemy.currentHp = Math.max(0, enemy.currentHp - dmg);
-      let eff = effectiveness > 1 ? " It's super effective!" : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..." : effectiveness === 0 ? " It has no effect!" : '';
-      msgs.push(`${active.name} used ${moveName.toUpperCase()}! (-${dmg} HP)${eff}`);
+      const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
+      const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
+      defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      const effMsg = effectiveness > 1 ? " It's super effective!"
+                   : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
+                   : effectiveness === 0 ? " It has no effect!" : '';
+      const critMsg = crit ? ' A critical hit!' : '';
+      msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! (-${dmg} HP)${critMsg}${effMsg}`);
+      msgs.push(...applyMoveEffect(mvName, defender, attacker));
     } else {
-      msgs.push(`${active.name} used ${moveName.toUpperCase()}!`);
-    }
-    msgs.push(...applyMoveEffect(moveName, enemy, active));
-  }
-
-  function doEnemyAttack() {
-    if (enemy.currentHp <= 0) return;
-    if (enemy.status === 'paralysis' && roll(100) <= 25) { msgs.push(`${enemy.name} is paralyzed!`); return; }
-    const mv = enemyMove(enemy);
-    const mvData = MOVES[mv];
-    if (mvData?.power > 0) {
-      const { dmg } = calcDamage(enemy, mv, active);
-      active.currentHp = Math.max(0, active.currentHp - dmg);
-      msgs.push(`${enemy.name} used ${mv.toUpperCase()}! (-${dmg} HP)`);
-    } else {
-      msgs.push(`${enemy.name} used ${mv.toUpperCase()}!`);
-      msgs.push(...applyMoveEffect(mv, active, enemy));
+      msgs.push(`${attacker.name} used ${mvName.toUpperCase()}!`);
+      msgs.push(...applyMoveEffect(mvName, defender, attacker));
     }
   }
 
+  // Returns true if the battle ended (faint, whirlwind, etc.)
   function checkFaint() {
+    if (!state.battle) return true;   // already ended
+    const active = getActive();
+    const enemy  = getEnemy();
+
     if (enemy.currentHp <= 0) {
       const exp = Math.floor((enemy.level * 50) / 7);
       active.exp += exp;
       msgs.push(`${enemy.name} fainted! ${active.name} gained ${exp} EXP.`);
 
-      // Trainer battle: more Pokémon?
+      // Trainer battle: send out next Pokémon
       if (battle.isTrainer && battle.trainerParty && battle.trainerParty.length > 0) {
         const next = battle.trainerParty.shift();
         battle.enemy = next;
         msgs.push(`${battle.trainerName} sent out ${next.name}!`);
-        return true;
+        return true;   // end attack chain; next action will pick up the new enemy
       }
 
-      // Trainer defeated (or wild fainted)
+      // Wild fainted or trainer defeated
       if (battle.isTrainer) {
         msgs.push(`${battle.trainerName} is out of POKéMON! You win!`);
         if (battle.reward) {
@@ -503,15 +696,21 @@ function processBattleAction(state, action, log) {
       state.screen = 'overworld'; state.battle = null;
       return true;
     }
+
     if (active.currentHp <= 0) {
       msgs.push(`${active.name} fainted!`);
       const alive = state.player.party.filter(p => p.currentHp > 0);
       if (!alive.length) {
         msgs.push("All your POKéMON fainted... Blacking out!");
-        // Reset to last Pokémon Center (pallet town)
         state.screen = 'overworld'; state.battle = null;
         state.areaId = 'pallet_town'; state.player.x = 8; state.player.y = 14;
-        for (const p of state.player.party) { p.currentHp = Math.max(1, Math.floor(p.maxHp / 2)); p.status = null; }
+        for (const p of state.player.party) {
+          p.currentHp = Math.max(1, Math.floor(p.maxHp / 2));
+          p.status = null;
+          p.statusTurns = 0;
+          p.confused = false;
+          p.flinched = false;
+        }
         state.player.money = Math.max(0, state.player.money - 50);
         msgs.push("You were taken to a POKéMON CENTER.");
       }
@@ -520,20 +719,63 @@ function processBattleAction(state, action, log) {
     return false;
   }
 
+  // ── BATTLE MOVE ─────────────────────────────────────────────────────────
   if (type === 'battle_move') {
+    const active = getActive();
+    const enemy  = getEnemy();
     const moveName = active.moves[action.move_index ?? 0];
     if (!moveName) { state.message = 'Invalid move index (0-3).'; return state; }
     battle.turn++;
-    if (active.spd >= enemy.spd) { doPlayerAttack(moveName); if (!checkFaint()) { doEnemyAttack(); checkFaint(); } }
-    else                         { doEnemyAttack(); if (!checkFaint()) { doPlayerAttack(moveName); checkFaint(); } }
-    msgs.push(...applyStatusEnd(active));
-    msgs.push(...applyStatusEnd(enemy));
-    state.message = msgs.join(' ');
+
+    const mv       = MOVES[moveName];
+    const enemyMv  = selectEnemyMove();
+    const enemyMvD = MOVES[enemyMv];
+
+    // #13: Priority moves (Quick Attack = +1) go first regardless of speed
+    const playerPri = mv?.effect?.priority || 0;
+    const enemyPri  = enemyMvD?.effect?.priority || 0;
+
+    // #7: Speed ties → coin flip
+    let playerFirst;
+    if (playerPri !== enemyPri) {
+      playerFirst = playerPri > enemyPri;
+    } else if (active.spd !== enemy.spd) {
+      playerFirst = active.spd > enemy.spd;
+    } else {
+      playerFirst = roll(2) === 1;   // coin flip on exact speed tie
+    }
+
+    if (playerFirst) {
+      doAttack(active, moveName, enemy, true);
+      if (state.battle && !checkFaint()) {
+        doAttack(getEnemy(), enemyMv, getActive(), false);
+        checkFaint();
+      }
+    } else {
+      doAttack(enemy, enemyMv, active, false);
+      if (state.battle && !checkFaint()) {
+        doAttack(getActive(), moveName, getEnemy(), true);
+        if (state.battle) checkFaint();
+      }
+    }
+
+    // End-of-turn status damage (only if battle still active)
+    if (state.battle) {
+      msgs.push(...applyStatusEnd(getActive()));
+      msgs.push(...applyStatusEnd(getEnemy()));
+      // Check for status-damage KOs
+      checkFaint();
+    }
+
+    state.message = msgs.filter(Boolean).join(' ');
     msgs.forEach(log);
     return state;
   }
 
+  // ── RUN ─────────────────────────────────────────────────────────────────
   if (type === 'run') {
+    const active = getActive();
+    const enemy  = getEnemy();
     if (battle.isTrainer) {
       state.message = "Can't escape from a trainer battle!";
       return state;
@@ -543,13 +785,23 @@ function processBattleAction(state, action, log) {
       state.screen = 'overworld'; state.battle = null;
       state.message = 'Got away safely!'; log(state.message);
     } else {
-      msgs.push("Can't escape!"); doEnemyAttack(); checkFaint();
+      msgs.push("Can't escape!");
+      doAttack(enemy, selectEnemyMove(), active, false);
+      checkFaint();
       state.message = msgs.join(' '); msgs.forEach(log);
     }
     return state;
   }
 
+  // ── THROW BALL ──────────────────────────────────────────────────────────
   if (type === 'throw_ball') {
+    // #5: Block ball-throwing in trainer battles
+    if (battle.isTrainer) {
+      state.message = "You can't catch a trainer's Pokémon!";
+      return state;
+    }
+    const active = getActive();
+    const enemy  = getEnemy();
     const ball = action.ball || 'pokeball';
     if (!(state.player.bag[ball] > 0)) { state.message = `No ${ball}s left.`; return state; }
     state.player.bag[ball]--;
@@ -560,13 +812,18 @@ function processBattleAction(state, action, log) {
       if (state.player.party.length < 6) state.player.party.push(JSON.parse(JSON.stringify(enemy)));
       state.screen = 'overworld'; state.battle = null;
     } else {
-      msgs.push(`${enemy.name} broke free!`); doEnemyAttack(); checkFaint();
+      msgs.push(`${enemy.name} broke free!`);
+      doAttack(enemy, selectEnemyMove(), active, false);
+      checkFaint();
     }
     state.message = msgs.join(' '); msgs.forEach(log);
     return state;
   }
 
+  // ── USE ITEM ─────────────────────────────────────────────────────────────
   if (type === 'use_item') {
+    const active = getActive();
+    const enemy  = getEnemy();
     const { item, target_index = battle.playerPartyIndex } = action;
     const target = state.player.party[target_index];
     if (!target) { state.message = 'No Pokémon at that slot.'; return state; }
@@ -575,7 +832,8 @@ function processBattleAction(state, action, log) {
       target.currentHp += healed;
       state.player.bag.potion--;
       msgs.push(`Used POTION on ${target.name}. +${healed} HP.`);
-      doEnemyAttack(); checkFaint();
+      doAttack(enemy, selectEnemyMove(), active, false);
+      checkFaint();
       state.message = msgs.join(' '); msgs.forEach(log);
     } else {
       state.message = `Can't use ${item}.`;
@@ -583,14 +841,18 @@ function processBattleAction(state, action, log) {
     return state;
   }
 
+  // ── SWITCH ────────────────────────────────────────────────────────────────
   if (type === 'switch') {
+    const active = getActive();
+    const enemy  = getEnemy();
     const next = state.player.party[action.party_index];
     if (!next) { state.message = 'Invalid party slot.'; return state; }
     if (next.currentHp <= 0) { state.message = `${next.name} has fainted!`; return state; }
     if (action.party_index === battle.playerPartyIndex) { state.message = 'Already in battle!'; return state; }
     msgs.push(`Come back, ${active.name}! Go, ${next.name}!`);
     battle.playerPartyIndex = action.party_index;
-    doEnemyAttack(); checkFaint();
+    doAttack(enemy, selectEnemyMove(), next, false);
+    checkFaint();
     state.message = msgs.join(' '); msgs.forEach(log);
     return state;
   }
@@ -622,7 +884,9 @@ function getView(state) {
       badges: state.player.badges,
       party: state.player.party.map(p => ({
         name: p.name, species: p.species, level: p.level,
-        hp: `${p.currentHp}/${p.maxHp}`, status: p.status, moves: p.moves,
+        hp: `${p.currentHp}/${p.maxHp}`, status: p.status,
+        confused: p.confused || undefined,
+        moves: p.moves,
       })),
     },
   };
@@ -635,7 +899,14 @@ function getView(state) {
       your_active: {
         name: active.name, species: active.species, level: active.level,
         hp: `${active.currentHp}/${active.maxHp}`, status: active.status,
-        moves: active.moves.map((m,i) => ({ index:i, name:m, ...(MOVES[m]||{}) })),
+        confused: active.confused || undefined,
+        // #15: show PP per move
+        moves: active.moves.map((m,i) => ({
+          index: i,
+          name: m,
+          ...(MOVES[m] || {}),
+          pp: `${active.pp?.[m] ?? '?'}/${MOVES[m]?.pp ?? '?'}`,
+        })),
       },
       enemy: {
         name: state.battle.enemy.name, species: state.battle.enemy.species,
@@ -643,8 +914,9 @@ function getView(state) {
         hp: `${state.battle.enemy.currentHp}/${state.battle.enemy.maxHp}`,
         status: state.battle.enemy.status, type: state.battle.enemy.type,
       },
+      // #5: no throw_ball in trainer battles
       available_actions: isTrainer
-        ? ['battle_move (move_index: 0-3)', 'throw_ball (ball: pokeball|great_ball)', 'use_item (item: potion, target_index: 0-5)', 'switch (party_index: 0-5)']
+        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion, target_index: 0-5)', 'switch (party_index: 0-5)']
         : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: pokeball|great_ball)', 'use_item (item: potion, target_index: 0-5)', 'switch (party_index: 0-5)'],
     };
   }
