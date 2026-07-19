@@ -25,13 +25,16 @@ const MART_CATALOG = {
     { item: 'potion',        price: 300 },
     { item: 'super_potion',  price: 700 },
     { item: 'antidote',      price: 100 },
+    // [F3] Pewter mart stock completed
+    { item: 'paralyze_heal', price: 200 },
+    { item: 'full_heal',     price: 600 },
   ],
   celadon: [
     { item: 'fire_stone',    price: 2100 },
     { item: 'water_stone',   price: 2100 },
     { item: 'thunder_stone', price: 2100 },
     { item: 'leaf_stone',    price: 2100 },
-    { item: 'moon_stone',    price: 2100 },
+    // [B10] Moon Stone is find-only in Gen I — never sold in marts
     { item: 'potion',        price: 300  },
     { item: 'super_potion',  price: 700  },
     { item: 'great_ball',    price: 600  },
@@ -62,6 +65,9 @@ const ITEM_NAMES = {
   thunder_stone: 'Thunder Stone',
   leaf_stone:    'Leaf Stone',
   moon_stone:    'Moon Stone',
+  // [C19] PP enhancement items
+  pp_up:         'PP Up',
+  pp_max:        'PP Max',
 };
 
 // Resolve which mart tier is available for a given area, or null if none.
@@ -130,12 +136,17 @@ function tryLevelUp(pokemon, msgs) {
           if (pokemon.pp) pokemon.pp[mv] = MOVES[mv]?.pp ?? 20;
           msgs.push(`${pokemon.name} learned ${mv.toUpperCase()}!`);
         } else {
-          msgs.push(`${pokemon.name} wants to learn ${mv.toUpperCase()}, but already knows 4 moves!`);
+          // [B5] 5th-move: queue on pokemon so driver can use forget_move
+          pokemon.pendingMoves = pokemon.pendingMoves || [];
+          if (!pokemon.pendingMoves.includes(mv)) {
+            pokemon.pendingMoves.push(mv);
+            msgs.push(`${pokemon.name} wants to learn ${mv.toUpperCase()}, but already knows 4 moves! Use forget_move with newMove: "${mv}" to replace a move.`);
+          }
         }
       }
     }
 
-    // Check for level-based evolution
+    // [B4] Check for level-based evolution — queue instead of evolving mid-battle
     tryEvolve(pokemon, msgs);
   }
 }
@@ -153,7 +164,10 @@ function tryEvolve(pokemon, msgs) {
     // Only auto-evolve on level for level-based evolutions
     if (!candidate.level) continue;
     if (pokemon.level >= candidate.level) {
-      return doEvolve(pokemon, candidate.species, msgs);
+      // [B4] Queue evolution to happen after battle, not mid-fight
+      pokemon.pendingEvolution = candidate.species;
+      msgs.push(`What? ${pokemon.name} is about to evolve! (evolution happens after battle)`);
+      return true;
     }
   }
   return false;
@@ -227,10 +241,14 @@ function makePokemon(speciesKey, level) {
     confused: false,       // #16: confusion (separate from primary status)
     confusedTurns: 0,
     flinched: false,       // #16: per-turn flinch flag
-    statStages: { atk:0, def:0, spd:0, spc:0, acc:0 },
+    statStages: { atk:0, def:0, spd:0, spc:0, acc:0, eva: 0 },
     // #18: cumulative EXP; initialise to the amount for current level so level-up thresholds are correct
     growthRate: base.growthRate || 'medium_fast',
     exp: expForLevel(level, base.growthRate || 'medium_fast'),
+    // [B6] Nickname / OT / ID
+    nickname: null,        // null means use species name; set by nickname_pokemon action
+    ot: null,              // original trainer name (set on capture)
+    otId: null,            // original trainer ID (5-digit random)
     // #22: Bide multi-turn state
     bideState: null,       // { turnsLeft, damageAccum } while charging
     // #23: Bind/Wrap multi-turn state
@@ -239,6 +257,10 @@ function makePokemon(speciesKey, level) {
     recharging: false,
     // [A12] Toxic counter — escalates N/16 each turn (resets between battles)
     toxicCounter: 0,
+    // [A13] Leech Seed — volatile condition (does not block real statuses)
+    leechSeeded: false,
+    // [C11] Thrash/Petal Dance lock-in state
+    lockinState: null,     // { move: string, turnsLeft: int } while rampaging
   };
 }
 
@@ -249,13 +271,15 @@ function stageMultiplier(stages) {
 
 // [A14] Reset volatile battle state — called at battle end so stat changes don't bleed across battles
 function resetVolatileState(pokemon) {
-  pokemon.statStages = { atk:0, def:0, spd:0, spc:0, acc:0 };
+  pokemon.statStages = { atk:0, def:0, spd:0, spc:0, acc:0, eva: 0 };
   pokemon.confused = false; pokemon.confusedTurns = 0;
   pokemon.flinched = false;
   pokemon.boundState = null;
   pokemon.bideState = null;
   pokemon.recharging = false;
   pokemon.toxicCounter = 0;
+  pokemon.leechSeeded = false;
+  pokemon.lockinState = null;
 }
 
 // #14 + #17: damage with crits, special stat, burn penalty, badge boost
@@ -301,10 +325,13 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
   const randomFactor = 216 + roll(39);
   const rand = randomFactor / 255;
 
+  // [A7] Gen I crits double the level coefficient (4L/5+2 instead of 2L/5+2)
+  const levelCoef = isCrit
+    ? Math.floor(4 * attacker.level / 5 + 2)
+    : Math.floor(2 * attacker.level / 5 + 2);
   const raw = Math.floor(
-    Math.floor(Math.floor(2 * attacker.level / 5 + 2) * atkStat * mv.power / effectiveDefStat / 50 + 2)
+    Math.floor(levelCoef * atkStat * mv.power / effectiveDefStat / 50 + 2)
     * stab * eff * rand
-    * (isCrit ? 2 : 1)
   );
   return { dmg: Math.max(1, raw), effectiveness: eff, crit: isCrit };
 }
@@ -375,15 +402,27 @@ function checkCanAct(pokemon, msgs) {
 }
 
 // #4: Status end-of-turn damage — Gen I: 1/16 maxHP (was incorrectly 1/8)
-function applyStatusEnd(pokemon) {
+function applyStatusEnd(pokemon, opponent) {
   const msgs = [];
   if (!pokemon || pokemon.currentHp <= 0) return msgs;
-  if (pokemon.status === 'burn' || pokemon.status === 'poison' || pokemon.status === 'leech_seed') {
+  if (pokemon.status === 'burn' || pokemon.status === 'poison') {
     const dmg = Math.max(1, Math.floor(pokemon.maxHp / 16));
     pokemon.currentHp = Math.max(0, pokemon.currentHp - dmg);
-    const label = pokemon.status === 'burn' ? 'its burn'
-                : pokemon.status === 'poison' ? 'poison' : 'Leech Seed';
+    const label = pokemon.status === 'burn' ? 'its burn' : 'poison';
     msgs.push(`${pokemon.name} is hurt by ${label}! (-${dmg} HP)`);
+  }
+  // [A13] Leech Seed drain + heal opponent
+  if (pokemon.leechSeeded && pokemon.currentHp > 0) {
+    const drainDmg = Math.max(1, Math.floor(pokemon.maxHp / 16));
+    pokemon.currentHp = Math.max(0, pokemon.currentHp - drainDmg);
+    msgs.push(`${pokemon.name} had its energy drained by Leech Seed! (-${drainDmg} HP)`);
+    if (opponent && opponent.currentHp > 0) {
+      const heal = Math.min(drainDmg, opponent.maxHp - opponent.currentHp);
+      if (heal > 0) {
+        opponent.currentHp += heal;
+        msgs.push(`${opponent.name} absorbed ${heal} HP!`);
+      }
+    }
   }
   // #23: Bind/Wrap — deal 1/16 per turn, count down, free when done
   if (pokemon.boundState) {
@@ -425,7 +464,7 @@ function applyMoveEffect(moveName, target, source) {
     } else if (e.status === 'confusion') {
       if (!target.confused) {
         target.confused = true;
-        target.confusedTurns = 2 + roll(3);  // 2-4 turns remaining after this
+        target.confusedTurns = 1 + roll(4);  // 2-5 turns (Gen I)
         msgs.push(`${target.name} became confused!`);
       }
     } else if (e.status === 'toxic') {
@@ -435,16 +474,21 @@ function applyMoveEffect(moveName, target, source) {
         target.toxicCounter = 0;  // starts at 0; incremented each turn in applyStatusEnd
         msgs.push(`${target.name} was badly poisoned!`);
       }
+    } else if (e.status === 'leech_seed') {
+      if (!target.leechSeeded) {
+        target.leechSeeded = true;
+        msgs.push(`${target.name} was seeded!`);
+      } else {
+        msgs.push(`${target.name} is already seeded!`);
+      }
     } else if (!target.status) {
       target.status = e.status;
       if (e.status === 'sleep') {
-        target.statusTurns = 1 + roll(6);  // 1-7 turns (Gen I range)
+        target.statusTurns = roll(7);  // 1-7 turns (Gen I)
         msgs.push(`${target.name} fell asleep!`);
       } else if (e.status === 'freeze') {
         target.statusTurns = 0;
         msgs.push(`${target.name} was frozen solid!`);
-      } else if (e.status === 'leech_seed') {
-        msgs.push(`${target.name} was seeded!`);
       } else {
         msgs.push(`${target.name} is now ${e.status.replace(/_/g, ' ')}!`);
       }
@@ -1163,7 +1207,7 @@ function handleWarp(state, warp, area) {
       p.confused = false;
       p.confusedTurns = 0;
       p.flinched = false;
-      p.statStages = { atk:0, def:0, spd:0, spc:0, acc:0 };
+      p.statStages = { atk:0, def:0, spd:0, spc:0, acc:0, eva: 0 };
       // Restore PP
       for (const mv of p.moves) p.pp[mv] = MOVES[mv]?.pp ?? 20;
     }
@@ -1459,6 +1503,28 @@ function processBattleAction(state, action, log) {
     if (!state.battle) return;            // battle already ended (whirlwind etc.)
     if (!checkCanAct(attacker, msgs)) return;  // paralysis / sleep / freeze / flinch / confusion
 
+    // [C11] Thrash/Petal Dance lock-in — override move selection if rampaging
+    if (attacker.lockinState) {
+      mvName = attacker.lockinState.move;
+      attacker.lockinState.turnsLeft--;
+      if (attacker.lockinState.turnsLeft <= 0) {
+        attacker.lockinState = null;
+        // Self-confuse after rampage ends
+        if (!attacker.confused) {
+          attacker.confused = true;
+          attacker.confusedTurns = 1 + roll(4);  // 2-5 turns
+          msgs.push(`${attacker.name} became confused from the rampage!`);
+        }
+      }
+    } else {
+      const mvDef = MOVES[mvName];
+      if (mvDef?.effect?.lockin) {
+        // Start lock-in: 2 or 3 turns (Gen I); -1 because this turn counts
+        const totalTurns = 2 + (roll(2) - 1);  // 2 or 3
+        attacker.lockinState = { move: mvName, turnsLeft: totalTurns - 1 };
+      }
+    }
+
     // #15: PP deduction — redirect to Struggle if this move has 0 PP
     if (mvName !== 'struggle') {
       if (!attacker.pp) attacker.pp = {};
@@ -1482,21 +1548,29 @@ function processBattleAction(state, action, log) {
 
     // #22: Bide — set charging state; actual release handled in battle_move preamble
     if (mvName === 'bide') {
-      attacker.bideState = { turnsLeft: 1 + (roll(2) - 1), damageAccum: 0 };
+      attacker.bideState = { turnsLeft: 2 + (roll(2) - 1), damageAccum: 0 };  // 2-3 turns (Gen I)
       msgs.push(`${attacker.name} is biding its time!`);
       return;
     }
 
-    // #15: Struggle — typeless 50-power physical, 50% recoil damage
+    // #15: Struggle — Normal-type 50-power physical, 50% recoil damage [C18]
     if (mvName === 'struggle') {
       const rand = (216 + roll(39)) / 255;  // 217..255 inclusive (#3)
-      const dmg = Math.max(1, Math.floor(
+      const baseDmg = Math.max(1, Math.floor(
         (Math.floor(2 * attacker.level / 5 + 2) * attacker.atk * 50 / defender.def / 50 + 2) * rand
       ));
-      const recoil = Math.max(1, Math.floor(dmg / 2));
-      defender.currentHp = Math.max(0, defender.currentHp - dmg);
+      // [C18] Struggle is Normal-type — Ghost immune, Rock resists; recoil always applies
+      const eff = getEffectiveness('normal', defender.type);
+      const recoil = Math.max(1, Math.floor(baseDmg / 2));
+      if (eff === 0) {
+        msgs.push(`${attacker.name} used STRUGGLE! It had no effect on ${defender.name}!`);
+      } else {
+        const finalDmg = Math.floor(baseDmg * eff);
+        defender.currentHp = Math.max(0, defender.currentHp - finalDmg);
+        msgs.push(`${attacker.name} used STRUGGLE! (-${finalDmg} HP)${eff > 1 ? " It's super effective!" : eff < 1 ? " It's not very effective..." : ""}`);
+      }
       attacker.currentHp = Math.max(0, attacker.currentHp - recoil);
-      msgs.push(`${attacker.name} has no PP left and used STRUGGLE! (-${dmg} HP) Recoil: -${recoil} HP!`);
+      msgs.push(`${attacker.name} took recoil damage! (-${recoil} HP)`);
       return;
     }
 
@@ -1664,6 +1738,13 @@ function processBattleAction(state, action, log) {
         attacker.recharging = true;
         msgs.push(`${attacker.name} must recharge!`);
       }
+      // [C17] Pay Day — scatter coins into a battle accumulator
+      if (e?.pay_day) {
+        const coins = 2 * attacker.level;
+        if (!battle.payDayGold) battle.payDayGold = 0;
+        battle.payDayGold += coins;
+        msgs.push(`Coins scattered everywhere! (+${coins} coins)`);
+      }
       msgs.push(...applyMoveEffect(mvName, defender, attacker));
     } else {
       msgs.push(`${attacker.name} used ${mvName.toUpperCase()}!`);
@@ -1685,25 +1766,56 @@ function processBattleAction(state, action, log) {
     if (enemy.currentHp <= 0) {
       // #11: use per-species baseExp; #18: trainer battles give 1.5× EXP
       const baseExp = POKEMON[enemy.species]?.baseExp || 50;
-      const exp = Math.floor((baseExp * enemy.level * (battle.isTrainer ? 1.5 : 1)) / 7);
-      active.exp = (active.exp || 0) + exp;
-      msgs.push(`${enemy.name} fainted! ${active.name} gained ${exp} EXP.`);
-      tryLevelUp(active, msgs);
+      const totalExp = Math.floor((baseExp * enemy.level * (battle.isTrainer ? 1.5 : 1)) / 7);
+      // [G8] Split EXP among all Pokémon that participated in this battle
+      const participants = battle.expParticipants || [battle.playerPartyIndex ?? 0];
+      const expShare = Math.max(1, Math.floor(totalExp / participants.length));
+      const expRecipients = [];
+      for (const pIdx of participants) {
+        const p = state.player.party[pIdx];
+        if (p && p.currentHp > 0) {
+          p.exp = (p.exp || 0) + expShare;
+          expRecipients.push(`${p.name} +${expShare} EXP`);
+          tryLevelUp(p, msgs);
+          // [B4] Trigger pending evolution now that battle is ending
+          if (p.pendingEvolution) {
+            doEvolve(p, p.pendingEvolution, msgs);
+            p.pendingEvolution = null;
+          }
+        }
+      }
+      msgs.push(`${enemy.name} fainted! ${expRecipients.join(', ')}.`);
 
       // Trainer battle: send out next Pokémon
       if (battle.isTrainer && battle.trainerParty && battle.trainerParty.length > 0) {
         const next = battle.trainerParty.shift();
         battle.enemy = next;
-        msgs.push(`${battle.trainerName} sent out ${next.name}!`);
+        // [A17] Shift-mode: offer free switch to player
+        state.shiftOffer = true;
+        msgs.push(`${battle.trainerName} sent out ${next.name}! (You may switch for free — use switch_pokemon)`);
         return true;   // end attack chain; next action will pick up the new enemy
       }
 
       // Wild fainted or trainer defeated
       if (battle.isTrainer) {
         msgs.push(`${battle.trainerName} is out of POKéMON! You win!`);
-        if (battle.reward) {
+        // [F7] Prize money: basePrize×highestLevel×2 if basePrize defined, else flat reward
+        if (battle.basePrize !== undefined) {
+          const allParty = [...(battle.trainerParty || []), battle.enemy].filter(Boolean);
+          const highestLv = allParty.length > 0
+            ? Math.max(...allParty.map(p => p.level))
+            : (battle.enemy?.level ?? 1);
+          const earned = battle.basePrize * highestLv * 2;
+          state.player.money += earned;
+          msgs.push(`${battle.trainerName} paid ₽${earned}!`);
+        } else if (battle.reward) {
           state.player.money += battle.reward;
           msgs.push(`Received ₽${battle.reward} from ${battle.trainerName}.`);
+        }
+        // [C17] Pay Day gold collected at battle end
+        if (battle.payDayGold) {
+          state.player.money += battle.payDayGold;
+          msgs.push(`You picked up ${battle.payDayGold} coin(s) from Pay Day!`);
         }
         if (battle.rewardFlag) state.player.flags[battle.rewardFlag] = true;
         if (battle.badge) {
@@ -1713,6 +1825,12 @@ function processBattleAction(state, action, log) {
           msgs.push(`${battle.trainerName} awarded you the ${battle.badge.toUpperCase()}!`);
           msgs.push(`${state.player.badges} badge(s) earned so far. Head to the next GYM!`);
         }
+      }
+
+      // [C17] Pay Day gold for wild battles
+      if (!battle.isTrainer && battle.payDayGold) {
+        state.player.money += battle.payDayGold;
+        msgs.push(`You picked up ${battle.payDayGold} coin(s) from Pay Day!`);
       }
 
       // [A14] Reset volatile state for all party members at battle end
@@ -1739,7 +1857,7 @@ function processBattleAction(state, action, log) {
           p.statusTurns = 0;
           if (p.pp) for (const mv of (p.moves || [])) p.pp[mv] = MOVES[mv]?.pp ?? 20;
         }
-        state.player.money = Math.max(0, state.player.money - 50);
+        state.player.money = Math.floor(state.player.money / 2);  // [F5] Gen I: lose half money on blackout
         msgs.push("You were taken to a POKéMON CENTER.");
       }
       return true;
@@ -1749,6 +1867,9 @@ function processBattleAction(state, action, log) {
 
   // ── BATTLE MOVE ─────────────────────────────────────────────────────────
   if (type === 'battle_move') {
+    // [A17] Shift offer expired — player chose to attack instead of switching
+    if (state.shiftOffer) state.shiftOffer = false;
+
     const active = getActive();
     const enemy  = getEnemy();
     const moveName = active.moves[action.move_index ?? 0];
@@ -1782,8 +1903,8 @@ function processBattleAction(state, action, log) {
         }
       }
       if (state.battle) {
-        msgs.push(...applyStatusEnd(getActive()));
-        msgs.push(...applyStatusEnd(getEnemy()));
+        msgs.push(...applyStatusEnd(getActive(), getEnemy()));
+        msgs.push(...applyStatusEnd(getEnemy(), getActive()));
         checkFaint();
       }
       state.message = msgs.filter(Boolean).join(' ');
@@ -1803,8 +1924,8 @@ function processBattleAction(state, action, log) {
         checkFaint();
       }
       if (state.battle) {
-        msgs.push(...applyStatusEnd(getActive()));
-        msgs.push(...applyStatusEnd(getEnemy()));
+        msgs.push(...applyStatusEnd(getActive(), getEnemy()));
+        msgs.push(...applyStatusEnd(getEnemy(), getActive()));
         checkFaint();
       }
       state.message = msgs.filter(Boolean).join(' ');
@@ -1859,8 +1980,8 @@ function processBattleAction(state, action, log) {
 
     // End-of-turn status damage (only if battle still active)
     if (state.battle) {
-      msgs.push(...applyStatusEnd(getActive()));
-      msgs.push(...applyStatusEnd(getEnemy()));
+      msgs.push(...applyStatusEnd(getActive(), getEnemy()));
+      msgs.push(...applyStatusEnd(getEnemy(), getActive()));
       // Check for status-damage KOs
       checkFaint();
     }
@@ -1878,8 +1999,11 @@ function processBattleAction(state, action, log) {
       state.message = "Can't escape from a trainer battle!";
       return state;
     }
-    const esc = Math.floor((active.spd * 32) / (enemy.spd || 1)) + 30;
-    if (roll(256) < esc) {
+    // [A9] Gen I escape formula: (playerSpd*32)/floor(enemySpd/4) + 30*runAttempts; auto-succeed ≥255
+    battle.runAttempts = (battle.runAttempts || 0) + 1;
+    const enemySpdDiv = Math.max(1, Math.floor(enemy.spd / 4));
+    const esc = Math.floor((active.spd * 32) / enemySpdDiv) + 30 * battle.runAttempts;
+    if (esc >= 255 || roll(256) < esc) {
       // [A14] Reset volatile state when running away
       for (const p of state.player.party) resetVolatileState(p);
       state.screen = 'overworld'; state.battle = null;
@@ -1923,6 +2047,9 @@ function processBattleAction(state, action, log) {
       battle.outcome = 'caught';
       msgs.push(`${enemy.name} was caught!`);
       const caught = JSON.parse(JSON.stringify(enemy));
+      // [B6] Stamp OT and otId on capture
+      caught.ot = state.player.name || 'TRAINER';
+      caught.otId = 10000 + (roll(90000) - 1);  // 10000-99999
       if (state.player.party.length < 6) {
         state.player.party.push(caught);
         msgs.push(`${caught.name} was added to your party!`);
@@ -1995,7 +2122,7 @@ function processBattleAction(state, action, log) {
   }
 
   // ── SWITCH ────────────────────────────────────────────────────────────────
-  if (type === 'switch') {
+  if (type === 'switch' || type === 'switch_pokemon') {
     const active = getActive();
     const enemy  = getEnemy();
     const next = state.player.party[action.party_index];
@@ -2004,6 +2131,12 @@ function processBattleAction(state, action, log) {
     if (action.party_index === battle.playerPartyIndex) { state.message = 'Already in battle!'; return state; }
     msgs.push(`Come back, ${active.name}! Go, ${next.name}!`);
     battle.playerPartyIndex = action.party_index;
+    // [A17] Shift offer: free switch after KO'ing trainer's Pokémon — no enemy attack this turn
+    if (state.shiftOffer) {
+      state.shiftOffer = false;
+      state.message = msgs.join(' '); msgs.forEach(log);
+      return state;
+    }
     doAttack(enemy, battle.isTrainer ? selectEnemyMove() : selectWildMove(enemy), next, false);
     checkFaint();
     state.message = msgs.join(' '); msgs.forEach(log);
@@ -2079,9 +2212,11 @@ function getView(state) {
         status: state.battle.enemy.status, type: state.battle.enemy.type,
         bound: state.battle.enemy.boundState ? `bound (${state.battle.enemy.boundState.turnsLeft} turn(s) left)` : undefined,
       },
+      // [A17] Shift offer: free switch after KO'ing trainer's Pokémon
+      shift_offer: state.shiftOffer || undefined,
       // #5: no throw_ball in trainer battles
       available_actions: isTrainer
-        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)']
+        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)', 'switch_pokemon (party_index: 0-5) — alias for switch']
         : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball|ultra_ball|master_ball)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
     };
   }
