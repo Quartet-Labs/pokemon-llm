@@ -1102,7 +1102,10 @@ const ROUTE_2 = {
     }
     return rows;
   })(),
-  objects: [],
+  // Door tile override on the south face of the west gatehouse building
+  objects: [
+    { x:5, y:12, tile:T.DOOR },  // west gatehouse entry — leads to Route 2 Gate house
+  ],
   npcs: [
     { id:'youngster_r2', x:3, y:5, name:'Youngster', dir:'east',
       dialogue:["I'm training my POKéMON to get stronger before I challenge BROCK!"] },
@@ -1115,7 +1118,7 @@ const ROUTE_2 = {
   ],
   items: [
     { id:'r2_antidote', x:2, y:18, item:'antidote', qty:1 },
-    { id:'r2_tm45',     x:12, y:3, item:'tm45',     qty:1 },  // TM45 Thunderwave from pickup
+    { id:'r2_tm45',     x:12, y:3, item:'tm45',     qty:1 },  // TM45 Thunder Wave from pickup
   ],
   encounters: {
     tall_grass: [
@@ -1129,7 +1132,60 @@ const ROUTE_2 = {
     north: { area:'viridian_forest', entryX:9,  entryY:30 },
     south: { area:'viridian_city',   entryX:9,  entryY:1  },
   },
-  warps: [],
+  warps: [
+    { x:5, y:12, dest:'route_2_gate', destX:3, destY:3, areaName:'Route 2 Gate' },
+  ],
+};
+
+// ── Interior: Route 2 Gate — houses the OAK'S AIDE who gives HM05 Flash ─────
+// Requirement: 10 or more Pokémon species caught (authentic Gen I condition)
+const ROUTE_2_GATE = {
+  id: 'route_2_gate',
+  name: 'Route 2 Gate',
+  width: 8,
+  height: 5,
+  tiles: [
+    "WWWWWWWW",  // 0 north wall
+    "WPPPPPPW",  // 1
+    "WPPPPPPW",  // 2
+    "WPPPPPPW",  // 3
+    "WWWDDWWW",  // 4 south exit
+  ],
+  objects: [],
+  npcs: [
+    { id:'r2_aide', x:4, y:1, name:"OAK's Aide", dir:'south',
+      // [E6/F6] HM05 Flash gift — authentic Gen I condition: 10+ species caught
+      flagDialogue: [
+        { requireFlag: 'has_pokedex', requireCaught: 10, denyFlag: 'got_hm05_from_r2_aide',
+          lines: [
+            "AIDE: I'll give this to you! It's HM05 — it contains FLASH! Lower the foe's accuracy!",
+            { give: 'hm05', qty: 1 },
+          ]
+        },
+        { requireFlag: 'got_hm05_from_r2_aide',
+          lines: [
+            "AIDE: FLASH (HM05) lowers the foe's accuracy! It can be used to escape wild POKéMON encounters in dark caves.",
+          ]
+        },
+        { requireFlag: 'has_pokedex',
+          lines: [
+            "AIDE: I work for PROF. OAK. If you've caught 10 or more kinds of POKéMON, I'll give you something good! You've caught " +
+            "some — keep going!",
+          ]
+        },
+        { default: true,
+          lines: [
+            "AIDE: I work for PROF. OAK. He asked me to give something to a capable trainer. Come back after you've been on your journey a while!",
+          ]
+        },
+      ],
+    },
+  ],
+  signs: [],
+  warps: [
+    { x:3, y:4, dest:'route_2', destX:5, destY:13, areaName:'Route 2' },
+    { x:4, y:4, dest:'route_2', destX:5, destY:13, areaName:'Route 2' },
+  ],
 };
 
 // ── Area registry ─────────────────────────────────────────────────────────────
@@ -1150,6 +1206,7 @@ const AREAS = {
   pewter_gym:       PEWTER_GYM,
   pewter_museum:    PEWTER_MUSEUM,
   pewter_museum_back: PEWTER_MUSEUM_BACK,
+  route_2_gate:     ROUTE_2_GATE,
   route_22:         ROUTE_22,
   route_23:         ROUTE_23,
 };

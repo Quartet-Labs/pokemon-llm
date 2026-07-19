@@ -925,17 +925,19 @@ function getRivalParty(state) {
 
 // [D4] Resolve NPC dialogue, supporting flag-conditional branches.
 // npc.flagDialogue is an array of branch objects:
-//   { requireFlag, denyFlag, requireItem, lines }  — first matching branch wins
-//   { default: true, lines }                        — fallback
+//   { requireFlag, denyFlag, requireItem, requireCaught, lines }  — first matching branch wins
+//   { default: true, lines }                                       — fallback
 // Returns the resolved lines array, or null to fall through to npc.dialogue.
-function resolveNpcDialogue(npc, player) {
+function resolveNpcDialogue(npc, player, state) {
   if (!Array.isArray(npc.flagDialogue)) return null;
+  const caughtCount = state ? Object.keys(state.pokedex?.caught ?? {}).length : 0;
   for (const branch of npc.flagDialogue) {
     if (branch.default) return branch.lines;
-    const flagOk    = !branch.requireFlag || !!player.flags[branch.requireFlag];
-    const denyOk    = !branch.denyFlag    || !player.flags[branch.denyFlag];
-    const itemOk    = !branch.requireItem || (player.bag[branch.requireItem] || 0) > 0;
-    if (flagOk && denyOk && itemOk) return branch.lines;
+    const flagOk    = !branch.requireFlag   || !!player.flags[branch.requireFlag];
+    const denyOk    = !branch.denyFlag      || !player.flags[branch.denyFlag];
+    const itemOk    = !branch.requireItem   || (player.bag[branch.requireItem] || 0) > 0;
+    const caughtOk  = !branch.requireCaught || caughtCount >= branch.requireCaught;
+    if (flagOk && denyOk && itemOk && caughtOk) return branch.lines;
   }
   return [];
 }
@@ -1178,7 +1180,7 @@ function processAction(state, action) {
           return state;
         }
         // [D4] Resolve dialogue — supports flagDialogue branches or normal dialogue/afterBattle
-        const flagLines = resolveNpcDialogue(npcHere, state.player);
+        const flagLines = resolveNpcDialogue(npcHere, state.player, state);
         const dialogueSource = flagLines !== null
           ? flagLines
           : (npcHere.trainerBattle && state.player.flags[npcHere.trainerBattle.rewardFlag])
@@ -1433,7 +1435,7 @@ function processAction(state, action) {
         const npc = getNpcAt(area, tx, ty);
         if (npc) {
           // [D4] Resolve flagDialogue branches or fall through to static dialogue
-          const flagLines = resolveNpcDialogue(npc, state.player);
+          const flagLines = resolveNpcDialogue(npc, state.player, state);
           const rawLines = flagLines !== null ? flagLines : (npc.dialogue || []);
           const lines = [...rawLines].filter(l => {
             if (typeof l === 'object' && l.give) {
