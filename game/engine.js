@@ -68,6 +68,7 @@ const ITEM_NAMES = {
   antidote:      'Antidote',
   paralyze_heal: 'Parlyz Heal',
   burn_heal:     'Burn Heal',
+  ice_heal:      'Ice Heal',
   awakening:     'Awakening',
   escape_rope:   'Escape Rope',
   full_heal:     'Full Heal',
@@ -878,7 +879,7 @@ function newGame(seed) {
         poke_ball: 5,    great_ball: 0,  ultra_ball: 0,  master_ball: 0,
         potion: 5,       super_potion: 0,  hyper_potion: 0, max_potion: 0, full_restore: 0,
         revive: 0,       max_revive: 0,    rare_candy: 0,
-        antidote: 0,     paralyze_heal: 0, burn_heal: 0, awakening: 0,  full_heal: 0,
+        antidote: 0,     paralyze_heal: 0, burn_heal: 0, ice_heal: 0, awakening: 0, full_heal: 0,
         // legacy key kept for save-state compat
         pokeball: 0,
         // evolution stones
@@ -1879,6 +1880,13 @@ function useItemOverworld(state, action) {
     bag.burn_heal--;
     state.message = `Used Burn Heal on ${target.name}. ${target.name}'s burn was healed!`;
 
+  } else if (item === 'ice_heal') {
+    if (!(bag.ice_heal > 0)) { state.message = 'You have no Ice Heals.'; return state; }
+    if (target.status !== 'freeze') { state.message = `${target.name} is not frozen.`; return state; }
+    target.status = null;
+    bag.ice_heal--;
+    state.message = `Used Ice Heal on ${target.name}. ${target.name} thawed out!`;
+
   } else if (item === 'awakening') {
     if (!(bag.awakening > 0)) { state.message = 'You have no Awakenings.'; return state; }
     if (target.status !== 'sleep') { state.message = `${target.name} is not asleep.`; return state; }
@@ -2025,7 +2033,7 @@ function useItemOverworld(state, action) {
     }
 
     // fallback — unknown item
-    state.message = `Can't use ${itemName} here. Try: potion, super_potion, hyper_potion, max_potion, full_restore, revive, max_revive, rare_candy, antidote, paralyze_heal, burn_heal, awakening, full_heal, escape_rope, or an evolution stone.`;
+    state.message = `Can't use ${itemName} here. Try: potion, super_potion, hyper_potion, max_potion, full_restore, revive, max_revive, rare_candy, antidote, paralyze_heal, burn_heal, ice_heal, awakening, full_heal, escape_rope, or an evolution stone.`;
   }
   return state;
 }
@@ -2946,6 +2954,11 @@ function processBattleAction(state, action, log) {
       bag.burn_heal--;
       msgs.push(`Used Burn Heal on ${target.name}. Burn healed!`);
       used = true;
+    } else if (item === 'ice_heal' && bag.ice_heal > 0 && target.status === 'freeze') {
+      target.status = null;
+      bag.ice_heal--;
+      msgs.push(`Used Ice Heal on ${target.name}. ${target.name} thawed out!`);
+      used = true;
     } else if (item === 'awakening' && bag.awakening > 0 && target.status === 'sleep') {
       target.status = null; target.statusTurns = 0;
       bag.awakening--;
@@ -3082,8 +3095,8 @@ function getView(state) {
       shift_offer: state.shiftOffer || undefined,
       // #5: no throw_ball in trainer battles
       available_actions: isTrainer
-        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|burn_heal|awakening|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)', 'switch_pokemon (party_index: 0-5) — alias for switch']
-        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball|ultra_ball|master_ball)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|burn_heal|awakening|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
+        ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|hyper_potion|max_potion|full_restore|revive|max_revive|antidote|paralyze_heal|burn_heal|ice_heal|awakening|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)', 'switch_pokemon (party_index: 0-5) — alias for switch']
+        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball|ultra_ball|master_ball)', 'use_item (item: potion|super_potion|hyper_potion|max_potion|full_restore|revive|max_revive|antidote|paralyze_heal|burn_heal|ice_heal|awakening|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
     };
   }
   if (state.screen === 'overworld') {
@@ -3091,7 +3104,7 @@ function getView(state) {
       'move (direction: north|south|east|west)',
       'talk',
       'cut',
-      'use_item (item: potion|super_potion|antidote|paralyze_heal|burn_heal|awakening|full_heal|pp_up|pp_max|tm##|hm##, target_index: 0-5, moveIndex: 0-3 for pp_up/pp_max)',
+      'use_item (item: potion|super_potion|hyper_potion|max_potion|full_restore|revive|max_revive|rare_candy|antidote|paralyze_heal|burn_heal|ice_heal|awakening|full_heal|escape_rope|pp_up|pp_max|tm##|hm##, target_index: 0-5, moveIndex: 0-3 for pp_up/pp_max)',
       'mart_view',
       'mart_buy (item: ..., quantity: N)',
       'mart_sell (item: ..., qty: N)',
