@@ -82,17 +82,17 @@ const POKEMON = {
   // ── #16-18 Pidgey line ───────────────────────────────────────────────────
   pidgey:     { id:16, name:"PIDGEY",     type:["normal","flying"],hp:40, atk:45, def:40, spd:56, spc:35,  baseExp:55,  growthRate:'medium_fast', catchRate:255,
                 evolvesTo:{ species:'pidgeotto', level:18 },
-                learnset:{ 1:['tackle','sand attack'], 5:['gust'], 12:['quick attack'], 19:['whirlwind'], 28:['wing attack'], 36:['agility'], 44:['mirror move'] },
-                moves:["tackle","sand attack","gust","quick attack"] },
+                learnset:{ 1:['gust'], 5:['sand attack'], 12:['quick attack'], 19:['whirlwind'], 28:['wing attack'], 36:['agility'], 44:['mirror move'] },
+                moves:["gust"] },
 
   pidgeotto:  { id:17, name:"PIDGEOTTO",  type:["normal","flying"],hp:63, atk:60, def:55, spd:71, spc:50,  baseExp:113, growthRate:'medium_fast', catchRate:120,
                 evolvesTo:{ species:'pidgeot', level:36 },
-                learnset:{ 1:['tackle','sand attack'], 5:['gust'], 12:['quick attack'], 19:['whirlwind'], 28:['wing attack'], 36:['agility'], 44:['mirror move'] },
-                moves:["gust","sand attack","quick attack","whirlwind"] },
+                learnset:{ 1:['gust','sand attack','quick attack'], 19:['whirlwind'], 28:['wing attack'], 36:['agility'], 44:['mirror move'] },
+                moves:["gust","sand attack","quick attack"] },
 
   pidgeot:    { id:18, name:"PIDGEOT",    type:["normal","flying"],hp:83, atk:80, def:75, spd:101,spc:70,  baseExp:172, growthRate:'medium_fast', catchRate:45,
-                learnset:{ 1:['tackle','sand attack'], 5:['gust'], 12:['quick attack'], 19:['whirlwind'], 28:['wing attack'], 36:['agility'], 44:['mirror move'] },
-                moves:["wing attack","agility","quick attack","mirror move"] },
+                learnset:{ 1:['quick attack','whirlwind','wing attack','agility'], 44:['mirror move'] },
+                moves:["wing attack","agility","quick attack","whirlwind"] },
 
   // ── #19-20 Rattata line ──────────────────────────────────────────────────
   rattata:    { id:19, name:"RATTATA",    type:["normal"],         hp:30, atk:56, def:35, spd:72, spc:25,  baseExp:57,  growthRate:'medium_fast', catchRate:255,
