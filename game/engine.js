@@ -27,6 +27,38 @@ let _rng = null;
 
 function roll(n) { return Math.floor((_rng ? _rng() : Math.random()) * n) + 1; }
 
+// ── #18: EXP thresholds and level-up ─────────────────────────────────────────
+function expForLevel(level, growthRate) {
+  if (level <= 1) return 0;
+  const n = level;
+  switch (growthRate || 'medium_fast') {
+    case 'medium_fast': return n * n * n;
+    case 'medium_slow': return Math.max(0, Math.floor(6/5 * n*n*n) - 15*n*n + 100*n - 140);
+    case 'fast':        return Math.floor(4/5 * n*n*n);
+    case 'slow':        return Math.floor(5/4 * n*n*n);
+    default:            return n * n * n;
+  }
+}
+
+function tryLevelUp(pokemon, msgs) {
+  const base = POKEMON[pokemon.species];
+  if (!base) return;
+  const gr = pokemon.growthRate || base.growthRate || 'medium_fast';
+  while (pokemon.level < 100 && pokemon.exp >= expForLevel(pokemon.level + 1, gr)) {
+    pokemon.level++;
+    const lv = pokemon.level;
+    const oldMaxHp = pokemon.maxHp;
+    pokemon.maxHp = Math.floor((base.hp  * 2 * lv) / 100) + lv + 10;
+    pokemon.atk   = Math.floor((base.atk * 2 * lv) / 100) + 5;
+    pokemon.def   = Math.floor((base.def * 2 * lv) / 100) + 5;
+    pokemon.spd   = Math.floor((base.spd * 2 * lv) / 100) + 5;
+    pokemon.spc   = Math.floor(((base.spc ?? base.atk) * 2 * lv) / 100) + 5;
+    // Heal HP gained from the stat increase
+    pokemon.currentHp = Math.min(pokemon.maxHp, pokemon.currentHp + (pokemon.maxHp - oldMaxHp));
+    msgs.push(`${pokemon.name} grew to Lv.${pokemon.level}!`);
+  }
+}
+
 function makePokemon(speciesKey, level) {
   const base = POKEMON[speciesKey];
   if (!base) throw new Error(`Unknown species: ${speciesKey}`);
@@ -50,12 +82,18 @@ function makePokemon(speciesKey, level) {
     moves,
     pp,                    // #15: PP tracking
     status: null,
-    statusTurns: 0,        // sleep: turns remaining; also used for future multi-turn moves
+    statusTurns: 0,        // sleep turns remaining
     confused: false,       // #16: confusion (separate from primary status)
     confusedTurns: 0,
     flinched: false,       // #16: per-turn flinch flag
-    statStages: { atk:0, def:0, spd:0, spc:0, acc:0 },  // #17: added spc stage
-    exp: 0,
+    statStages: { atk:0, def:0, spd:0, spc:0, acc:0 },
+    // #18: cumulative EXP; initialise to the amount for current level so level-up thresholds are correct
+    growthRate: base.growthRate || 'medium_fast',
+    exp: expForLevel(level, base.growthRate || 'medium_fast'),
+    // #22: Bide multi-turn state
+    bideState: null,       // { turnsLeft, damageAccum } while charging
+    // #23: Bind/Wrap multi-turn state
+    boundState: null,      // { turnsLeft } while trapped
   };
 }
 
@@ -174,11 +212,23 @@ function applyStatusEnd(pokemon) {
   const msgs = [];
   if (!pokemon || pokemon.currentHp <= 0) return msgs;
   if (pokemon.status === 'burn' || pokemon.status === 'poison' || pokemon.status === 'leech_seed') {
-    const dmg = Math.max(1, Math.floor(pokemon.maxHp / 16));  // fixed: 1/16
+    const dmg = Math.max(1, Math.floor(pokemon.maxHp / 16));
     pokemon.currentHp = Math.max(0, pokemon.currentHp - dmg);
     const label = pokemon.status === 'burn' ? 'its burn'
                 : pokemon.status === 'poison' ? 'poison' : 'Leech Seed';
     msgs.push(`${pokemon.name} is hurt by ${label}! (-${dmg} HP)`);
+  }
+  // #23: Bind/Wrap — deal 1/16 per turn, count down, free when done
+  if (pokemon.boundState) {
+    pokemon.boundState.turnsLeft--;
+    if (pokemon.boundState.turnsLeft <= 0) {
+      pokemon.boundState = null;
+      msgs.push(`${pokemon.name} was freed from the bind!`);
+    } else {
+      const dmg = Math.max(1, Math.floor(pokemon.maxHp / 16));
+      pokemon.currentHp = Math.max(0, pokemon.currentHp - dmg);
+      msgs.push(`${pokemon.name} is hurt by the bind! (-${dmg} HP)`);
+    }
   }
   return msgs;
 }
@@ -526,6 +576,8 @@ function handleWarp(state, warp, area) {
   const destId = warp.dest;
   // Special destinations
   if (destId === 'pokemon_center') {
+    // #9: remember this Pokécenter as the blackout respawn point
+    state.player.lastCenter = { areaId: state.areaId, x: state.player.x, y: state.player.y };
     // Heal all party
     for (const p of state.player.party) {
       p.currentHp = p.maxHp;
@@ -619,6 +671,13 @@ function processBattleAction(state, action, log) {
       return;
     }
 
+    // #22: Bide — set charging state; actual release handled in battle_move preamble
+    if (mvName === 'bide') {
+      attacker.bideState = { turnsLeft: 1 + (roll(2) - 1), damageAccum: 0 };
+      msgs.push(`${attacker.name} is biding its time!`);
+      return;
+    }
+
     // #15: Struggle — typeless 50-power physical, 50% recoil damage
     if (mvName === 'struggle') {
       const rand = (roll(39) + 217) / 255;
@@ -655,6 +714,11 @@ function processBattleAction(state, action, log) {
       msgs.push(`${attacker.name} used ${mvName.toUpperCase()}!`);
       msgs.push(...applyMoveEffect(mvName, defender, attacker));
     }
+    // #23: Bind/Wrap — trap if move has bind effect and target not already bound
+    if (mv?.effect?.bind && !defender.boundState) {
+      defender.boundState = { turnsLeft: 2 + roll(3) };  // 2-4 turns
+      msgs.push(`${defender.name} was bound!`);
+    }
   }
 
   // Returns true if the battle ended (faint, whirlwind, etc.)
@@ -664,9 +728,12 @@ function processBattleAction(state, action, log) {
     const enemy  = getEnemy();
 
     if (enemy.currentHp <= 0) {
-      const exp = Math.floor((enemy.level * 50) / 7);
-      active.exp += exp;
+      // #11: use per-species baseExp; #18: trainer battles give 1.5× EXP
+      const baseExp = POKEMON[enemy.species]?.baseExp || 50;
+      const exp = Math.floor((baseExp * enemy.level * (battle.isTrainer ? 1.5 : 1)) / 7);
+      active.exp = (active.exp || 0) + exp;
       msgs.push(`${enemy.name} fainted! ${active.name} gained ${exp} EXP.`);
+      tryLevelUp(active, msgs);
 
       // Trainer battle: send out next Pokémon
       if (battle.isTrainer && battle.trainerParty && battle.trainerParty.length > 0) {
@@ -703,13 +770,21 @@ function processBattleAction(state, action, log) {
       if (!alive.length) {
         msgs.push("All your POKéMON fainted... Blacking out!");
         state.screen = 'overworld'; state.battle = null;
-        state.areaId = 'pallet_town'; state.player.x = 8; state.player.y = 14;
+        // #9: warp to last visited Pokécenter (default: Pallet)
+        const center = state.player.lastCenter || { areaId: 'pallet_town', x: 8, y: 14 };
+        state.areaId = center.areaId; state.player.x = center.x; state.player.y = center.y;
+        // Full heal (Gen I: blacking out sends you to a Pokécenter which heals fully)
         for (const p of state.player.party) {
-          p.currentHp = Math.max(1, Math.floor(p.maxHp / 2));
+          p.currentHp = p.maxHp;
           p.status = null;
           p.statusTurns = 0;
           p.confused = false;
+          p.confusedTurns = 0;
           p.flinched = false;
+          p.bideState = null;
+          p.boundState = null;
+          p.statStages = { atk:0, def:0, spd:0, spc:0, acc:0 };
+          if (p.pp) for (const mv of (p.moves || [])) p.pp[mv] = MOVES[mv]?.pp ?? 20;
         }
         state.player.money = Math.max(0, state.player.money - 50);
         msgs.push("You were taken to a POKéMON CENTER.");
@@ -726,6 +801,39 @@ function processBattleAction(state, action, log) {
     const moveName = active.moves[action.move_index ?? 0];
     if (!moveName) { state.message = 'Invalid move index (0-3).'; return state; }
     battle.turn++;
+
+    // #22: Active Bide — overrides normal move; accumulates damage taken
+    if (active.bideState) {
+      const bide = active.bideState;
+      const enemyMv = selectEnemyMove();
+      if (bide.turnsLeft > 0) {
+        bide.turnsLeft--;
+        msgs.push(`${active.name} is biding its time!`);
+        const hpBefore = active.currentHp;
+        doAttack(getEnemy(), enemyMv, active, false);
+        const dmgTaken = Math.max(0, hpBefore - getActive().currentHp);
+        if (getActive().bideState) getActive().bideState.damageAccum += dmgTaken;
+        checkFaint();
+      } else {
+        // Release — deal 2× accumulated damage, then enemy attacks
+        const releaseDmg = Math.max(1, bide.damageAccum * 2);
+        active.bideState = null;
+        msgs.push(`${active.name} unleashed its stored energy! (${releaseDmg} HP to ${enemy.name}!)`);
+        enemy.currentHp = Math.max(0, enemy.currentHp - releaseDmg);
+        if (!checkFaint()) {
+          doAttack(getEnemy(), enemyMv, getActive(), false);
+          checkFaint();
+        }
+      }
+      if (state.battle) {
+        msgs.push(...applyStatusEnd(getActive()));
+        msgs.push(...applyStatusEnd(getEnemy()));
+        checkFaint();
+      }
+      state.message = msgs.filter(Boolean).join(' ');
+      msgs.forEach(log);
+      return state;
+    }
 
     const mv       = MOVES[moveName];
     const enemyMv  = selectEnemyMove();
@@ -882,12 +990,18 @@ function getView(state) {
       bag: state.player.bag,
       money: state.player.money,
       badges: state.player.badges,
-      party: state.player.party.map(p => ({
-        name: p.name, species: p.species, level: p.level,
-        hp: `${p.currentHp}/${p.maxHp}`, status: p.status,
-        confused: p.confused || undefined,
-        moves: p.moves,
-      })),
+      party: state.player.party.map(p => {
+        const gr = p.growthRate || 'medium_fast';
+        const nextLvExp = p.level < 100 ? expForLevel(p.level + 1, gr) : null;
+        return {
+          name: p.name, species: p.species, level: p.level,
+          hp: `${p.currentHp}/${p.maxHp}`, status: p.status,
+          confused: p.confused || undefined,
+          // #18: show EXP progress toward next level
+          exp: nextLvExp !== null ? `${p.exp || 0}/${nextLvExp} (next lv)` : 'MAX',
+          moves: p.moves,
+        };
+      }),
     },
   };
   if (state.screen === 'battle' && state.battle) {
@@ -900,6 +1014,8 @@ function getView(state) {
         name: active.name, species: active.species, level: active.level,
         hp: `${active.currentHp}/${active.maxHp}`, status: active.status,
         confused: active.confused || undefined,
+        biding: active.bideState ? `charging (${active.bideState.turnsLeft} turn(s) left)` : undefined,
+        bound: active.boundState ? `bound (${active.boundState.turnsLeft} turn(s) left)` : undefined,
         // #15: show PP per move
         moves: active.moves.map((m,i) => ({
           index: i,
@@ -913,6 +1029,7 @@ function getView(state) {
         level: state.battle.enemy.level,
         hp: `${state.battle.enemy.currentHp}/${state.battle.enemy.maxHp}`,
         status: state.battle.enemy.status, type: state.battle.enemy.type,
+        bound: state.battle.enemy.boundState ? `bound (${state.battle.enemy.boundState.turnsLeft} turn(s) left)` : undefined,
       },
       // #5: no throw_ball in trainer battles
       available_actions: isTrainer

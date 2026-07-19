@@ -21,7 +21,8 @@ const MOVES = {
   "smokescreen":  { power: 0,   acc: 100, pp: 20, type: "normal",   cat: "status",   effect: { stat: "acc", target: "enemy", stages: -1 } },
   "harden":       { power: 0,   acc: 100, pp: 30, type: "normal",   cat: "status",   effect: { stat: "def", target: "self", stages: 1 } },
   "defense curl": { power: 0,   acc: 100, pp: 40, type: "normal",   cat: "status",   effect: { stat: "def", target: "self", stages: 1 } },
-  "bind":         { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: null },
+  // #23: Bind — traps target for 2-4 turns (bind: true signals multi-turn trap)
+  "bind":         { power: 15,  acc: 85,  pp: 20, type: "normal",   cat: "physical", effect: { bind: true } },
   // Gen I: Bite is Normal type (became Dark in Gen II)
   "bite":         { power: 60,  acc: 100, pp: 25, type: "normal",   cat: "physical", effect: { status: "flinch", chance: 10 } },
   // Bide: simplified — treated as status/charge (0 dmg); Gen I actually waits 2-3 turns and returns 2× damage
