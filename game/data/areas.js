@@ -135,7 +135,14 @@ const VIRIDIAN_CITY = {
   objects: [],
   npcs: [
     { id:'old_man', x:5, y:5, name:'Old Man', dir:'south', spin: true,
-      dialogue:["Ahhh, finally had my morning coffee! I feel like a new man! Heading to PEWTER CITY? Take the north path through VIRIDIAN FOREST — but watch out for BUG POKéMON!"] },
+      // [G2 gate] Blocks north exit until player has Pokédex
+      flagDialogue: [
+        { requireFlag: 'has_pokedex',
+          lines: ["TRAINER: Ahhh, finally had my morning coffee! I feel like a new man! Heading to PEWTER CITY? Take the north path through VIRIDIAN FOREST — but watch out for BUG POKéMON!"] },
+        { default: true,
+          lines: ["TRAINER: Snooooze... Zzzz... (The old man seems to be sleeping. He's blocking the northern path.)"] },
+      ],
+    },
     { id:'girl_viridian', x:11, y:7, name:'Girl', dir:'east', wander: true,
       dialogue:["That old man sure loves his coffee... He's always dozing off there."] },
     { id:'gym_sign_npc', x:17, y:4, name:'Youngster', dir:'south',
@@ -158,7 +165,9 @@ const VIRIDIAN_CITY = {
   ],
   connections: {
     south: { area:'route_1',   entryX:7,  entryY:0  },
-    north: { area:'route_2',   entryX:7,  entryY:22 },  // [E2] now goes through Route 2
+    north: { area:'route_2',   entryX:7,  entryY:22,   // [E2] through Route 2
+             requireFlag: 'has_pokedex',
+             blockMessage: "TRAINER: Snooze... Zzzz... (An old man is sleeping across the path. You'll need to find another way — or come back once you have a POKéDEX.)" },
     west:  { area:'route_22',  entryX:19, entryY:7  },
   },
 };

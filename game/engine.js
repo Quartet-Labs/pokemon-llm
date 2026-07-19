@@ -915,9 +915,13 @@ function processAction(state, action) {
       const ny = state.player.y + dy;
 
       // Check area connections (walking off edge)
+      // Helper: check requireFlag gate on a connection object
+      const connBlocked = (conn) =>
+        conn.requireFlag && !state.player.flags[conn.requireFlag];
       if (ny < 0) {
         const conn = area.connections?.north;
         if (conn) {
+          if (connBlocked(conn)) { state.message = conn.blockMessage || "You can't go that way."; return state; }
           state.areaId = conn.area;
           state.player.x = conn.entryX;
           state.player.y = conn.entryY;
@@ -932,6 +936,7 @@ function processAction(state, action) {
       if (ny >= area.height) {
         const conn = area.connections?.south;
         if (conn) {
+          if (connBlocked(conn)) { state.message = conn.blockMessage || "You can't go that way."; return state; }
           state.areaId = conn.area;
           state.player.x = conn.entryX;
           state.player.y = conn.entryY;
@@ -946,6 +951,7 @@ function processAction(state, action) {
       if (nx < 0) {
         const conn = area.connections?.west;
         if (conn) {
+          if (connBlocked(conn)) { state.message = conn.blockMessage || "You can't go that way."; return state; }
           state.areaId = conn.area; state.player.x = conn.entryX; state.player.y = conn.entryY;
           state.message = `Heading west to ${AREAS[conn.area]?.name}...`;
           const rivalResult = checkRivalEncounter(state);
@@ -957,6 +963,7 @@ function processAction(state, action) {
       if (nx >= area.width) {
         const conn = area.connections?.east;
         if (conn) {
+          if (connBlocked(conn)) { state.message = conn.blockMessage || "You can't go that way."; return state; }
           state.areaId = conn.area; state.player.x = conn.entryX; state.player.y = conn.entryY;
           state.message = `Heading east to ${AREAS[conn.area]?.name}...`;
           const rivalResult = checkRivalEncounter(state);
