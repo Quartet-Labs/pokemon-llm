@@ -8,7 +8,24 @@ const {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
-function roll(n) { return Math.floor(Math.random() * n) + 1; }
+
+// ── Seeded PRNG (#33) ───────────────────────────────────────────────────────
+// mulberry32 — fast, good statistical quality, reproducible from a uint32 seed.
+function mulberry32Rng(seed) {
+  let s = seed >>> 0;
+  return function() {
+    s += 0x6D2B79F5; s >>>= 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = Math.imul(t ^ (t >>> 7), 61 | t) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Module-level RNG — replaced at the top of every processAction call when
+// state.rngSeed is defined. Node.js is single-threaded so no concurrent clobber.
+let _rng = null;
+
+function roll(n) { return Math.floor((_rng ? _rng() : Math.random()) * n) + 1; }
 
 function makePokemon(speciesKey, level) {
   const base = POKEMON[speciesKey];
@@ -81,7 +98,8 @@ function applyMoveEffect(moveName, target, source) {
 }
 
 function enemyMove(enemy) {
-  return enemy.moves[Math.floor(Math.random() * enemy.moves.length)];
+  const rand = _rng ? _rng() : Math.random();
+  return enemy.moves[Math.floor(rand * enemy.moves.length)];
 }
 
 // ── initial state ─────────────────────────────────────────────────────────────
@@ -91,8 +109,15 @@ const STARTERS = {
   squirtle:   { species:'squirtle',   name:'SQUIRTLE',   type:'Water',         desc:'After birth, its back swells and hardens into a shell.' },
 };
 
-function newGame() {
+// newGame(seed?) — pass an integer seed for a deterministic run (#33).
+// If omitted, a random seed is chosen and stored so the run can be replayed.
+function newGame(seed) {
+  const rngSeed = (seed !== undefined && seed !== null)
+    ? (seed >>> 0)
+    : Math.floor(Math.random() * 0x7FFFFFFF);
   return {
+    rngSeed,
+    rngCounter: 0,
     screen: 'starter_select',
     areaId: 'pallet_town',
     player: {
@@ -117,6 +142,20 @@ function newGame() {
 function processAction(state, action) {
   state = JSON.parse(JSON.stringify(state));
   state.turn++;
+
+  // ── Set up deterministic RNG for this action (#33) ──────────────────────
+  // Each action gets a fresh mulberry32 seeded from (gameSeed XOR counter*phi).
+  // Same seed + same action sequence → same results. Enables replay verification:
+  //   const s = newGame(seed); for (const a of actionLog) processAction(s, a);
+  if (state.rngSeed !== undefined) {
+    state.rngCounter = (state.rngCounter || 0) + 1;
+    // Knuth multiplicative hash to spread consecutive counters across seed space
+    const actionSeed = (state.rngSeed ^ Math.imul(state.rngCounter, 0x9e3779b9)) >>> 0;
+    _rng = mulberry32Rng(actionSeed);
+  } else {
+    _rng = null;  // legacy states without a seed fall back to Math.random()
+  }
+
   const log = (m) => { state.log.unshift(m); state.log = state.log.slice(0, 20); };
 
   const area = AREAS[state.areaId];
@@ -441,8 +480,6 @@ function processBattleAction(state, action, log) {
         const next = battle.trainerParty.shift();
         battle.enemy = next;
         msgs.push(`${battle.trainerName} sent out ${next.name}!`);
-        // Return true to END this round's attack chain — `enemy` local ref is stale.
-        // Next call to processBattleAction will capture `battle.enemy` = Onix fresh.
         return true;
       }
 
@@ -569,6 +606,7 @@ function getView(state) {
                               : (state.player.party[0] || null);
   const view = {
     turn: state.turn,
+    rng_seed: state.rngSeed,  // expose so drivers can record the seed for replay (#33)
     screen: state.screen,
     area: { id: state.areaId, name: area.name },
     message: state.message,
@@ -625,4 +663,3 @@ function getView(state) {
 }
 
 module.exports = { newGame, processAction, getView, makePokemon, STARTERS };
-
