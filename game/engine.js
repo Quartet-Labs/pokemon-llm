@@ -1299,7 +1299,7 @@ function getView(state) {
       // #5: no throw_ball in trainer battles
       available_actions: isTrainer
         ? ['battle_move (move_index: 0-3)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)']
-        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
+        : ['battle_move (move_index: 0-3)', 'run', 'throw_ball (ball: poke_ball|great_ball|ultra_ball|master_ball)', 'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal, target_index: 0-5)', 'switch (party_index: 0-5)'],
     };
   }
   if (state.dialogue) {
