@@ -2246,12 +2246,14 @@ function processBattleAction(state, action, log) {
     attacker.lastMoveUsed = mvName;
 
     // #8: Whirlwind — ends wild battles; fails vs trainers
-    if (mvName === 'whirlwind') {
+    // [C12] Flee moves: Whirlwind/Roar/Teleport end wild battles
+    if (mvName === 'whirlwind' || mv?.effect?.flee === 'wild') {
       if (!battle.isTrainer) {
-        msgs.push(`${attacker.name} used WHIRLWIND! The wild ${defender.name} fled!`);
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! The wild ${defender.name} fled!`);
+        for (const p of state.player.party) resetVolatileState(p);
         state.screen = 'overworld'; state.battle = null;
       } else {
-        msgs.push(`${attacker.name} used WHIRLWIND! But it failed against a trainer!`);
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it failed against a trainer!`);
       }
       return;
     }
@@ -2302,20 +2304,25 @@ function processBattleAction(state, action, log) {
       const ACC_STAGES = [33, 36, 43, 50, 66, 100, 150, 200, 250, 300, 350];
       const atkStageIdx = clamp((attacker.statStages?.acc ?? 0) + 5, 0, 10);
       const defStageIdx = clamp(-(defender.statStages?.eva ?? 0) + 5, 0, 10);
-      // Only apply check if stages are non-neutral OR move acc < 100
+      let missed = false;
       if (moveAcc < 100 || atkStageIdx !== 5 || defStageIdx !== 5) {
         const modifiedAcc = Math.min(100, Math.floor(moveAcc * ACC_STAGES[atkStageIdx] / ACC_STAGES[defStageIdx]));
-        if (roll(100) > modifiedAcc) {
-          // [C4] Crash damage on Jump Kick / Hi Jump Kick miss
-          if (mv.effect?.crash) {
-            const crashDmg = mv.effect.crash;
-            attacker.currentHp = Math.max(0, attacker.currentHp - crashDmg);
-            msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it failed! (crash: -${crashDmg} HP)`);
-          } else {
-            msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
-          }
-          return;
+        if (roll(100) > modifiedAcc) missed = true;
+      } else {
+        // [H1/A4] Gen I 1/256 miss — even 100% moves have 1/256 miss probability
+        // In Gen I the accuracy byte for 100% moves is 255; miss if rand(0–255) >= 255
+        if (roll(256) === 256) missed = true;
+      }
+      if (missed) {
+        // [C4] Crash damage on Jump Kick / Hi Jump Kick miss
+        if (mv.effect?.crash) {
+          const crashDmg = mv.effect.crash;
+          attacker.currentHp = Math.max(0, attacker.currentHp - crashDmg);
+          msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it failed! (crash: -${crashDmg} HP)`);
+        } else {
+          msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
         }
+        return;
       }
     }
 
