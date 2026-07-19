@@ -1428,7 +1428,7 @@ function processAction(state, action) {
     }
 
     // [G3] PC actions restricted to areas with a PC terminal (Pokémon Centers / Oak's Lab)
-    if (type === 'pc_view' || type === 'pc_withdraw' || type === 'pc_deposit') {
+    if (type === 'pc_view' || type === 'pc_withdraw' || type === 'pc_deposit' || type === 'pc_release' || type === 'pc_switch_box') {
       const pcArea = AREAS[state.areaId];
       const hasPcTerminal = pcArea?.npcs?.some(n => n.id && n.id.includes('pc_terminal'));
       if (!hasPcTerminal) {
@@ -1437,32 +1437,74 @@ function processAction(state, action) {
       }
     }
 
+    // [G3] Migrate legacy flat pc array to 12-box structure
+    if (!state.player.pcBoxes) {
+      const BOX_COUNT = 12;
+      state.player.pcBoxes = Array.from({ length: BOX_COUNT }, () => []);
+      state.player.currentBox = 0;
+      // Migrate old flat pc into boxes sequentially
+      if (state.player.pc && state.player.pc.length) {
+        for (const mon of state.player.pc) {
+          let placed = false;
+          for (let b = 0; b < BOX_COUNT; b++) {
+            if (state.player.pcBoxes[b].length < 20) {
+              state.player.pcBoxes[b].push(mon);
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) break;  // overflow: drop (shouldn't happen with 240 cap)
+        }
+        delete state.player.pc;
+      }
+    }
+
+    // Helper: current box
+    function getBox() {
+      const b = Math.max(0, Math.min(11, state.player.currentBox ?? 0));
+      state.player.currentBox = b;
+      return state.player.pcBoxes[b];
+    }
+
     if (type === 'pc_view') {
-      const pc = state.player.pc || [];
-      if (!pc.length) {
-        state.message = 'The PC is empty.';
+      const box = getBox();
+      const boxNum = state.player.currentBox + 1;
+      const totalAcross = state.player.pcBoxes.reduce((s, b) => s + b.length, 0);
+      if (!box.length) {
+        state.message = `BOX ${boxNum} is empty. (${totalAcross}/240 stored total)\nUse pc_switch_box (box: 0-11) to change boxes.`;
       } else {
-        const list = pc.map((p, i) => `[${i}] ${p.name} Lv.${p.level} HP:${p.currentHp}/${p.maxHp}`).join('\n');
-        state.message = `PC Storage:\n${list}`;
+        const list = box.map((p, i) => `[${i}] ${p.name} Lv.${p.level} HP:${p.currentHp}/${p.maxHp} ${p.status || ''}`).join('\n');
+        state.message = `BOX ${boxNum} (${box.length}/20):\n${list}\n\nTotal stored: ${totalAcross}/240. Use pc_switch_box (box: 0-11) to change.`;
       }
       return state;
     }
 
+    if (type === 'pc_switch_box') {
+      const newBox = action.box ?? 0;
+      if (newBox < 0 || newBox > 11) {
+        state.message = 'Box number must be 0-11.';
+        return state;
+      }
+      state.player.currentBox = newBox;
+      const box = getBox();
+      state.message = `Switched to BOX ${newBox + 1} (${box.length}/20).`;
+      return state;
+    }
+
     if (type === 'pc_withdraw') {
-      const pc = state.player.pc || [];
+      const box = getBox();
       const idx = action.index ?? 0;
-      if (idx < 0 || idx >= pc.length) {
-        state.message = 'No Pokémon at that PC slot.';
+      if (idx < 0 || idx >= box.length) {
+        state.message = `No Pokémon at BOX ${state.player.currentBox + 1} slot ${idx}.`;
         return state;
       }
       if (state.player.party.length >= 6) {
         state.message = 'Your party is full! Deposit a Pokémon first.';
         return state;
       }
-      const pokemon = pc[idx];
-      state.player.pc = pc.filter((_, i) => i !== idx);
+      const [pokemon] = box.splice(idx, 1);
       state.player.party.push(pokemon);
-      state.message = `${pokemon.name} was withdrawn from the PC.`;
+      state.message = `${pokemon.name} was withdrawn from BOX ${state.player.currentBox + 1}.`;
       return state;
     }
 
@@ -1476,14 +1518,26 @@ function processAction(state, action) {
         state.message = "Can't deposit your last Pokémon!";
         return state;
       }
-      if ((state.player.pc || []).length >= 240) {
-        state.message = 'PC storage is full!';
+      const box = getBox();
+      if (box.length >= 20) {
+        state.message = `BOX ${state.player.currentBox + 1} is full (20/20)! Switch boxes first with pc_switch_box.`;
         return state;
       }
-      const pokemon = state.player.party[pIdx];
-      state.player.party = state.player.party.filter((_, i) => i !== pIdx);
-      state.player.pc = [...(state.player.pc || []), pokemon];
-      state.message = `${pokemon.name} was deposited into the PC.`;
+      const [pokemon] = state.player.party.splice(pIdx, 1);
+      box.push(pokemon);
+      state.message = `${pokemon.name} was deposited into BOX ${state.player.currentBox + 1}.`;
+      return state;
+    }
+
+    if (type === 'pc_release') {
+      const box = getBox();
+      const idx = action.index ?? 0;
+      if (idx < 0 || idx >= box.length) {
+        state.message = `No Pokémon at BOX ${state.player.currentBox + 1} slot ${idx}.`;
+        return state;
+      }
+      const [pokemon] = box.splice(idx, 1);
+      state.message = `${pokemon.name} was released into the wild. Goodbye, ${pokemon.name}!`;
       return state;
     }
 
@@ -1644,7 +1698,7 @@ function processAction(state, action) {
       return state;
     }
 
-    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, mart_sell, pc_view, pc_withdraw, pc_deposit, forget_move, cut, nickname_pokemon, pokedex_view`;
+    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, mart_sell, pc_view, pc_withdraw, pc_deposit, pc_release, pc_switch_box, forget_move, cut, nickname_pokemon, pokedex_view`;
     return state;
   }
 
@@ -2634,11 +2688,21 @@ function processBattleAction(state, action, log) {
       if (state.player.party.length < 6) {
         state.player.party.push(caught);
         msgs.push(`${caught.name} was added to your party!`);
-      } else if ((state.player.pc || []).length < 240) {
-        state.player.pc = [...(state.player.pc || []), caught];
-        msgs.push(`${caught.name} was sent to the PC!`);
       } else {
-        msgs.push(`PC storage is full! ${caught.name} was released.`);
+        // [G3] Send to current PC box; fail if that box is full (20/20)
+        if (!state.player.pcBoxes) {
+          state.player.pcBoxes = Array.from({ length: 12 }, () => []);
+          state.player.currentBox = 0;
+        }
+        const boxIdx = state.player.currentBox ?? 0;
+        const targetBox = state.player.pcBoxes[boxIdx];
+        if (targetBox.length >= 20) {
+          msgs.push(`BOX ${boxIdx + 1} is FULL! ${caught.name} could not be stored. Switch boxes at a PC and try again (pc_switch_box).`);
+          // Catch fails — release the Poké Ball
+        } else {
+          targetBox.push(caught);
+          msgs.push(`${caught.name} was sent to BOX ${boxIdx + 1}!`);
+        }
       }
       // [A14] Reset volatile state when battle ends via catch
       for (const p of state.player.party) resetVolatileState(p);
@@ -2758,7 +2822,13 @@ function getView(state) {
       tm_count: Object.keys(state.player.tms || {}).length,
       money: state.player.money,
       badges: state.player.badges,
-      pc_count: (state.player.pc || []).length,
+      pc_count: state.player.pcBoxes
+        ? state.player.pcBoxes.reduce((s, b) => s + b.length, 0)
+        : (state.player.pc || []).length,
+      pc_current_box: (state.player.currentBox ?? 0) + 1,
+      pc_box_slots_free: state.player.pcBoxes
+        ? 20 - (state.player.pcBoxes[state.player.currentBox ?? 0]?.length ?? 0)
+        : undefined,
       party: state.player.party.map(p => {
         const gr = p.growthRate || 'medium_fast';
         const nextLvExp = p.level < 100 ? expForLevel(p.level + 1, gr) : null;
@@ -2823,8 +2893,10 @@ function getView(state) {
       'forget_move (partyIndex: 0-5, moveIndex: 0-3, newMove: "move name")',
       'nickname_pokemon (partyIndex: 0-5, nickname: "NAME")',
       'pc_view',
-      'pc_withdraw (index: 0-N)',
+      'pc_switch_box (box: 0-11)',
+      'pc_withdraw (index: 0-19)',
       'pc_deposit (party_index: 0-5)',
+      'pc_release (index: 0-19)',
     ];
     // Expose NPC effective positions (for wander/spin)
     if (area.npcs) {
