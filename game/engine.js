@@ -1001,6 +1001,22 @@ function processAction(state, action) {
           log(state.message);
           const ledgeWarp = getWarpAt(area, nx, landY);
           if (ledgeWarp) return handleWarp(state, ledgeWarp, area);
+          // Ground item pickup on ledge landing
+          if (area.items) {
+            for (const item of area.items) {
+              if (item.x === nx && item.y === landY) {
+                const flagKey = `picked_up_${item.id}`;
+                if (!state.player.flags[flagKey]) {
+                  state.player.flags[flagKey] = true;
+                  const qty = item.qty || 1;
+                  state.player.bag[item.item] = (state.player.bag[item.item] || 0) + qty;
+                  state.message = `Jumped off the ledge! Found a ${item.item.replace(/_/g,' ').toUpperCase()}! (×${qty})`;
+                  log(state.message);
+                  return state;
+                }
+              }
+            }
+          }
           if (hasEncounter(area, nx, landY) && roll(100) <= (area.encounterRate ?? 20)) {
             const tile = getAreaTile(area, nx, landY);
             const terrain = tile === T.TALL_GRASS ? 'tall_grass' : 'grass';

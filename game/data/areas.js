@@ -115,7 +115,7 @@ const ROUTE_1 = {
     ],
   },
   items: [
-    { id:'r1_potion', x:9, y:10, item:'potion', qty:1 },
+    { id:'r1_potion', x:9, y:11, item:'potion', qty:1 },
   ],
   connections: {
     north: { area:'viridian_city', entryX:9, entryY:27 },
