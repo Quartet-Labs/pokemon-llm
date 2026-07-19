@@ -68,6 +68,12 @@ const ITEM_NAMES = {
   // [C19] PP enhancement items
   pp_up:         'PP Up',
   pp_max:        'PP Max',
+  // [A3] Vitamins
+  hp_up:         'HP Up',
+  protein:       'Protein',
+  iron:          'Iron',
+  carbos:        'Carbos',
+  calcium:       'Calcium',
 };
 
 // Resolve which mart tier is available for a given area, or null if none.
@@ -115,15 +121,8 @@ function tryLevelUp(pokemon, msgs) {
   const gr = pokemon.growthRate || base.growthRate || 'medium_fast';
   while (pokemon.level < 100 && pokemon.exp >= expForLevel(pokemon.level + 1, gr)) {
     pokemon.level++;
-    const lv = pokemon.level;
-    const oldMaxHp = pokemon.maxHp;
-    pokemon.maxHp = Math.floor((base.hp  * 2 * lv) / 100) + lv + 10;
-    pokemon.atk   = Math.floor((base.atk * 2 * lv) / 100) + 5;
-    pokemon.def   = Math.floor((base.def * 2 * lv) / 100) + 5;
-    pokemon.spd   = Math.floor((base.spd * 2 * lv) / 100) + 5;
-    pokemon.spc   = Math.floor(((base.spc ?? base.atk) * 2 * lv) / 100) + 5;
-    // Heal HP gained from the stat increase
-    pokemon.currentHp = Math.min(pokemon.maxHp, pokemon.currentHp + (pokemon.maxHp - oldMaxHp));
+    // [A2][A3] Recalculate all stats using DVs + stat EXP at new level
+    recalcStats(pokemon);
     msgs.push(`${pokemon.name} grew to Lv.${pokemon.level}!`);
 
     // Learn new moves from learnset at this level
@@ -214,6 +213,32 @@ function doEvolve(pokemon, targetSpecies, msgs) {
   return true;
 }
 
+// [A3] Stat EXP bonus contribution: floor(sqrt(statExp) / 4), range 0-63 (or 64 at max 65535)
+function statExpBonus(se) {
+  if (!se || se <= 0) return 0;
+  return Math.floor(Math.ceil(Math.sqrt(se)) / 4);
+}
+
+// [A3] Recalculate a Pokémon's stats from its species, level, DVs, and accumulated stat EXP
+function recalcStats(pokemon) {
+  const base = POKEMON[pokemon.species];
+  if (!base) return;
+  const lv = pokemon.level;
+  const dvs = pokemon.dvs || { atk:0, def:0, spd:0, spc:0 };
+  const hpDV = ((dvs.atk & 1) << 3) | ((dvs.def & 1) << 2) | ((dvs.spd & 1) << 1) | (dvs.spc & 1);
+  const se = pokemon.statExp || { hp:0, atk:0, def:0, spd:0, spc:0 };
+  const oldMaxHp = pokemon.maxHp;
+  pokemon.maxHp = Math.floor(((base.hp + hpDV) * 2 + statExpBonus(se.hp)) * lv / 100) + lv + 10;
+  pokemon.atk   = Math.floor(((base.atk + dvs.atk) * 2 + statExpBonus(se.atk)) * lv / 100) + 5;
+  pokemon.def   = Math.floor(((base.def + dvs.def) * 2 + statExpBonus(se.def)) * lv / 100) + 5;
+  pokemon.spd   = Math.floor(((base.spd + dvs.spd) * 2 + statExpBonus(se.spd)) * lv / 100) + 5;
+  pokemon.spc   = Math.floor((((base.spc ?? base.atk) + dvs.spc) * 2 + statExpBonus(se.spc)) * lv / 100) + 5;
+  // Adjust current HP proportionally to any HP change (don't let it go negative)
+  if (oldMaxHp && pokemon.maxHp !== oldMaxHp) {
+    pokemon.currentHp = Math.max(0, Math.min(pokemon.maxHp, pokemon.currentHp + (pokemon.maxHp - oldMaxHp)));
+  }
+}
+
 // [B1] Gen I level-appropriate movesets: last 4 moves learned at or below `level`
 function getMovesAtLevel(base, level) {
   const learnset = base.learnset;
@@ -246,8 +271,9 @@ function makePokemon(speciesKey, level, opts = {}) {
   };
   // HP DV derived from lowest bit of each other DV
   const hpDV = ((dvs.atk & 1) << 3) | ((dvs.def & 1) << 2) | ((dvs.spd & 1) << 1) | (dvs.spc & 1);
-  // Gen I stat formula with DVs: floor((base+dv)*2*level/100) + 5 (+level+10 for HP)
-  const maxHp = Math.floor(((base.hp + hpDV) * 2 * level) / 100) + level + 10;
+  // [A3] Gen I stat formula with DVs + stat EXP: floor(((base+dv)*2+statExpBonus)*level/100) + 5
+  const se = opts.statExp || { hp:0, atk:0, def:0, spd:0, spc:0 };
+  const maxHp = Math.floor(((base.hp + hpDV) * 2 + statExpBonus(se.hp)) * level / 100) + level + 10;
   const moves = getMovesAtLevel(base, level);
   // Build PP map from move data (default 20 if not defined)
   const pp = {};
@@ -259,12 +285,13 @@ function makePokemon(speciesKey, level, opts = {}) {
     level,
     maxHp,
     currentHp: maxHp,
-    atk:  Math.floor(((base.atk + dvs.atk) * 2 * level) / 100) + 5,
-    def:  Math.floor(((base.def + dvs.def) * 2 * level) / 100) + 5,
-    spd:  Math.floor(((base.spd + dvs.spd) * 2 * level) / 100) + 5,
+    atk:  Math.floor(((base.atk + dvs.atk) * 2 + statExpBonus(se.atk)) * level / 100) + 5,
+    def:  Math.floor(((base.def + dvs.def) * 2 + statExpBonus(se.def)) * level / 100) + 5,
+    spd:  Math.floor(((base.spd + dvs.spd) * 2 + statExpBonus(se.spd)) * level / 100) + 5,
     // #17: Special stat for special moves (Gen I uses one Spc for both offence/defence)
-    spc:  Math.floor((((base.spc ?? base.atk) + dvs.spc) * 2 * level) / 100) + 5,
-    dvs,  // [A2] store DVs on the Pokémon (used for breeding / display later)
+    spc:  Math.floor((((base.spc ?? base.atk) + dvs.spc) * 2 + statExpBonus(se.spc)) * level / 100) + 5,
+    dvs,        // [A2] store DVs on the Pokémon (used for breeding / display later)
+    statExp: se, // [A3] accumulated stat EXP (EVs), capped at 65535 per stat
     moves,
     pp,                    // #15: PP tracking
     status: null,
@@ -649,6 +676,8 @@ function newGame(seed) {
         pokeball: 0,
         // evolution stones
         fire_stone: 0, water_stone: 0, thunder_stone: 0, leaf_stone: 0, moon_stone: 0,
+        // [A3] vitamins (purchasable at Celadon Dept. Store; start with none)
+        hp_up: 0, protein: 0, iron: 0, carbos: 0, calcium: 0,
       },
       // #19: canonical ball inventory (mirrors bag ball keys for catch mechanic)
       items: { poke_ball: 5, great_ball: 0, ultra_ball: 0, master_ball: 0 },
@@ -663,6 +692,8 @@ function newGame(seed) {
     dialogue: null,
     npcState: {},      // { [areaId]: { [npcId]: { x, y, dir } } } — wander/spin overrides
     cuttedTrees: {},   // { [areaId]: ['x,y', ...] } — tiles cleared by CUT
+    // [G1] Pokédex — keys are species names (e.g. 'bulbasaur'), values true
+    pokedex: { seen: {}, caught: {} },
     // Oak's intro dialogue — verbatim from Gen I Red/Blue (Bulbapedia)
     message: "OAK: Hello there! Welcome to the world of POKéMON! My name is OAK! People call me the POKéMON PROF! This world is inhabited by creatures called POKéMON! For some people, POKéMON are pets. Others use them for fights. Myself… I study POKéMON as a profession. Now, let's choose your partner! Which POKéMON will you take?",
     log: [],
@@ -751,6 +782,7 @@ function processAction(state, action) {
     }
     const starter = makePokemon(sp, 5);
     state.player.party = [starter];
+    if (state.pokedex) state.pokedex.seen[sp] = true;  // [G1] Pokédex: starter is seen
     state.screen = 'overworld';
     state.player.flags.chose_starter = sp;
     state.message = `OAK: So, you chose ${starter.name}! It's a fine choice! Take good care of it. Now, ${starter.name} — your new trainer awaits! Head north through PALLET TOWN to begin your journey.`;
@@ -913,6 +945,7 @@ function processAction(state, action) {
               const wild = makePokemon(encounter.species, encounter.level);
               state.screen = 'battle';
               state.battle = { enemy: wild, playerPartyIndex:0, turn:0 };
+              if (state.pokedex) state.pokedex.seen[wild.species] = true;  // [G1] Pokédex seen
               state.message = `A wild ${wild.name} appeared! (Lv.${wild.level})`;
               log(state.message);
               return state;
@@ -939,6 +972,7 @@ function processAction(state, action) {
               const wild = makePokemon(encounter.species, encounter.level);
               state.screen = 'battle';
               state.battle = { enemy: wild, playerPartyIndex:0, turn:0 };
+              if (state.pokedex) state.pokedex.seen[wild.species] = true;  // [G1] Pokédex seen
               state.message = `A wild ${wild.name} appeared! (Lv.${wild.level})`;
               log(state.message);
               return state;
@@ -1071,6 +1105,7 @@ function processAction(state, action) {
           const wild = makePokemon(encounter.species, encounter.level);
           state.screen = 'battle';
           state.battle = { enemy: wild, playerPartyIndex:0, turn:0 };
+          if (state.pokedex) state.pokedex.seen[wild.species] = true;  // [G1] Pokédex seen
           state.message = `A wild ${wild.name} appeared! (Lv.${wild.level})`;
           log(state.message);
           return state;
@@ -1273,7 +1308,18 @@ function processAction(state, action) {
       return { ...state, message: `Sold ${qty}× ${item.replace(/_/g,' ')} for ₽${earned}.` };
     }
 
-    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, mart_sell, pc_view, pc_withdraw, pc_deposit, forget_move, cut, nickname_pokemon`;
+    // [G1] Pokédex view action
+    if (type === 'pokedex_view') {
+      const dex = state.pokedex || { seen: {}, caught: {} };
+      const seenCount = Object.keys(dex.seen).length;
+      const caughtCount = Object.keys(dex.caught).length;
+      const caughtList = Object.keys(dex.caught).sort();
+      state.message = `POKéDEX: Seen ${seenCount} · Caught ${caughtCount}` +
+        (caughtList.length ? `\nCaught: ${caughtList.map(s => s.toUpperCase()).join(', ')}` : '');
+      return state;
+    }
+
+    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, mart_sell, pc_view, pc_withdraw, pc_deposit, forget_move, cut, nickname_pokemon, pokedex_view`;
     return state;
   }
 
@@ -1373,6 +1419,22 @@ function useItemOverworld(state, action) {
     target.confusedTurns = 0;
     bag.full_heal--;
     state.message = `Used Full Heal on ${target.name}. Cured ${cured}!`;
+
+  } else if (['hp_up','protein','iron','carbos','calcium'].includes(item)) {
+    // [A3] Vitamins: +2560 stat EXP to the relevant stat, capped at 25600 per vitamin
+    if (!(bag[item] > 0)) { state.message = `You have no ${itemName}!`; return state; }
+    const VSTAT = { hp_up:'hp', protein:'atk', iron:'def', carbos:'spd', calcium:'spc' };
+    const vStat = VSTAT[item];
+    if (!target.statExp) target.statExp = { hp:0, atk:0, def:0, spd:0, spc:0 };
+    const cur = target.statExp[vStat] || 0;
+    if (cur >= 25600) {
+      state.message = `It won't have any effect. ${target.name}'s ${vStat.toUpperCase()} is at max vitamin level!`;
+      return state;
+    }
+    target.statExp[vStat] = Math.min(25600, cur + 2560);
+    recalcStats(target);
+    bag[item]--;
+    state.message = `Used ${itemName} on ${target.name}! ${vStat.toUpperCase()} stat EXP increased.`;
 
   } else if (item === 'pp_up' || item === 'pp_max') {
     // [C19] PP Up / PP Max — raise a move's maximum PP
@@ -1888,12 +1950,23 @@ function processBattleAction(state, action, log) {
       // [G8] Split EXP among all Pokémon that participated in this battle
       const participants = battle.expParticipants || [battle.playerPartyIndex ?? 0];
       const expShare = Math.max(1, Math.floor(totalExp / participants.length));
+      // [A3] Stat EXP from the fainted enemy (each defeated Pokémon awards its base stats)
+      const enemyBase = POKEMON[enemy.species] || {};
+      const seAward = {
+        hp: enemyBase.hp || 0,  atk: enemyBase.atk || 0, def: enemyBase.def || 0,
+        spd: enemyBase.spd || 0, spc: enemyBase.spc ?? enemyBase.atk ?? 0,
+      };
       const expRecipients = [];
       for (const pIdx of participants) {
         const p = state.player.party[pIdx];
         if (p && p.currentHp > 0) {
           p.exp = (p.exp || 0) + expShare;
           expRecipients.push(`${p.name} +${expShare} EXP`);
+          // [A3] Accumulate stat EXP (each stat capped at 65535)
+          if (!p.statExp) p.statExp = { hp:0, atk:0, def:0, spd:0, spc:0 };
+          for (const k of ['hp','atk','def','spd','spc']) {
+            p.statExp[k] = Math.min(65535, (p.statExp[k] || 0) + seAward[k]);
+          }
           tryLevelUp(p, msgs);
           // [B4] Trigger pending evolution now that battle is ending
           if (p.pendingEvolution) {
@@ -2164,6 +2237,10 @@ function processBattleAction(state, action, log) {
     if (result.caught) {
       battle.outcome = 'caught';
       msgs.push(`${enemy.name} was caught!`);
+      if (state.pokedex) {  // [G1] Mark seen + caught in Pokédex
+        state.pokedex.seen[enemy.species] = true;
+        state.pokedex.caught[enemy.species] = true;
+      }
       const caught = JSON.parse(JSON.stringify(enemy));
       // [B6] Stamp OT and otId on capture
       caught.ot = state.player.name || 'TRAINER';
