@@ -356,6 +356,7 @@ function makePokemon(speciesKey, level, opts = {}) {
     lightScreenTurns: 0,   // Light Screen: halves special damage for N turns
     focusEnergy: false,    // Focus Energy: Gen I bug — quartered (not quadrupled) crit rate
     substituteHp: 0,       // Substitute proxy HP (0 = no sub)
+    transformedFrom: null, // [C7] Transform: snapshot of original form (null = not transformed)
     lastDamageTaken: 0,    // Counter: tracks last physical damage received
     lastPhysicalMoveType: null, // Counter: type of last physical move (must be Normal/Fighting)
     glitchInvulnerable: false, // [H9] Fly/Dig glitch: invulnerability persists if release fails
@@ -389,6 +390,14 @@ function resetVolatileState(pokemon) {
   pokemon.lightScreenTurns = 0;
   pokemon.focusEnergy = false;
   pokemon.substituteHp = 0;
+  // [C7] Restore original form if Transformed
+  if (pokemon.transformedFrom) {
+    const orig = pokemon.transformedFrom;
+    pokemon.species = orig.species; pokemon.name = orig.name; pokemon.type = orig.type;
+    pokemon.atk = orig.atk; pokemon.def = orig.def; pokemon.spd = orig.spd; pokemon.spc = orig.spc;
+    pokemon.dvs = orig.dvs; pokemon.moves = orig.moves; pokemon.pp = orig.pp;
+    pokemon.transformedFrom = null;
+  }
   pokemon.lastDamageTaken = 0;
   pokemon.lastPhysicalMoveType = null;
   pokemon.glitchInvulnerable = false;
@@ -816,6 +825,37 @@ function applyMoveEffect(moveName, target, source) {
       msgs.push(`${source.name} used MIRROR MOVE! It used ${mirrorMv.toUpperCase()}!`);
       msgs.push(...applyMoveEffect(mirrorMv, target, source));
     }
+  }
+
+  // [C7/H11] Transform — copy target's species, stats, type, moves, DVs, stat stages
+  if (e.transform) {
+    const origName = source.name;
+    // Save original form on first transform (so re-transforms don't overwrite original)
+    if (!source.transformedFrom) {
+      source.transformedFrom = {
+        species: source.species, name: source.name, type: [...source.type],
+        atk: source.atk, def: source.def, spd: source.spd, spc: source.spc,
+        dvs: { ...source.dvs },
+        moves: [...source.moves], pp: { ...source.pp },
+      };
+    }
+    // Copy target's species data
+    source.species = target.species;
+    source.name    = target.name;
+    source.type    = [...target.type];
+    // Copy battle stats (atk/def/spd/spc based on target's current base+DV stats)
+    source.atk = target.atk; source.def = target.def;
+    source.spd = target.spd; source.spc = target.spc;
+    // [H11] Copy target's DVs for atk/def/spd/spc; own HP DV stays (affects Ditto catch glitch)
+    source.dvs = { atk: target.dvs?.atk ?? 8, def: target.dvs?.def ?? 8,
+                   spd: target.dvs?.spd ?? 8, spc: target.dvs?.spc ?? 8 };
+    // Copy moves with 5 PP each (Gen I Transform gives exactly 5 PP per copied move)
+    source.moves = [...target.moves];
+    source.pp = {};
+    for (const mv of source.moves) source.pp[mv] = 5;
+    // Copy target's current stat stages
+    source.statStages = { ...(target.statStages || { atk:0, def:0, spd:0, spc:0, acc:0, eva:0 }) };
+    msgs.push(`${origName} transformed into ${target.name}!`);
   }
 
   // [C7/H8] Substitute — create a proxy HP shield (costs 25% of max HP)
@@ -3144,6 +3184,7 @@ function getView(state) {
         name: active.name, species: active.species, level: active.level,
         hp: `${active.currentHp}/${active.maxHp}`, status: active.status,
         confused: active.confused || undefined,
+        transformed: active.transformedFrom ? `transformed into ${active.name}` : undefined,
         substitute: active.substituteHp > 0 ? `sub HP: ${active.substituteHp}` : undefined,
         biding: active.bideState ? `charging (${active.bideState.turnsLeft} turn(s) left)` : undefined,
         bound: active.boundState ? `bound (${active.boundState.turnsLeft} turn(s) left)` : undefined,
