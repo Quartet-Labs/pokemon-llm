@@ -354,6 +354,20 @@ function resetVolatileState(pokemon) {
   pokemon.chargingMove = null;  // [C8] clear two-turn charge state between battles
 }
 
+// [E6] Heal all party members to full (Nurse Joy / center heal)
+function healParty(state) {
+  for (const p of state.player.party) {
+    p.currentHp = p.maxHp;
+    p.status = null;
+    p.statusTurns = 0;
+    p.confused = false;
+    p.confusedTurns = 0;
+    p.flinched = false;
+    p.statStages = { atk:0, def:0, spd:0, spc:0, acc:0, eva: 0 };
+    for (const mv of p.moves) p.pp[mv] = MOVES[mv]?.pp ?? 20;
+  }
+}
+
 // #14 + #17: damage with crits, special stat, burn penalty, badge boost
 function calcDamage(attacker, moveName, defender, opts = {}) {
   const mv = MOVES[moveName];
@@ -827,11 +841,21 @@ function processAction(state, action) {
   }
 
   // ── DIALOGUE (advance conversation) ─────────────────────────────────────
+  // Certain field actions work even mid-dialogue — they dismiss the dialogue and execute.
+  const DIALOGUE_PASSTHROUGH = new Set(['heal','dig','teleport']);
   if (state.dialogue) {
     if (type !== 'talk' && type !== 'advance') {
-      state.message = `[${state.dialogue.lines[state.dialogue.index]}]\n(Use {"type":"talk"} to advance dialogue)`;
-      return state;
+      if (DIALOGUE_PASSTHROUGH.has(type)) {
+        // Dismiss dialogue, fall through to the action handler below
+        state.dialogue = null;
+      } else {
+        state.message = `[${state.dialogue.lines[state.dialogue.index]}]\n(Use {"type":"talk"} to advance dialogue)`;
+        return state;
+      }
     }
+    if (!state.dialogue) {
+      // Dialogue was dismissed — continue to overworld handler
+    } else {
     const d = state.dialogue;
     const line = d.lines[d.index];
     // Process the current line's actions
@@ -871,7 +895,8 @@ function processAction(state, action) {
       state.message = typeof next === 'string' ? next : `(Received ${next.give?.replace(/_/g,' ')}!)`;
     }
     return state;
-  }
+    } // closes else (dialogue advance path)
+  }   // closes outer if (state.dialogue)
 
   // ── OVERWORLD ────────────────────────────────────────────────────────────
   if (state.screen === 'overworld') {
@@ -1367,6 +1392,50 @@ function processAction(state, action) {
       return state;
     }
 
+    // [E6] Heal at Nurse Joy (inside Pokémon Center interiors)
+    if (type === 'heal') {
+      const hasNurse = area.npcs?.some(n => n.id?.startsWith('nurse_joy'));
+      if (!hasNurse) {
+        state.message = "There's no POKéMON CENTER here. Find a CENTER to heal your party!";
+        return state;
+      }
+      healParty(state);
+      // Track last center for Dig/Teleport — use first exit warp, offset one step back so
+      // Dig doesn't land exactly on a re-entry warp tile
+      const exitWarp = area.warps?.find(w => w.dest && w.dest !== state.areaId);
+      if (exitWarp) {
+        const destArea = AREAS[exitWarp.dest];
+        // Offset south of exit warp (away from center entrance)
+        const offY = (destArea?.height && exitWarp.destY + 2 < destArea.height) ? exitWarp.destY + 2 : exitWarp.destY;
+        state.player.lastCenter = { areaId: exitWarp.dest, x: exitWarp.destX, y: offY };
+      }
+      state.message = "NURSE JOY: We've restored your POKéMON to full health. We hope to see you again!";
+      return state;
+    }
+
+    // [E6] Dig / Teleport field moves — escape dungeon, warp to last center
+    if (type === 'dig' || type === 'teleport') {
+      const moveName = type === 'dig' ? 'dig' : 'teleport';
+      const hasMove = state.player.party.some(p => (p.moves || []).includes(moveName));
+      if (!hasMove) {
+        state.message = `No Pokémon in your party knows ${moveName.toUpperCase()}!`;
+        return state;
+      }
+      const lc = state.player.lastCenter;
+      if (!lc || !AREAS[lc.areaId]) {
+        state.message = "You haven't visited a POKéMON CENTER yet! Can't escape.";
+        return state;
+      }
+      state.areaId = lc.areaId;
+      state.player.x = lc.x;
+      state.player.y = lc.y;
+      state.screen = 'overworld';
+      state.dialogue = null;
+      state.message = `Used ${moveName.toUpperCase()}! Returned to the last POKéMON CENTER area.`;
+      log(state.message);
+      return state;
+    }
+
     // [B6] Nickname Pokémon
     if (type === 'nickname_pokemon') {
       const pIdx = action.partyIndex ?? 0;
@@ -1436,19 +1505,9 @@ function handleWarp(state, warp, area) {
   // Special destinations
   if (destId === 'pokemon_center') {
     // #9: remember this Pokécenter as the blackout respawn point
-    state.player.lastCenter = { areaId: state.areaId, x: state.player.x, y: state.player.y };
-    // Heal all party
-    for (const p of state.player.party) {
-      p.currentHp = p.maxHp;
-      p.status = null;
-      p.statusTurns = 0;
-      p.confused = false;
-      p.confusedTurns = 0;
-      p.flinched = false;
-      p.statStages = { atk:0, def:0, spd:0, spc:0, acc:0, eva: 0 };
-      // Restore PP
-      for (const mv of p.moves) p.pp[mv] = MOVES[mv]?.pp ?? 20;
-    }
+    // Store y+1 so Dig/Teleport lands SOUTH of the door (not on the warp tile itself)
+    state.player.lastCenter = { areaId: state.areaId, x: state.player.x, y: state.player.y + 1 };
+    healParty(state);
     state.message = "NURSE JOY: Welcome to the POKéMON CENTER! We've restored your POKéMON to full health. We hope to see you again!";
     return state;
   }
