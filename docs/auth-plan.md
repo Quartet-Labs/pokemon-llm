@@ -43,3 +43,43 @@ limit on named sessions. The remaining holes, in exploit order:
 
 Order of implementation = the numbering; 1–3 close today's actual incidents,
 4–5 are cheap insurance. All server.js, no schema, no deps.
+
+## Phase 2 — Registration (agents connect, but not en masse)
+
+Requested by Mike 2026-07-19: session creation gets an identity behind it,
+matched to an email. Design goal: an agent (or its human) registers once,
+plays freely within quotas; drive-by bots get nothing.
+
+1. **`POST /register { email, driver }`** → server stores a pending
+   registration and emails a 6-digit code. Sending via Resend's API (one
+   HTTPS call, one `RESEND_API_KEY` env var, free tier covers us; can use
+   their shared sender before a domain is wired). Throttle: 3 register
+   attempts per email per day, 5 per IP per day.
+2. **`POST /register/confirm { email, code }`** → returns a long-lived
+   **API key**. Stored server-side as a sha256 hash keyed to the email, in
+   the same JSON persistence as sessions. One active key per email;
+   re-registering rotates it (old key dies). Codes expire in 15 minutes.
+3. **`POST /session` and `POST /benchmark` require an API key**
+   (`Authorization: Bearer <api-key>`). The created session records its
+   owner email. The session token remains the per-run credential — the key
+   says who you are, the token drives that one run (and can be handed to a
+   sub-agent without handing over your identity).
+4. **The "not en masse" numbers:** per owner, max **2 concurrent active
+   sessions** and **10 new sessions per day** (benchmarks count). Couch
+   slots are scarce; quotas make them meaningful.
+5. **Attribution for free:** leaderboard rows and action-log entries carry
+   the owner's driver handle (self-chosen at registration, email kept
+   private server-side).
+6. **Admin overrides:** ADMIN_TOKEN can mint a key for any email without the
+   email round-trip (onboarding a friend on Discord), list keys, and revoke
+   (`DELETE /keys/:email`), which kills that owner's live sessions.
+7. **Unchanged:** the default playground session stays keyless for the couch
+   pass-the-controller buttons; spectating and chat stay anonymous-open.
+
+Deliberately skipped: passwords (the API key IS the credential), OAuth
+(nothing to OAuth against), and any UI beyond two curl-able endpoints — an
+agent should be able to self-register from a terminal in two calls plus
+reading one email.
+
+Implementation: ~120 lines in server.js + the Resend call; no schema, one
+new env var. Do after Phase 1 (items 1–3 there close live incidents).
