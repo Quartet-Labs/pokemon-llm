@@ -147,10 +147,40 @@ h1 { color: #ffcc00; font-size: 1.3rem; letter-spacing: 2px; }
 }
 .chat-send:hover { background:#223a22; }
 .my-name-label { font-size:.62rem; color:#557755; margin-bottom:4px; }
+
+/* ── Halt controls (#36) ── */
+.halt-bar {
+  display: none; width: 100%; max-width: 1100px;
+  background: #2a0000; border: 1px solid #dd2222; border-radius: 4px;
+  padding: 8px 14px; align-items: center; gap: 10px;
+}
+.halt-bar.active { display: flex; }
+.halt-banner { color: #ff6666; font-size: .8rem; flex: 1; font-weight: bold; letter-spacing: 1px; }
+.halt-resume {
+  background: #1a3a1a; border: 1px solid #2a5a2a; border-radius: 3px;
+  color: #aaffaa; padding: 4px 12px; cursor: pointer; font-size: .72rem; font-family: inherit;
+}
+.halt-resume:hover { background: #223a22; }
+.halt-btn {
+  background: #2a0000; border: 1px solid #aa1111; border-radius: 3px;
+  color: #ff6666; padding: 5px 14px; cursor: pointer; font-size: .78rem;
+  font-family: inherit; letter-spacing: 1px; transition: background .15s;
+}
+.halt-btn:hover { background: #550000; border-color: #dd2222; }
 </style>
 </head>
 <body>
 <h1>🎮 POKÉMON LLM</h1>
+
+<!-- Halted state banner (#36) -->
+<div class="halt-bar" id="halt-bar">
+  <span class="halt-banner">⛔ RUN HALTED — agent has been signalled to stop</span>
+  <button class="halt-resume" onclick="clearHalt()">▶ Resume</button>
+</div>
+<!-- Stop button (visible when not halted) -->
+<div id="halt-btn-wrap">
+  <button class="halt-btn" id="halt-btn" onclick="haltRun()">⛔ STOP AGENT</button>
+</div>
 
 <div class="top-row">
   <!-- Canvas + starter overlay -->
@@ -485,6 +515,25 @@ function updateUI(state) {
   render(state);
 }
 
+// ── Halt controls (#36) ───────────────────────────────────────────────────────
+async function haltRun() {
+  try {
+    await fetch('/halt', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+  } catch(e) { console.error(e); }
+}
+
+async function clearHalt() {
+  try {
+    await fetch('/halt', { method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ clear: true }) });
+  } catch(e) { console.error(e); }
+}
+
+function setHaltedUI(halted) {
+  document.getElementById('halt-bar').classList.toggle('active', !!halted);
+  document.getElementById('halt-btn-wrap').style.display = halted ? 'none' : 'block';
+}
+
 // ── Chat ──────────────────────────────────────────────────────────────────────
 let myName = '';
 let ws;
@@ -532,12 +581,14 @@ function connect() {
         document.getElementById('my-name').textContent = `You are: ${myName}`;
       }
       if (msg.chatHistory) msg.chatHistory.forEach(addChatMsg);
+      if (msg.halted !== undefined) setHaltedUI(msg.halted);
     }
     if (msg.event === 'state_update' || msg.event === 'reset') {
       if (msg.map) mapData = msg.map;
       if (msg.state) { lastState = msg.state; updateUI(msg.state); }
     }
     if (msg.event === 'chat') addChatMsg(msg.msg);
+    if (msg.event === 'halted') setHaltedUI(msg.halted);
   };
 
   ws.onclose = () => {
