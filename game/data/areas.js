@@ -12,9 +12,11 @@ const T = {
   BUILDING:   'building',
   LEDGE_S:    'ledge_s',   // can jump south only
   FLOWER:     'flower',
+  TREE_CUT:   'tree_cut',  // cuttable tree (field move CUT)
+  ITEM_BALL:  'item_ball', // ground item (walkable)
 };
 
-const WALKABLE = new Set([T.PATH, T.GRASS, T.TALL_GRASS, T.DOOR, T.FLOWER]);
+const WALKABLE = new Set([T.PATH, T.GRASS, T.TALL_GRASS, T.DOOR, T.FLOWER, T.ITEM_BALL]);
 const ENCOUNTER_TILES = new Set([T.TALL_GRASS]);
 
 // ── Pallet Town (20 wide x 18 tall) ─────────────────────────────────────────

@@ -503,11 +503,56 @@ function newGame(seed) {
     },
     battle: null,
     dialogue: null,
+    npcState: {},      // { [areaId]: { [npcId]: { x, y, dir } } } — wander/spin overrides
+    cuttedTrees: {},   // { [areaId]: ['x,y', ...] } — tiles cleared by CUT
     // Oak's intro dialogue — verbatim from Gen I Red/Blue (Bulbapedia)
     message: "OAK: Hello there! Welcome to the world of POKéMON! My name is OAK! People call me the POKéMON PROF! This world is inhabited by creatures called POKéMON! For some people, POKéMON are pets. Others use them for fights. Myself… I study POKéMON as a profession. Now, let's choose your partner! Which POKéMON will you take?",
     log: [],
     turn: 0,
   };
+}
+
+// ── NPC position helper (accounts for wander/spin state overrides) ────────────
+function getEffectiveNpcAt(area, x, y, state) {
+  const overrides = state?.npcState?.[area.id] || {};
+  for (const npc of (area.npcs || [])) {
+    const pos = overrides[npc.id] || npc;
+    if (pos.x === x && pos.y === y) return npc;
+  }
+  return null;
+}
+
+// ── Rival party helper ────────────────────────────────────────────────────────
+function getRivalParty(state) {
+  const starter = state.player.party[0]?.species || 'bulbasaur';
+  // Rival picks the starter that beats yours
+  const counterMap = { bulbasaur:'charmander', charmander:'squirtle', squirtle:'bulbasaur' };
+  const rivalStarter = counterMap[starter] || 'charmander';
+  return [
+    { species: rivalStarter, level: 9 },
+    { species: 'pidgey',     level: 9 },
+  ];
+}
+
+// Returns a new state with rival battle triggered if entering route_22, or null.
+function checkRivalEncounter(state) {
+  if (state.areaId === 'route_22' && !state.player.flags['beat_rival_route22']) {
+    const rivalParty = getRivalParty(state);
+    if (rivalParty.length) {
+      const [first, ...rest] = rivalParty.map(e => makePokemon(e.species, e.level));
+      state.screen = 'battle';
+      state.battle = {
+        enemy: first, isTrainer: true,
+        trainerName: 'RIVAL',
+        trainerParty: rest, playerPartyIndex: 0,
+        reward: 350, rewardFlag: 'beat_rival_route22',
+        turn: 0,
+      };
+      state.message = `RIVAL: So, you want to challenge me? I've already caught 2 POKéMON! … Let's battle!`;
+      return state;
+    }
+  }
+  return null;
 }
 
 // ── action processor ──────────────────────────────────────────────────────────
@@ -605,6 +650,8 @@ function processAction(state, action) {
           state.player.y = conn.entryY;
           state.message = `Heading north to ${AREAS[conn.area]?.name || conn.area}...`;
           log(state.message);
+          const rivalResult = checkRivalEncounter(state);
+          if (rivalResult) return rivalResult;
           return state;
         }
         state.message = "You can't go that way."; return state;
@@ -617,6 +664,8 @@ function processAction(state, action) {
           state.player.y = conn.entryY;
           state.message = `Heading south to ${AREAS[conn.area]?.name || conn.area}...`;
           log(state.message);
+          const rivalResult = checkRivalEncounter(state);
+          if (rivalResult) return rivalResult;
           return state;
         }
         state.message = "You can't go that way."; return state;
@@ -625,7 +674,10 @@ function processAction(state, action) {
         const conn = area.connections?.west;
         if (conn) {
           state.areaId = conn.area; state.player.x = conn.entryX; state.player.y = conn.entryY;
-          state.message = `Heading west to ${AREAS[conn.area]?.name}...`; return state;
+          state.message = `Heading west to ${AREAS[conn.area]?.name}...`;
+          const rivalResult = checkRivalEncounter(state);
+          if (rivalResult) return rivalResult;
+          return state;
         }
         state.message = "You can't go that way."; return state;
       }
@@ -633,13 +685,16 @@ function processAction(state, action) {
         const conn = area.connections?.east;
         if (conn) {
           state.areaId = conn.area; state.player.x = conn.entryX; state.player.y = conn.entryY;
-          state.message = `Heading east to ${AREAS[conn.area]?.name}...`; return state;
+          state.message = `Heading east to ${AREAS[conn.area]?.name}...`;
+          const rivalResult = checkRivalEncounter(state);
+          if (rivalResult) return rivalResult;
+          return state;
         }
         state.message = "You can't go that way."; return state;
       }
 
-      // NPC blocking
-      const npcHere = getNpcAt(area, nx, ny);
+      // NPC blocking (uses effective positions for wandering NPCs)
+      const npcHere = getEffectiveNpcAt(area, nx, ny, state);
       if (npcHere) {
         // Trainer battle check
         if (npcHere.trainerBattle && !state.player.flags[npcHere.trainerBattle.rewardFlag]) {
@@ -681,7 +736,74 @@ function processAction(state, action) {
         return state;
       }
 
-      if (!isWalkable(area, nx, ny, state)) {
+      // Ledge jump: moving south into a ledge_s tile jumps over it
+      if (action.direction === 'south' && getAreaTile(area, nx, ny) === T.LEDGE_S) {
+        const landY = ny + 1;
+        if (landY < area.height && isWalkable(area, nx, landY, state)) {
+          state.player.x = nx;
+          state.player.y = landY;
+          state.player.steps++;
+          state.message = `Jumped off the ledge! (${nx},${landY})`;
+          log(state.message);
+          const ledgeWarp = getWarpAt(area, nx, landY);
+          if (ledgeWarp) return handleWarp(state, ledgeWarp, area);
+          if (hasEncounter(area, nx, landY) && roll(100) <= (area.encounterRate ?? 20)) {
+            const tile = getAreaTile(area, nx, landY);
+            const terrain = tile === T.TALL_GRASS ? 'tall_grass' : 'grass';
+            const encounter = rollEncounter(state.areaId, terrain);
+            if (encounter) {
+              const wild = makePokemon(encounter.species, encounter.level);
+              state.screen = 'battle';
+              state.battle = { enemy: wild, playerPartyIndex:0, turn:0 };
+              state.message = `A wild ${wild.name} appeared! (Lv.${wild.level})`;
+              log(state.message);
+              return state;
+            }
+          }
+          return state;
+        }
+        state.message = "Can't jump — no landing spot.";
+        return state;
+      }
+
+      // Surf check: can cross water if a party member knows 'surf'
+      if (getAreaTile(area, nx, ny) === T.WATER) {
+        const hasSurf = state.player.party.some(p => (p.moves || []).includes('surf'));
+        if (hasSurf) {
+          state.player.x = nx;
+          state.player.y = ny;
+          state.player.steps++;
+          state.message = `Surfing on the water! (${nx},${ny})`;
+          log(state.message);
+          if (roll(100) <= (area.encounterRate ?? 10)) {
+            const encounter = rollEncounter(state.areaId, 'water');
+            if (encounter) {
+              const wild = makePokemon(encounter.species, encounter.level);
+              state.screen = 'battle';
+              state.battle = { enemy: wild, playerPartyIndex:0, turn:0 };
+              state.message = `A wild ${wild.name} appeared! (Lv.${wild.level})`;
+              log(state.message);
+              return state;
+            }
+          }
+          return state;
+        }
+        state.message = "You need to use SURF to cross water!";
+        return state;
+      }
+
+      // Check if a tree_cut tile has been cleared by CUT
+      const isCutTree = getAreaTile(area, nx, ny) === T.TREE_CUT;
+      if (isCutTree) {
+        const cKey = `${nx},${ny}`;
+        if (!(state.cuttedTrees?.[state.areaId] || []).includes(cKey)) {
+          state.message = "A tree is blocking the way! Use CUT to remove it.";
+          return state;
+        }
+        // Tree was cut — treat as clear path, skip isWalkable check below
+      }
+
+      if (!isCutTree && !isWalkable(area, nx, ny, state)) {
         // Check if it's a sign (interact from south facing north)
         const sign = getSignAt(area, nx, ny);
         if (sign) { state.message = sign.text; return state; }
@@ -701,8 +823,89 @@ function processAction(state, action) {
       state.player.y = ny;
       state.player.steps++;
 
-      // Encounter check
-      if (hasEncounter(area, nx, ny) && roll(100) <= 20) {
+      // Trainer sight-line check (after successful move)
+      for (const npc of (area.npcs || [])) {
+        if (!npc.trainerBattle) continue;
+        if (state.player.flags[npc.trainerBattle.rewardFlag]) continue; // already beaten
+        const sightRange = npc.sightRange || 4;
+        const DIR_VECS = { north:[0,-1], south:[0,1], east:[1,0], west:[-1,0] };
+        const npcOverride = state.npcState?.[state.areaId]?.[npc.id];
+        const npcX = npcOverride?.x ?? npc.x;
+        const npcY = npcOverride?.y ?? npc.y;
+        const npcDir = npcOverride?.dir ?? npc.dir ?? 'south';
+        const [sdx, sdy] = DIR_VECS[npcDir] || [0, 1];
+        let spotted = false;
+        for (let d = 1; d <= sightRange; d++) {
+          const tx = npcX + sdx * d;
+          const ty = npcY + sdy * d;
+          if (tx === state.player.x && ty === state.player.y) {
+            spotted = true;
+            break;
+          }
+          // Stop sight-line at solid tiles
+          const blocker = getAreaTile(area, tx, ty);
+          if (blocker === T.WALL || blocker === T.BUILDING || blocker === T.TREE || blocker === T.TREE_CUT) break;
+        }
+        if (spotted) {
+          const tb = npc.trainerBattle;
+          const [first, ...rest] = tb.party.map(e => makePokemon(e.species, e.level));
+          state.screen = 'battle';
+          state.battle = {
+            enemy: first, isTrainer: true,
+            trainerName: tb.trainerName || npc.name,
+            trainerParty: rest, playerPartyIndex: 0,
+            reward: tb.reward || 0, rewardFlag: tb.rewardFlag,
+            badge: tb.badge || null, turn: 0,
+          };
+          state.message = `${npc.name} spotted you! "${npc.dialogue?.[0] || 'Battle time!'}"`;
+          log(state.message);
+          return state;
+        }
+      }
+
+      // NPC wander/spin tick (each move step advances NPC positions)
+      if (!state.npcState) state.npcState = {};
+      const npcStateArea = state.npcState[state.areaId] || {};
+      for (const npc of (area.npcs || [])) {
+        if (npc.spin) {
+          const DIRS = ['north','east','south','west'];
+          const cur = npcStateArea[npc.id]?.dir ?? npc.dir ?? 'south';
+          const next = DIRS[(DIRS.indexOf(cur) + 1) % 4];
+          npcStateArea[npc.id] = { ...(npcStateArea[npc.id] || {}), x: npc.x, y: npc.y, dir: next };
+        }
+        if (npc.wander && roll(4) === 1) {
+          const WANDER_DIRS = [[0,-1],[0,1],[1,0],[-1,0]];
+          const [wdx, wdy] = WANDER_DIRS[roll(4) - 1];
+          const wx = (npcStateArea[npc.id]?.x ?? npc.x) + wdx;
+          const wy = (npcStateArea[npc.id]?.y ?? npc.y) + wdy;
+          if (wx >= 0 && wx < area.width && wy >= 0 && wy < area.height && isWalkable(area, wx, wy, state)) {
+            if (!(wx === state.player.x && wy === state.player.y)) {
+              npcStateArea[npc.id] = { ...(npcStateArea[npc.id] || { dir: npc.dir }), x: wx, y: wy };
+            }
+          }
+        }
+      }
+      state.npcState[state.areaId] = npcStateArea;
+
+      // Ground item auto-pickup
+      if (area.items) {
+        for (const item of area.items) {
+          if (item.x === state.player.x && item.y === state.player.y) {
+            const flagKey = `picked_up_${item.id}`;
+            if (!state.player.flags[flagKey]) {
+              state.player.flags[flagKey] = true;
+              const qty = item.qty || 1;
+              state.player.bag[item.item] = (state.player.bag[item.item] || 0) + qty;
+              state.message = `Found a ${item.item.replace(/_/g,' ').toUpperCase()}! (×${qty})`;
+              log(state.message);
+              return state;
+            }
+          }
+        }
+      }
+
+      // Encounter check (variable rate via area.encounterRate)
+      if (hasEncounter(area, nx, ny) && roll(100) <= (area.encounterRate ?? 20)) {
         const tile = getAreaTile(area, nx, ny);
         const terrain = tile === T.TALL_GRASS ? 'tall_grass' : 'grass';
         const encounter = rollEncounter(state.areaId, terrain);
@@ -823,7 +1026,32 @@ function processAction(state, action) {
       return { ...state, message: `${pokemon.name} forgot ${forgot.toUpperCase()} and learned ${newMv.toUpperCase()}!` };
     }
 
-    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, pc_view, pc_withdraw, pc_deposit, forget_move`;
+    if (type === 'cut') {
+      // CUT field move — removes an adjacent tree_cut tile
+      const DIRS = [[0,-1],[0,1],[1,0],[-1,0]];
+      const hasCut = state.player.party.some(p => (p.moves || []).includes('cut'));
+      if (!hasCut) { state.message = "No Pokémon in your party knows CUT!"; return state; }
+      for (const [dx, dy] of DIRS) {
+        const tx = state.player.x + dx, ty = state.player.y + dy;
+        if (getAreaTile(area, tx, ty) === T.TREE_CUT) {
+          if (!state.cuttedTrees) state.cuttedTrees = {};
+          if (!state.cuttedTrees[state.areaId]) state.cuttedTrees[state.areaId] = [];
+          const key = `${tx},${ty}`;
+          if (!state.cuttedTrees[state.areaId].includes(key)) {
+            state.cuttedTrees[state.areaId].push(key);
+            state.message = `Used CUT! The tree was cut down!`;
+            log(state.message);
+          } else {
+            state.message = "That tree has already been cut.";
+          }
+          return state;
+        }
+      }
+      state.message = "There's no tree to cut here.";
+      return state;
+    }
+
+    state.message = `Unknown overworld action: ${type}. Use: move, talk, use_item, mart_view, mart_buy, pc_view, pc_withdraw, pc_deposit, forget_move, cut`;
     return state;
   }
 
@@ -1622,8 +1850,9 @@ function getView(state) {
   }
   if (state.screen === 'overworld') {
     view.available_actions = [
-      'move (direction: up|down|left|right)',
+      'move (direction: north|south|east|west)',
       'talk',
+      'cut',
       'use_item (item: potion|super_potion|antidote|paralyze_heal|full_heal|tm##|hm##, target_index: 0-5)',
       'mart_view',
       'mart_buy (item: ..., quantity: N)',
@@ -1632,6 +1861,18 @@ function getView(state) {
       'pc_withdraw (index: 0-N)',
       'pc_deposit (party_index: 0-5)',
     ];
+    // Expose NPC effective positions (for wander/spin)
+    if (area.npcs) {
+      view.npcs = area.npcs.map(npc => {
+        const override = state.npcState?.[state.areaId]?.[npc.id];
+        return { id: npc.id, name: npc.name, x: override?.x ?? npc.x, y: override?.y ?? npc.y, dir: override?.dir ?? npc.dir };
+      });
+    }
+    // Expose cut trees and uncollected ground items
+    view.cut_trees_cleared = state.cuttedTrees?.[state.areaId] || [];
+    view.ground_items = (area.items || [])
+      .filter(item => !state.player.flags[`picked_up_${item.id}`])
+      .map(i => ({ id: i.id, x: i.x, y: i.y, item: i.item }));
   }
   if (state.dialogue) {
     view.dialogue = {
