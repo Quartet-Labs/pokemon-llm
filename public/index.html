@@ -2,224 +2,156 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Pokémon LLM</title>
+<title>Pokémon LLM — 4P Couch</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   background: #0a0a0a; color: #e0e0e0;
   font-family: 'Courier New', monospace;
   display: flex; flex-direction: column; align-items: center;
-  min-height: 100vh; padding: 16px; gap: 12px;
+  min-height: 100vh; padding: 14px; gap: 10px;
 }
-h1 { color: #ffcc00; font-size: 1.3rem; letter-spacing: 2px; }
+h1 { color: #ffcc00; font-size: 1.2rem; letter-spacing: 2px; }
+.subtitle { color:#555; font-size:.65rem; letter-spacing:1px; margin-top:-6px; }
 
-/* ── Layout ── */
-.top-row {
+/* ── 2×2 couch grid ── */
+.couch {
   display: grid;
-  grid-template-columns: 360px 1fr 260px;
-  gap: 12px; width: 100%; max-width: 1100px;
+  grid-template-columns: repeat(2, minmax(300px, 380px));
+  gap: 10px;
 }
-.mid-row {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 12px; width: 100%; max-width: 1100px;
+.pcell {
+  border: 3px solid var(--pc, #444);
+  border-radius: 6px; background:#0d0d12;
+  padding: 6px; cursor: pointer;
+  display:flex; flex-direction:column; gap:4px;
+  transition: box-shadow .15s;
 }
+.pcell.selected { box-shadow: 0 0 12px var(--pc); }
+.pcell.idle { opacity:.55; }
+.p1 { --pc:#e74c3c; } .p2 { --pc:#3498db; } .p3 { --pc:#2ecc71; } .p4 { --pc:#f1c40f; }
 
-/* ── Canvas ── */
-#cv { display: block; image-rendering: pixelated; border: 2px solid #444; }
-.area-label { text-align:center; font-size:.68rem; color:#777; margin-top:3px; letter-spacing:1px; }
-
-/* ── Canvas wrapper for overlay ── */
-.cv-wrap { position:relative; }
-
-/* ── Starter select overlay ── */
-#starter-overlay {
-  display:none; position:absolute; inset:0;
-  background:rgba(10,10,10,.92); border:2px solid #ffcc00;
-  flex-direction:column; align-items:center; justify-content:center; gap:12px;
-  padding:20px; text-align:center;
+.phead { display:flex; justify-content:space-between; align-items:center; font-size:.7rem; }
+.ptag {
+  color:#000; background:var(--pc); font-weight:bold;
+  padding:1px 8px; border-radius:3px; letter-spacing:1px;
 }
-#starter-overlay.active { display:flex; }
-#starter-overlay h3 { color:#ffcc00; font-size:.9rem; margin-bottom:4px; }
-#starter-overlay p { color:#aaa; font-size:.7rem; margin-bottom:8px; }
-.starter-cards { display:flex; gap:10px; }
-.scard {
-  background:#0d1a0d; border:2px solid #2a5a2a; border-radius:5px;
-  padding:10px; cursor:pointer; transition:all .15s; width:96px;
-  display:flex; flex-direction:column; align-items:center; gap:4px;
-}
-.scard:hover { border-color:#ffcc00; background:#122a12; }
-.scard .si { font-size:2rem; }
-.scard .sn { color:#ccffcc; font-size:.75rem; font-weight:bold; }
-.scard .st { color:#888; font-size:.6rem; }
-.scard .sd { color:#666; font-size:.58rem; line-height:1.3; margin-top:3px; text-align:center; }
+.parea { color:#999; letter-spacing:1px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.pturn { color:#666; }
+.pcv { display:block; image-rendering:pixelated; width:100%; background:#111; }
 
-/* ── Panels ── */
-.panel {
-  background: #111; border: 1px solid #2a2a2a;
-  border-radius: 4px; padding: 10px; font-size:.76rem;
-}
-.panel h2 { color:#ffcc00; font-size:.82rem; margin-bottom:6px; border-bottom:1px solid #2a2a2a; padding-bottom:3px; }
-
-/* ── Message box ── */
-.msg-box {
-  background:#0d1117; border:2px solid #444; border-radius:2px;
-  padding:10px; min-height:52px; font-size:.83rem; color:#fff; white-space:pre-wrap;
-}
-.turn-line { text-align:right; color:#555; font-size:.66rem; margin-bottom:3px; }
-
-/* ── HP bars ── */
-.hp-wrap { margin:3px 0; }
-.hp-label { display:flex; justify-content:space-between; font-size:.7rem; }
-.hp-bar { height:7px; background:#1a1a1a; border-radius:2px; overflow:hidden; margin-top:2px; }
-.hp-fill { height:100%; transition:width .3s,background .3s; }
+.phud { display:flex; align-items:center; gap:6px; font-size:.65rem; min-height:16px; }
+.pmon { color:#7ec8e3; font-weight:bold; white-space:nowrap; }
+.hp-bar { flex:1; height:6px; background:#1a1a1a; border-radius:2px; overflow:hidden; }
+.hp-fill { height:100%; }
 .hp-fill.high{background:#44dd44;} .hp-fill.mid{background:#ffcc00;} .hp-fill.low{background:#dd2222;}
+.pbadges { color:#ffcc00; white-space:nowrap; }
 
-/* ── Party cards ── */
-.pcard { background:#16162a; border:1px solid #333; border-radius:3px; padding:7px; margin-bottom:5px; }
-.pname { font-weight:bold; color:#7ec8e3; }
+.pmsg {
+  font-size:.62rem; color:#aaa; min-height:26px; max-height:26px; overflow:hidden;
+  background:#0d1117; border:1px solid #22262e; border-radius:2px; padding:2px 5px;
+  line-height:1.25;
+}
+.pwait {
+  display:flex; align-items:center; justify-content:center;
+  color:#666; font-size:.8rem; letter-spacing:2px;
+  animation: blink 1.4s step-end infinite;
+}
+@keyframes blink { 50% { opacity:.25; } }
+
+/* ── Bottom row: detail drawer + chat ── */
+.bottom {
+  display:grid; grid-template-columns: 1fr 300px;
+  gap:10px; width:100%; max-width:790px;
+}
+.panel {
+  background:#111; border:1px solid #2a2a2a; border-radius:4px;
+  padding:10px; font-size:.74rem;
+}
+.panel h2 { color:#ffcc00; font-size:.8rem; margin-bottom:6px; border-bottom:1px solid #2a2a2a; padding-bottom:3px; }
+.drawer-head { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.drawer-cols { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+.pcard { background:#16162a; border:1px solid #333; border-radius:3px; padding:6px; margin-bottom:5px; }
+.pname { font-weight:bold; color:#7ec8e3; font-size:.72rem; }
 .moves { margin-top:3px; display:flex; flex-wrap:wrap; gap:3px; }
-.mtag { background:#1a1a2a; border:1px solid #444; border-radius:8px; padding:1px 6px; font-size:.65rem; }
+.mtag { background:#1a1a2a; border:1px solid #444; border-radius:8px; padding:0 6px; font-size:.62rem; }
+.hp-label { display:flex; justify-content:space-between; font-size:.66rem; }
+.hp-bar2 { height:6px; background:#1a1a1a; border-radius:2px; overflow:hidden; margin-top:2px; }
 
-/* ── Inventory ── */
-.inv-grid { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:4px; }
 .inv-item {
   background:#0d1117; border:1px solid #2a2a2a; border-radius:3px;
-  padding:5px 8px; display:flex; justify-content:space-between; align-items:center;
+  padding:3px 7px; display:flex; justify-content:space-between; font-size:.68rem; margin-bottom:3px;
 }
-.inv-item .ii { color:#ccc; font-size:.7rem; }
-.inv-item .iq {
-  background:#1a2a1a; border:1px solid #2a4a2a; border-radius:8px;
-  color:#aaffaa; padding:1px 8px; font-size:.7rem; font-weight:bold;
-}
-.inv-money { color:#ffcc00; font-size:.72rem; margin-top:5px; }
-.inv-empty { color:#555; font-size:.7rem; }
+.inv-money { color:#ffcc00; font-size:.7rem; margin-top:4px; }
 
-/* ── Log (scrollable) ── */
-.log-wrap { max-height:160px; overflow-y:auto; scroll-behavior:smooth; }
+.log-wrap { max-height:120px; overflow-y:auto; }
 .log-wrap::-webkit-scrollbar { width:4px; }
-.log-wrap::-webkit-scrollbar-thumb { background:#333; border-radius:2px; }
-.log-e { padding:2px 0; border-bottom:1px solid #1a1a1a; color:#888; font-size:.7rem; }
+.log-wrap::-webkit-scrollbar-thumb { background:#333; }
+.log-e { padding:1px 0; border-bottom:1px solid #1a1a1a; color:#888; font-size:.66rem; }
 .log-e:first-child { color:#ddd; }
 
-/* ── Type badges ── */
-.tbadge { display:inline-block; padding:0 5px; border-radius:7px; font-size:.6rem; margin-left:2px; }
+.starter-row { display:flex; gap:6px; margin-top:6px; }
+.sbtn {
+  flex:1; background:#0d1a0d; border:1px solid #2a5a2a; border-radius:4px;
+  color:#ccffcc; padding:5px 4px; cursor:pointer; font-family:inherit; font-size:.66rem;
+}
+.sbtn:hover { border-color:#ffcc00; }
+
+.tbadge { display:inline-block; padding:0 5px; border-radius:7px; font-size:.58rem; margin-left:2px; }
 .t-grass{background:#2d6a2d;} .t-fire{background:#7a3010;} .t-water{background:#10407a;}
 .t-electric{background:#7a7010;} .t-normal{background:#4a4a4a;} .t-rock{background:#5a4a20;}
-.t-ground{background:#6a4a10;} .t-flying{background:#2a4a7a;} .t-poison{background:#4a107a;}
-
-/* ── Bulbapedia links ── */
-.bpanel { display:flex; flex-direction:column; gap:6px; }
-.blink {
-  display:flex; align-items:center; gap:8px; text-decoration:none;
-  background:#0d1a0d; border:1px solid #1a3a1a; border-radius:4px;
-  padding:6px 9px; color:#aaffaa; font-size:.72rem;
-  transition:background .15s;
-}
-.blink:hover { background:#122a12; border-color:#2a6a2a; }
-.blink .bl-icon { font-size:1.1rem; flex-shrink:0; }
-.blink .bl-text { flex:1; }
-.blink .bl-label { font-size:.6rem; color:#668866; display:block; }
-.blink .bl-name { color:#ccffcc; font-weight:bold; }
-.blink-none { color:#555; font-size:.7rem; text-align:center; padding:10px 0; }
+.t-ground{background:#6a4a10;} .t-flying{background:#2a4a7a;} .t-poison{background:#4a107a;} .t-bug{background:#5a6a10;}
 
 /* ── Chat ── */
 .chat-msgs {
-  max-height:180px; overflow-y:auto; scroll-behavior:smooth;
-  display:flex; flex-direction:column; gap:2px; margin-bottom:8px;
+  max-height:190px; overflow-y:auto; display:flex; flex-direction:column; gap:2px; margin-bottom:8px;
 }
 .chat-msgs::-webkit-scrollbar { width:4px; }
 .chat-msgs::-webkit-scrollbar-thumb { background:#333; }
-.chat-msg { font-size:.7rem; line-height:1.4; }
+.chat-msg { font-size:.68rem; line-height:1.4; }
 .chat-msg .cu { color:#ffcc00; font-weight:bold; }
 .chat-msg .ct { color:#ccc; }
 .chat-msg .cs { color:#557755; font-style:italic; }
-.chat-msg.system .cu { color:#666; }
 .chat-input-row { display:flex; gap:5px; }
 .chat-input {
   flex:1; background:#0d1117; border:1px solid #333; border-radius:3px;
-  color:#fff; padding:5px 8px; font-family:inherit; font-size:.72rem; outline:none;
+  color:#fff; padding:5px 8px; font-family:inherit; font-size:.7rem; outline:none;
 }
-.chat-input:focus { border-color:#555; }
 .chat-send {
   background:#1a3a1a; border:1px solid #2a5a2a; border-radius:3px;
-  color:#aaffaa; padding:5px 10px; cursor:pointer; font-size:.72rem;
+  color:#aaffaa; padding:5px 10px; cursor:pointer; font-size:.7rem;
 }
-.chat-send:hover { background:#223a22; }
-.my-name-label { font-size:.62rem; color:#557755; margin-bottom:4px; }
+.my-name-label { font-size:.6rem; color:#557755; margin-bottom:4px; }
 </style>
 </head>
 <body>
 <h1>🎮 POKÉMON LLM</h1>
+<div class="subtitle">4-PLAYER COUCH MODE — CLICK A SCREEN TO INSPECT</div>
 
-<div class="top-row">
-  <!-- Canvas + starter overlay -->
-  <div>
-    <div class="cv-wrap">
-      <canvas id="cv" width="360" height="288"></canvas>
-      <!-- Starter select overlay (shown over canvas) -->
-      <div id="starter-overlay">
-        <h3>⚗️ PROF. OAK'S LAB</h3>
-        <p>Choose your first POKéMON!</p>
-        <div class="starter-cards">
-          <div class="scard" onclick="chooseStarter('bulbasaur')">
-            <span class="si">🌿</span>
-            <span class="sn">BULBASAUR</span>
-            <span class="st">Grass/Poison</span>
-            <span class="sd">A strange seed was planted on its back at birth.</span>
-          </div>
-          <div class="scard" onclick="chooseStarter('charmander')">
-            <span class="si">🔥</span>
-            <span class="sn">CHARMANDER</span>
-            <span class="st">Fire</span>
-            <span class="sd">The flame at the tip of its tail makes a sound as it burns.</span>
-          </div>
-          <div class="scard" onclick="chooseStarter('squirtle')">
-            <span class="si">💧</span>
-            <span class="sn">SQUIRTLE</span>
-            <span class="st">Water</span>
-            <span class="sd">After birth, its back swells and hardens into a shell.</span>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="area-label" id="area-label">OAK'S LAB — PALLET TOWN</div>
-  </div>
+<div class="couch" id="couch"></div>
 
-  <!-- Game info -->
-  <div style="display:flex;flex-direction:column;gap:10px;">
-    <div class="panel">
-      <div class="turn-line" id="turn">Turn 0</div>
-      <div class="msg-box" id="msg">Connecting...</div>
-    </div>
-    <div class="panel">
-      <h2>PARTY</h2>
-      <div id="party"><div style="color:#555;font-size:.7rem">No POKéMON yet — choose your starter!</div></div>
-    </div>
-    <div class="panel">
-      <h2>🎒 BAG</h2>
-      <div id="inventory"><div class="inv-empty">Empty</div></div>
-      <div class="inv-money" id="money">₽ —</div>
-    </div>
-    <div class="panel">
-      <h2>EVENT LOG</h2>
-      <div class="log-wrap" id="log-wrap">
-        <div id="log"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Bulbapedia links -->
+<div class="bottom">
   <div class="panel">
-    <h2>📖 BULBAPEDIA</h2>
-    <div class="bpanel" id="blinks">
-      <div class="blink-none">Loading...</div>
+    <div class="drawer-head">
+      <span class="ptag" id="d-tag" style="--pc:#e74c3c">P1</span>
+      <h2 style="border:none;margin:0;padding:0" id="d-title">PLAYER 1</h2>
+    </div>
+    <div class="drawer-cols">
+      <div>
+        <h2>PARTY</h2>
+        <div id="d-party"></div>
+      </div>
+      <div>
+        <h2>🎒 BAG</h2>
+        <div id="d-bag"></div>
+        <div class="inv-money" id="d-money"></div>
+        <h2 style="margin-top:8px">EVENT LOG</h2>
+        <div class="log-wrap"><div id="d-log"></div></div>
+        <div id="d-starter"></div>
+      </div>
     </div>
   </div>
-</div>
-
-<div class="mid-row">
-  <div></div>
   <div class="panel">
     <h2>💬 OBSERVER CHAT</h2>
     <div class="my-name-label" id="my-name"></div>
@@ -232,10 +164,12 @@ h1 { color: #ffcc00; font-size: 1.3rem; letter-spacing: 2px; }
 </div>
 
 <script>
-// ── Canvas ────────────────────────────────────────────────────────────────────
-const cv = document.getElementById('cv');
-const ctx = cv.getContext('2d');
-const CW = cv.width, CH = cv.height;
+// ── Per-player state ──────────────────────────────────────────────────────────
+const MAXP = 4;
+const players = {};   // n -> { state, map, cv, ctx }
+let selected = 1;
+
+const PCOLORS = { 1:'#e74c3c', 2:'#3498db', 3:'#2ecc71', 4:'#f1c40f' };
 
 const TC = {
   path:'#8b7355', town:'#8b7355', grass:'#3a8c3a', tall_grass:'#1a5c1a',
@@ -244,11 +178,44 @@ const TC = {
   default:'#111',
 };
 
-let mapData = null, lastState = null;
+// Build the four cells
+const couch = document.getElementById('couch');
+for (let n = 1; n <= MAXP; n++) {
+  const cell = document.createElement('div');
+  cell.className = `pcell p${n}` + (n === selected ? ' selected' : '');
+  cell.id = `cell-${n}`;
+  cell.innerHTML = `
+    <div class="phead">
+      <span class="ptag">P${n}</span>
+      <span class="parea" id="area-${n}">—</span>
+      <span class="pturn" id="turn-${n}">T0</span>
+    </div>
+    <canvas class="pcv" id="cv-${n}" width="320" height="256"></canvas>
+    <div class="phud" id="hud-${n}"></div>
+    <div class="pmsg" id="msg-${n}"></div>`;
+  cell.addEventListener('click', () => selectPlayer(n));
+  couch.appendChild(cell);
+  const cv = document.getElementById(`cv-${n}`);
+  players[n] = { state:null, map:null, cv, ctx: cv.getContext('2d') };
+}
 
-function drawOverworld(state) {
-  if (!mapData) { ctx.fillStyle='#111'; ctx.fillRect(0,0,CW,CH); return; }
-  const { width:MW, height:MH, tiles, npcs } = mapData;
+function selectPlayer(n) {
+  selected = n;
+  for (let i = 1; i <= MAXP; i++)
+    document.getElementById(`cell-${i}`).classList.toggle('selected', i === n);
+  updateDrawer();
+}
+
+// ── Rendering (parameterized per cell) ────────────────────────────────────────
+function hpInfo(s){const[c,m]=s.split('/').map(Number);return{cur:c,max:m,f:m>0?c/m:0};}
+function hpCls(f){return f>.5?'high':f>.25?'mid':'low';}
+function typeTag(t){return`<span class="tbadge t-${t}">${t}</span>`;}
+
+function drawOverworld(p) {
+  const { ctx, cv, map, state } = p;
+  const CW = cv.width, CH = cv.height;
+  if (!map) { ctx.fillStyle='#111'; ctx.fillRect(0,0,CW,CH); return; }
+  const { width:MW, height:MH, tiles, npcs } = map;
   const tsize = Math.min(Math.floor(CW/15), Math.floor(CH/12), 20);
   const px = state.player.position.x, py = state.player.position.y;
   const vCols = Math.ceil(CW/tsize)+2, vRows = Math.ceil(CH/tsize)+2;
@@ -267,222 +234,160 @@ function drawOverworld(state) {
       ctx.strokeStyle='rgba(0,0,0,.1)'; ctx.strokeRect(sx,sy,tsize,tsize);
     }
   }
-  if (npcs) for (const n of npcs) {
-    if (n.x<sc||n.x>=sc+vCols||n.y<sr||n.y>=sr+vRows) continue;
-    const sx=ox+(n.x-sc)*tsize, sy=oy+(n.y-sr)*tsize;
+  if (npcs) for (const nn of npcs) {
+    if (nn.x<sc||nn.x>=sc+vCols||nn.y<sr||nn.y>=sr+vRows) continue;
+    const sx=ox+(nn.x-sc)*tsize, sy=oy+(nn.y-sr)*tsize;
     ctx.fillStyle='#ffaa00'; ctx.fillRect(sx+2,sy+2,tsize-4,tsize-4);
   }
   const sx=ox+(px-sc)*tsize, sy=oy+(py-sr)*tsize;
-  ctx.fillStyle='#e00'; ctx.fillRect(sx+2,sy+2,tsize-4,tsize-4);
+  ctx.fillStyle = p.color; ctx.fillRect(sx+2,sy+2,tsize-4,tsize-4);
   ctx.fillStyle='#fff';
   const d=Math.max(2,Math.floor(tsize/4));
   ctx.fillRect(sx+d+1,sy+d,d,d);
 }
 
-function hpInfo(s){const[c,m]=s.split('/').map(Number);return{cur:c,max:m,f:m>0?c/m:0};}
-function hpCls(f){return f>.5?'high':f>.25?'mid':'low';}
-function typeTag(t){return`<span class="tbadge t-${t}">${t}</span>`;}
-
-function drawStarterSelect() {
-  ctx.fillStyle='#0a0a12'; ctx.fillRect(0,0,CW,CH);
-  ctx.fillStyle='#ffcc00'; ctx.font='bold 14px Courier New'; ctx.textAlign='center';
-  ctx.fillText("PROF. OAK'S LABORATORY", CW/2, 40);
-  ctx.fillStyle='#888'; ctx.font='11px Courier New';
-  ctx.fillText('Choose your starter POKéMON', CW/2, 62);
+function drawStarterSelect(p) {
+  const { ctx, cv } = p;
+  ctx.fillStyle='#0a0a12'; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.fillStyle='#ffcc00'; ctx.font='bold 13px Courier New'; ctx.textAlign='center';
+  ctx.fillText("PROF. OAK'S LAB", cv.width/2, cv.height/2 - 14);
+  ctx.fillStyle='#888'; ctx.font='10px Courier New';
+  ctx.fillText('choosing a starter…', cv.width/2, cv.height/2 + 8);
   ctx.textAlign='left';
 }
 
-function drawBattle(state) {
-  const b=state.battle;
+function drawBattle(p) {
+  const { ctx, cv, state } = p;
+  const CW = cv.width, CH = cv.height;
+  const b = state.battle;
   ctx.fillStyle='#1a1a2e'; ctx.fillRect(0,0,CW,CH);
   ctx.fillStyle='#222240';
-  ctx.beginPath(); ctx.ellipse(260,72,60,14,0,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(80,170,50,12,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(CW*0.72,CH*0.25,54,13,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(CW*0.22,CH*0.59,45,11,0,0,Math.PI*2); ctx.fill();
 
   const ef=hpInfo(b.enemy.hp), af=hpInfo(b.your_active.hp);
   ctx.fillStyle=ef.f>0?'#c04040':'#555';
-  ctx.beginPath(); ctx.arc(260,44,28,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#ff8888'; ctx.beginPath(); ctx.arc(252,36,9,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(CW*0.72,CH*0.15,25,0,Math.PI*2); ctx.fill();
   ctx.fillStyle=af.f>0?'#4040c0':'#555';
-  ctx.beginPath(); ctx.arc(80,142,24,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#8888ff'; ctx.beginPath(); ctx.arc(72,134,7,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(CW*0.22,CH*0.49,21,0,Math.PI*2); ctx.fill();
 
-  ctx.font='10px Courier New';
-  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(10,10,160,46);
-  ctx.strokeStyle='#666'; ctx.strokeRect(10,10,160,46);
-  ctx.fillStyle='#fff'; ctx.fillText(`${b.enemy.name}  Lv.${b.enemy.level}`,16,24);
-  ctx.fillStyle='#333'; ctx.fillRect(16,30,140,8);
+  ctx.font='9px Courier New';
+  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(8,8,150,42);
+  ctx.strokeStyle='#666'; ctx.strokeRect(8,8,150,42);
+  ctx.fillStyle='#fff'; ctx.fillText(`${b.enemy.name} Lv.${b.enemy.level}`,14,21);
+  ctx.fillStyle='#333'; ctx.fillRect(14,26,130,7);
   ctx.fillStyle=ef.f>.5?'#44dd44':ef.f>.25?'#ffcc00':'#dd2222';
-  ctx.fillRect(16,30,Math.round(140*ef.f),8);
-  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.enemy.hp}`,16,52);
+  ctx.fillRect(14,26,Math.round(130*ef.f),7);
+  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.enemy.hp}`,14,45);
 
-  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(190,188,162,60);
-  ctx.strokeStyle='#666'; ctx.strokeRect(190,188,162,60);
-  ctx.fillStyle='#fff'; ctx.fillText(`${b.your_active.name}  Lv.${b.your_active.level}`,196,202);
-  ctx.fillStyle='#333'; ctx.fillRect(196,208,142,8);
+  const byy = CH-56;
+  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(CW-160,byy,152,48);
+  ctx.strokeStyle='#666'; ctx.strokeRect(CW-160,byy,152,48);
+  ctx.fillStyle='#fff'; ctx.fillText(`${b.your_active.name} Lv.${b.your_active.level}`,CW-154,byy+13);
+  ctx.fillStyle='#333'; ctx.fillRect(CW-154,byy+18,132,7);
   ctx.fillStyle=af.f>.5?'#44dd44':af.f>.25?'#ffcc00':'#dd2222';
-  ctx.fillRect(196,208,Math.round(142*af.f),8);
-  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.your_active.hp}`,196,224);
-  const mvs=b.your_active.moves||[];
-  ctx.fillText(mvs.slice(0,2).map((m,i)=>`${i}:${m.name||m}`).join('  '),196,236);
-  if(mvs.length>2) ctx.fillText(mvs.slice(2).map((m,i)=>`${i+2}:${m.name||m}`).join('  '),196,246);
-  ctx.fillStyle='#ffcc00'; ctx.font='bold 16px Courier New'; ctx.fillText('VS',167,112);
-  // Trainer label bar
+  ctx.fillRect(CW-154,byy+18,Math.round(132*af.f),7);
+  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.your_active.hp}`,CW-154,byy+38);
+  ctx.fillStyle='#ffcc00'; ctx.font='bold 14px Courier New'; ctx.fillText('VS',CW*0.45,CH*0.4);
   if (b.is_trainer && b.trainer_name) {
-    ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(0,268,CW,20);
-    ctx.fillStyle='#ffcc00'; ctx.font='bold 10px Courier New'; ctx.textAlign='center';
-    ctx.fillText(`TRAINER — ${b.trainer_name}  (${(b.trainer_remaining||0)+1} POKéMON left)`, CW/2, 281);
+    ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(0,CH-18,CW,18);
+    ctx.fillStyle='#ffcc00'; ctx.font='bold 9px Courier New'; ctx.textAlign='center';
+    ctx.fillText(`TRAINER — ${b.trainer_name} (${(b.trainer_remaining||0)+1} left)`, CW/2, CH-6);
     ctx.textAlign='left';
   }
 }
 
-function render(state) {
-  ctx.clearRect(0,0,CW,CH);
-  if (state.screen==='starter_select') drawStarterSelect();
-  else if (state.screen==='battle'&&state.battle) drawBattle(state);
-  else if (state.screen==='gameover') {
-    ctx.fillStyle='#000'; ctx.fillRect(0,0,CW,CH);
-    ctx.fillStyle='#f33'; ctx.font='bold 28px Courier New'; ctx.textAlign='center';
-    ctx.fillText('GAME OVER',CW/2,CH/2); ctx.textAlign='left';
-  } else drawOverworld(state);
+function renderCell(n) {
+  const p = players[n];
+  p.color = PCOLORS[n];
+  const state = p.state;
+  const cell = document.getElementById(`cell-${n}`);
+  if (!state) return;
+
+  const idle = state.turn === 0 && !(state.player?.party||[]).length;
+  cell.classList.toggle('idle', idle);
+
+  document.getElementById(`area-${n}`).textContent = (state.area?.name||'—').toUpperCase();
+  document.getElementById(`turn-${n}`).textContent = `T${state.turn}`;
+
+  const { ctx, cv } = p;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if (idle) {
+    ctx.fillStyle='#0a0a0a'; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.fillStyle='#444'; ctx.font='bold 15px Courier New'; ctx.textAlign='center';
+    ctx.fillText('WAITING FOR', cv.width/2, cv.height/2 - 10);
+    ctx.fillText('CHALLENGER…', cv.width/2, cv.height/2 + 12);
+    ctx.textAlign='left';
+  }
+  else if (state.screen==='starter_select') drawStarterSelect(p);
+  else if (state.screen==='battle'&&state.battle) drawBattle(p);
+  else drawOverworld(p);
+
+  // HUD: lead mon HP + badges
+  const hud = document.getElementById(`hud-${n}`);
+  const lead = (state.player?.party||[])[0];
+  if (lead) {
+    const hp = hpInfo(lead.hp);
+    hud.innerHTML = `
+      <span class="pmon">${lead.name} L${lead.level}</span>
+      <div class="hp-bar"><div class="hp-fill ${hpCls(hp.f)}" style="width:${Math.round(hp.f*100)}%"></div></div>
+      <span class="pbadges">${'🏅'.repeat(state.player?.badges||0) || ''}</span>
+      <span style="color:#666">×${(state.player?.party||[]).length}</span>`;
+  } else hud.innerHTML = `<span style="color:#555">no party</span>`;
+
+  document.getElementById(`msg-${n}`).textContent = state.message || '';
+  if (n === selected) updateDrawer();
 }
 
-// ── Starter select ────────────────────────────────────────────────────────────
-const starterOverlay = document.getElementById('starter-overlay');
+// ── Detail drawer ─────────────────────────────────────────────────────────────
+const ITEM_LABELS = {
+  pokeball: '🔴 Poké Ball', great_ball: '🔵 Great Ball', potion: '💊 Potion',
+};
 
-function showStarterSelect(show) {
-  if (show) starterOverlay.classList.add('active');
-  else starterOverlay.classList.remove('active');
-}
-
-async function chooseStarter(species) {
+async function chooseStarter(n, species) {
   try {
-    const r = await fetch('/action', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ type:'choose_starter', species }) });
-    const data = await r.json();
-    // state update will come via WebSocket
+    await fetch('/action', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ player:n, type:'choose_starter', species }) });
   } catch(e) { console.error(e); }
 }
 
-// ── Inventory ─────────────────────────────────────────────────────────────────
-const ITEM_LABELS = {
-  pokeball: '🔴 Poké Ball', great_ball: '🔵 Great Ball', ultra_ball: '⚫ Ultra Ball',
-  potion: '💊 Potion', super_potion: '💊 Super Potion', antidote: '🧪 Antidote',
-  escape_rope: '🪢 Escape Rope', repel: '🌀 Repel',
-};
-
-function updateInventory(bag, money) {
-  const el = document.getElementById('inventory');
-  const entries = Object.entries(bag||{}).filter(([,v])=>v>0);
-  if (!entries.length) { el.innerHTML='<div class="inv-empty">Empty</div>'; }
-  else {
-    el.innerHTML = `<div class="inv-grid">${entries.map(([k,v])=>`
-      <div class="inv-item">
-        <span class="ii">${ITEM_LABELS[k]||k}</span>
-        <span class="iq">×${v}</span>
-      </div>`).join('')}</div>`;
-  }
-  document.getElementById('money').textContent = `₽ ${(money||0).toLocaleString()}`;
-}
-
-// ── Bulbapedia links ──────────────────────────────────────────────────────────
-const BPEDIA = 'https://bulbapedia.bulbagarden.net/wiki/';
-const AREA_LINKS = {
-  pallet_town:     { name:'Pallet Town',      slug:'Pallet_Town',         icon:'🏘️' },
-  route_1:         { name:'Route 1',          slug:'Kanto_Route_1',       icon:'🌿' },
-  viridian_city:   { name:'Viridian City',    slug:'Viridian_City',       icon:'🌳' },
-  viridian_forest: { name:'Viridian Forest',  slug:'Viridian_Forest',     icon:'🌲' },
-  pewter_city:     { name:'Pewter City',      slug:'Pewter_City',         icon:'⛰️' },
-};
-
-function bpLink(icon, label, name, url) {
-  return `<a class="blink" href="${url}" target="_blank" rel="noopener">
-    <span class="bl-icon">${icon}</span>
-    <span class="bl-text">
-      <span class="bl-label">${label}</span>
-      <span class="bl-name">${name}</span>
-    </span>
-  </a>`;
-}
-function pokemonSlug(name) { return name.charAt(0).toUpperCase()+name.slice(1).toLowerCase()+'_(Pok%C3%A9mon)'; }
-function moveSlug(name) { return name.split(' ').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join('_')+'_(move)'; }
-
-function updateBulbapedia(state) {
-  const links = [];
-  if (state.screen === 'starter_select') {
-    links.push(bpLink('🏘️','Location','Pallet Town', BPEDIA+'Pallet_Town'));
-    links.push(bpLink('🧪','Character','Prof. Oak', BPEDIA+'Professor_Oak'));
-    links.push(bpLink('🌿','Starter','Bulbasaur', BPEDIA+'Bulbasaur_(Pok%C3%A9mon)'));
-    links.push(bpLink('🔥','Starter','Charmander', BPEDIA+'Charmander_(Pok%C3%A9mon)'));
-    links.push(bpLink('💧','Starter','Squirtle', BPEDIA+'Squirtle_(Pok%C3%A9mon)'));
-  } else {
-    const areaInfo = AREA_LINKS[state.area?.id];
-    if (areaInfo) links.push(bpLink(areaInfo.icon,'Current Area', areaInfo.name, BPEDIA+areaInfo.slug));
-
-    if (state.screen === 'battle' && state.battle) {
-      const b = state.battle;
-      links.push(bpLink('⚔️','Wild Pokémon', b.enemy.name, BPEDIA+pokemonSlug(b.enemy.species||b.enemy.name)));
-      links.push(bpLink('🔵','Your Pokémon', b.your_active.name, BPEDIA+pokemonSlug(b.your_active.species||b.your_active.name)));
-      for (const mv of (b.your_active.moves||[]).slice(0,2)) {
-        const name = mv.name||mv;
-        links.push(bpLink('💥','Move', name.charAt(0).toUpperCase()+name.slice(1), BPEDIA+moveSlug(name)));
-      }
-    } else {
-      for (const p of (state.player?.party||[]).slice(0,2)) {
-        links.push(bpLink('🟡','Party', p.name, BPEDIA+pokemonSlug(p.species||p.name)));
-      }
-      if (state.area?.id === 'route_1') {
-        links.push(bpLink('🌾','Wild Pokémon','Pidgey', BPEDIA+'Pidgey_(Pok%C3%A9mon)'));
-        links.push(bpLink('🌾','Wild Pokémon','Rattata', BPEDIA+'Rattata_(Pok%C3%A9mon)'));
-      }
-      if (state.area?.id === 'viridian_city') {
-        links.push(bpLink('🏥','Location','Pokémon Center', BPEDIA+'Pok%C3%A9mon_Center'));
-      }
-      if (state.area?.id === 'viridian_forest') {
-        links.push(bpLink('🐛','Wild Pokémon','Caterpie', BPEDIA+'Caterpie_(Pok%C3%A9mon)'));
-        links.push(bpLink('🐝','Wild Pokémon','Weedle', BPEDIA+'Weedle_(Pok%C3%A9mon)'));
-      }
-      if (state.area?.id === 'pewter_city') {
-        links.push(bpLink('🏋️','Gym Leader','Brock', BPEDIA+'Brock'));
-        links.push(bpLink('🥊','Gym','Pewter City Gym', BPEDIA+'Pewter_Gym'));
-      }
-    }
-  }
-  const el = document.getElementById('blinks');
-  el.innerHTML = links.length ? links.join('') : '<div class="blink-none">No links for current scene</div>';
-}
-
-// ── UI update ─────────────────────────────────────────────────────────────────
-function updateUI(state) {
-  document.getElementById('msg').textContent = state.message || '...';
-  document.getElementById('turn').textContent = `Turn ${state.turn}${state.area?.name ? ' — '+state.area.name : ''}`;
-  document.getElementById('area-label').textContent = (state.area?.name||'OVERWORLD').toUpperCase();
-
-  showStarterSelect(state.screen === 'starter_select');
+function updateDrawer() {
+  const p = players[selected];
+  const state = p.state;
+  document.getElementById('d-tag').textContent = `P${selected}`;
+  document.getElementById('d-tag').style.setProperty('--pc', PCOLORS[selected]);
+  document.getElementById('d-title').textContent =
+    `PLAYER ${selected}${state?.area?.name ? ' — ' + state.area.name.toUpperCase() : ''}`;
+  if (!state) return;
 
   const party = state.player?.party || [];
-  document.getElementById('party').innerHTML = party.length ? party.map(p => {
-    const hp=hpInfo(p.hp);
+  document.getElementById('d-party').innerHTML = party.length ? party.map(m => {
+    const hp = hpInfo(m.hp);
     return `<div class="pcard">
-      <div class="pname">${p.name} <small>Lv.${p.level}</small>${(p.type||[]).map(typeTag).join('')}</div>
-      <div class="hp-wrap">
-        <div class="hp-label"><span>HP</span><span>${p.hp}</span></div>
-        <div class="hp-bar"><div class="hp-fill ${hpCls(hp.f)}" style="width:${Math.round(hp.f*100)}%"></div></div>
-      </div>
-      <div class="moves">${(p.moves||[]).map(m=>`<span class="mtag">${m}</span>`).join('')}</div>
+      <div class="pname">${m.name} <small>Lv.${m.level}</small>${(m.type||[]).map(typeTag).join('')}</div>
+      <div class="hp-label"><span>HP</span><span>${m.hp}</span></div>
+      <div class="hp-bar2"><div class="hp-fill ${hpCls(hp.f)}" style="width:${Math.round(hp.f*100)}%"></div></div>
+      <div class="moves">${(m.moves||[]).map(mv=>`<span class="mtag">${mv}</span>`).join('')}</div>
     </div>`;
-  }).join('') : '<div style="color:#555;font-size:.7rem">No POKéMON yet — choose your starter!</div>';
+  }).join('') : '<div style="color:#555;font-size:.68rem">No POKéMON yet</div>';
 
-  updateInventory(state.player?.bag, state.player?.money);
+  const bag = Object.entries(state.player?.bag||{}).filter(([,v])=>v>0);
+  document.getElementById('d-bag').innerHTML = bag.length
+    ? bag.map(([k,v])=>`<div class="inv-item"><span>${ITEM_LABELS[k]||k}</span><span>×${v}</span></div>`).join('')
+    : '<div style="color:#555;font-size:.68rem">Empty</div>';
+  document.getElementById('d-money').textContent = `₽ ${(state.player?.money||0).toLocaleString()}`;
 
-  const logEl = document.getElementById('log');
-  const wrap = document.getElementById('log-wrap');
-  const wasAtBottom = wrap.scrollTop >= wrap.scrollHeight - wrap.clientHeight - 10;
-  logEl.innerHTML = (state.log||[]).map(l=>`<div class="log-e">${l}</div>`).join('');
-  if (wasAtBottom) wrap.scrollTop = wrap.scrollHeight;
+  document.getElementById('d-log').innerHTML =
+    (state.log||[]).map(l=>`<div class="log-e">${l}</div>`).join('');
 
-  updateBulbapedia(state);
-  render(state);
+  // Pass-the-controller: let a spectator pick a starter for an idle slot.
+  document.getElementById('d-starter').innerHTML = state.screen === 'starter_select' ? `
+    <h2 style="margin-top:8px">CHOOSE STARTER (P${selected})</h2>
+    <div class="starter-row">
+      <button class="sbtn" onclick="chooseStarter(${selected},'bulbasaur')">🌿 BULBA</button>
+      <button class="sbtn" onclick="chooseStarter(${selected},'charmander')">🔥 CHAR</button>
+      <button class="sbtn" onclick="chooseStarter(${selected},'squirtle')">💧 SQUIRT</button>
+    </div>` : '';
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -495,9 +400,8 @@ function addChatMsg(msg) {
   const isSystem = msg.user === '—';
   const div = document.createElement('div');
   div.className = 'chat-msg' + (isSystem ? ' system' : '');
-  if (isSystem) {
-    div.innerHTML = `<span class="cs">${msg.text}</span>`;
-  } else {
+  if (isSystem) div.innerHTML = `<span class="cs">${msg.text}</span>`;
+  else {
     const isMine = msg.user === myName;
     div.innerHTML = `<span class="cu">${isMine ? 'You' : msg.user}</span> <span class="ct">${msg.text}</span>`;
   }
@@ -512,21 +416,27 @@ function sendChat() {
   ws.send(JSON.stringify({ type:'chat', text }));
   inp.value = '';
 }
-
 document.getElementById('chat-send').addEventListener('click', sendChat);
 document.getElementById('chat-in').addEventListener('keydown', e => { if(e.key==='Enter') sendChat(); });
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
+function applySnapshot(n, snap) {
+  if (!snap) return;
+  if (snap.map) players[n].map = snap.map;
+  if (snap.state) players[n].state = snap.state;
+  renderCell(n);
+}
+
 function connect() {
-  ws = new WebSocket(`ws://${location.host}`);
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
 
   ws.onmessage = evt => {
     let msg;
     try { msg = JSON.parse(evt.data); } catch { return; }
 
     if (msg.event === 'connected') {
-      if (msg.map) mapData = msg.map;
-      if (msg.state) { lastState = msg.state; updateUI(msg.state); }
+      if (msg.players) for (const [n, snap] of Object.entries(msg.players)) applySnapshot(+n, snap);
       if (msg.myName) {
         myName = msg.myName;
         document.getElementById('my-name').textContent = `You are: ${myName}`;
@@ -534,22 +444,20 @@ function connect() {
       if (msg.chatHistory) msg.chatHistory.forEach(addChatMsg);
     }
     if (msg.event === 'state_update' || msg.event === 'reset') {
-      if (msg.map) mapData = msg.map;
-      if (msg.state) { lastState = msg.state; updateUI(msg.state); }
+      const n = msg.player || 1;
+      applySnapshot(n, { state: msg.state, map: msg.map });
     }
     if (msg.event === 'chat') addChatMsg(msg.msg);
   };
 
-  ws.onclose = () => {
-    document.getElementById('msg').textContent = '⚠ Reconnecting...';
-    setTimeout(connect, 2000);
-  };
+  ws.onclose = () => setTimeout(connect, 2000);
   ws.onerror = () => ws.close();
 }
 
 // Boot
-Promise.all([fetch('/state').then(r=>r.json()), fetch('/map').then(r=>r.json())])
-  .then(([s, m]) => { mapData=m; lastState=s; updateUI(s); }).catch(()=>{});
+fetch('/players').then(r=>r.json())
+  .then(all => { for (const [n, snap] of Object.entries(all)) applySnapshot(+n, snap); })
+  .catch(()=>{});
 connect();
 </script>
 </body>
