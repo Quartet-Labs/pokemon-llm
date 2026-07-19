@@ -15,6 +15,7 @@ app.use(express.static('public'));
 
 // ── Persistent action log ───────────────────────────────────────────────────
 const LOG_FILE = process.env.LOG_FILE || '/tmp/pokemon-action-log.jsonl';
+const STATE_FILE = process.env.STATE_FILE || '/tmp/pokemon-state.json';
 const actionLog = [];  // in-memory copy for /logs endpoint
 
 // Replay existing log on startup
@@ -36,6 +37,27 @@ function appendLog(entry) {
 
 // ── Game state ──────────────────────────────────────────────────────────────
 let state = newGame();
+
+// Load persisted state on boot (#24)
+// Survives Railway redeploys as long as the volume persists.
+if (fs.existsSync(STATE_FILE)) {
+  try {
+    state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    console.log(`💾 Loaded game state from ${STATE_FILE} (turn ${state.turn})`);
+  } catch (e) {
+    console.warn(`⚠ Failed to load state: ${e.message}`);
+  }
+}
+
+function saveState() {
+  try { fs.writeFileSync(STATE_FILE, JSON.stringify(state)); } catch (e) {
+    console.warn(`⚠ Failed to save state: ${e.message}`);
+  }
+}
+
+// ── Halt flag (#36) ─────────────────────────────────────────────────────────
+let haltFlag = false;
+
 const chatHistory = [];   // last 100 messages
 
 // ── Anon username generator ─────────────────────────────────────────────────
@@ -78,21 +100,25 @@ function broadcast(payload) {
 app.get('/state', (req, res) => res.json(getView(state)));
 
 app.post('/action', (req, res) => {
+  // Halt check (#36) — any compliant driver stops within one turn
+  if (haltFlag) {
+    return res.json({ halted: true, message: 'Run halted by spectator — stop playing.' });
+  }
   const action = req.body;
   if (!action || !action.type) return res.status(400).json({ error: 'action.type is required' });
   try {
     state = processAction(state, action);
     const view = getView(state);
     broadcast({ event: 'state_update', state: view, map: getMapSnapshot(), action });
-    // Log every action with timestamp + resulting state summary
     appendLog({
       ts: new Date().toISOString(),
       action,
-      area: view.areaId,
-      phase: view.phase,
-      log: view.log ? view.log.slice(-3) : [],  // last 3 log lines
-      party: (view.party || []).map(p => ({ name: p.name, hp: p.hp, maxHp: p.maxHp, level: p.level })),
+      area: view.area?.id,
+      screen: view.screen,
+      log: view.log ? view.log.slice(-3) : [],
+      party: (view.player?.party || []).map(p => ({ name: p.name, hp: p.hp, level: p.level })),
     });
+    saveState();  // persist after every action (#24)
     res.json(view);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -100,11 +126,27 @@ app.post('/action', (req, res) => {
 });
 
 app.post('/reset', (req, res) => {
-  appendLog({ ts: new Date().toISOString(), action: { type: 'reset' }, area: null, phase: null, log: ['— game reset —'], party: [] });
+  haltFlag = false;  // clear halt on reset (#36)
+  appendLog({ ts: new Date().toISOString(), action: { type: 'reset' }, area: null, screen: null, log: ['— game reset —'], party: [] });
   state = newGame();
+  saveState();  // persist reset state (#24)
   const view = getView(state);
   broadcast({ event: 'reset', state: view, map: getMapSnapshot() });
   res.json(view);
+});
+
+// ── Halt endpoint (#36) ─────────────────────────────────────────────────────
+app.get('/halt', (req, res) => res.json({ halted: haltFlag }));
+
+app.post('/halt', (req, res) => {
+  if (req.body?.clear) {
+    haltFlag = false;
+    broadcast({ event: 'halted', halted: false });
+    return res.json({ halted: false });
+  }
+  haltFlag = true;
+  broadcast({ event: 'halted', halted: true });
+  res.json({ halted: true, message: 'Run halted by spectator — stop playing.' });
 });
 
 app.get('/logs', (req, res) => {
@@ -135,8 +177,12 @@ app.get('/api-docs', (req, res) => res.json({
   description: 'Pokémon LLM — REST API reference',
   endpoints: {
     'GET /state': 'Get current game state',
-    'POST /action': 'Submit one action',
-    'POST /reset': 'Reset the game',
+    'POST /action': 'Submit one action. Returns {halted:true,message} if run is halted — driver must stop.',
+    'POST /reset': 'Reset the game (also clears halt flag)',
+    'GET /halt': 'Get current halt status: {halted: bool}',
+    'POST /halt': 'Halt the run — body {} to halt, {clear:true} to resume',
+    'GET /logs': 'Action log (?limit=N, max 5000)',
+    'GET /map': 'Current area tile map',
   },
   action_types: {
     choose_starter: { species: 'bulbasaur|charmander|squirtle', note: 'Required first action — no party until this is called' },
@@ -153,13 +199,14 @@ app.get('/api-docs', (req, res) => res.json({
 wss.on('connection', (ws) => {
   ws._name = anonName();
 
-  // Send current game state + chat history
+  // Send current game state + chat history + halt status
   ws.send(JSON.stringify({
     event: 'connected',
     state: getView(state),
     map: getMapSnapshot(),
     myName: ws._name,
     chatHistory,
+    halted: haltFlag,
   }));
 
   // Announce join
