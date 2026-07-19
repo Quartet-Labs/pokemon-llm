@@ -70,7 +70,7 @@ const PALLET_TOWN = {
   npcs: [
     { id:'oak_intro', x:8, y:9, name:'Prof. Oak', dir:'south',
       dialogue:["OAK: This world is inhabited by creatures called POKéMON! I study them as a profession. You'll encounter them in the wild. Choose your POKéMON wisely before venturing out."] },
-    { id:'girl_pallet', x:9, y:12, name:'Girl', dir:'east',
+    { id:'girl_pallet', x:9, y:12, name:'Girl', dir:'east', wander: true,
       dialogue:["I wonder when PROF. OAK will be back in his lab..."] },
   ],
   signs: [
@@ -96,6 +96,7 @@ const ROUTE_1 = {
   name: 'Route 1',
   width: 20,
   height: 36,
+  encounterRate: 10,
   tiles: buildRoute1(),
   objects: [],
   npcs: [
@@ -113,6 +114,9 @@ const ROUTE_1 = {
       { species:'rattata', level:[2,4], rate:45 },
     ],
   },
+  items: [
+    { id:'r1_potion', x:9, y:10, item:'potion', qty:1 },
+  ],
   connections: {
     north: { area:'viridian_city', entryX:9, entryY:27 },
     south: { area:'pallet_town',   entryX:7, entryY:14 },
@@ -126,12 +130,13 @@ const VIRIDIAN_CITY = {
   name: 'Viridian City',
   width: 30,
   height: 30,
+  encounterRate: 0,
   tiles: buildViridianCity(),
   objects: [],
   npcs: [
-    { id:'old_man', x:5, y:5, name:'Old Man', dir:'south',
+    { id:'old_man', x:5, y:5, name:'Old Man', dir:'south', spin: true,
       dialogue:["Ahhh, finally had my morning coffee! I feel like a new man! Heading to PEWTER CITY? Take the north path through VIRIDIAN FOREST — but watch out for BUG POKéMON!"] },
-    { id:'girl_viridian', x:11, y:7, name:'Girl', dir:'east',
+    { id:'girl_viridian', x:11, y:7, name:'Girl', dir:'east', wander: true,
       dialogue:["That old man sure loves his coffee... He's always dozing off there."] },
     { id:'gym_sign_npc', x:17, y:4, name:'Youngster', dir:'south',
       dialogue:["The VIRIDIAN GYM is closed. The leader has been away for quite some time..."] },
@@ -146,14 +151,15 @@ const VIRIDIAN_CITY = {
     { x:9,  y:2,  text:"VIRIDIAN FOREST →\nPEWTER CITY beyond!" },
   ],
   warps: [
-    { x:11, y:15, dest:'pokemon_center', destX:5,  destY:8,  areaName:'Pokémon Center' },
-    { x:12, y:15, dest:'pokemon_center', destX:6,  destY:8,  areaName:'Pokémon Center' },
-    { x:17, y:11, dest:'poke_mart',      destX:4,  destY:8,  areaName:'Poké Mart'      },
-    { x:18, y:11, dest:'poke_mart',      destX:5,  destY:8,  areaName:'Poké Mart'      },
+    { x:11, y:15, dest:'pokemon_center', destX:5,  destY:6,  areaName:'Pokémon Center' },
+    { x:12, y:15, dest:'pokemon_center', destX:6,  destY:6,  areaName:'Pokémon Center' },
+    { x:17, y:11, dest:'poke_mart',      destX:3,  destY:5,  areaName:'Poké Mart'      },
+    { x:18, y:11, dest:'poke_mart',      destX:4,  destY:5,  areaName:'Poké Mart'      },
   ],
   connections: {
-    south: { area:'route_1',       entryX:7, entryY:0  },
-    north: { area:'viridian_forest', entryX:9, entryY:30 },
+    south: { area:'route_1',         entryX:7,  entryY:0  },
+    north: { area:'viridian_forest', entryX:9,  entryY:30 },
+    west:  { area:'route_22',        entryX:19, entryY:7  },
   },
 };
 
@@ -163,14 +169,18 @@ const VIRIDIAN_FOREST = {
   name: 'Viridian Forest',
   width: 20,
   height: 32,
+  encounterRate: 25,
   tiles: buildViridianForest(),
-  objects: [],
+  objects: [
+    // Cut tree blocking a shortcut through the forest
+    { x:5, y:28, tile:T.TREE_CUT },
+  ],
   // Source: Bulbapedia — Viridian Forest trainers (Gen I Red/Blue)
   // Bug Catcher 1: Weedle Lv6, Caterpie Lv6 — reward ₽60
   // Bug Catcher 2: Weedle Lv7, Kakuna Lv7, Weedle Lv7 — reward ₽70
   // Bug Catcher 3: Weedle Lv9 — reward ₽90
   npcs: [
-    { id:'bug_catcher_1', x:7, y:22, name:'BUG CATCHER', dir:'south',
+    { id:'bug_catcher_1', x:7, y:22, name:'BUG CATCHER', dir:'south', sightRange: 4,
       dialogue:["BUG CATCHER: I like bugs! Do you? Wanna battle?"],
       trainerBattle: {
         trainerName: 'BUG CATCHER',
@@ -183,7 +193,7 @@ const VIRIDIAN_FOREST = {
       },
       dialogueAfter: ["BUG CATCHER: Aw, I lost! Your POKéMON are amazing!"],
     },
-    { id:'bug_catcher_2', x:13, y:11, name:'BUG CATCHER', dir:'west',
+    { id:'bug_catcher_2', x:13, y:11, name:'BUG CATCHER', dir:'west', sightRange: 4,
       dialogue:["BUG CATCHER: Bugs are the greatest! My three POKéMON will prove it!"],
       trainerBattle: {
         trainerName: 'BUG CATCHER',
@@ -197,7 +207,7 @@ const VIRIDIAN_FOREST = {
       },
       dialogueAfter: ["BUG CATCHER: Your POKéMON are way better than mine!"],
     },
-    { id:'bug_catcher_3', x:9, y:8, name:'BUG CATCHER', dir:'south',
+    { id:'bug_catcher_3', x:9, y:8, name:'BUG CATCHER', dir:'south', sightRange: 4,
       dialogue:["BUG CATCHER: My Weedle is the toughest in the forest! Prepare yourself!"],
       trainerBattle: {
         trainerName: 'BUG CATCHER',
@@ -214,9 +224,14 @@ const VIRIDIAN_FOREST = {
     { x:9,  y:31, text:"Weaken POKéMON before attempting capture!\nWhen healthy, they may escape!" },
     { x:9,  y:1,  text:"ROUTE 2\nPEWTER CITY beyond." },
   ],
+  items: [
+    { id:'vforest_antidote', x:5,  y:15, item:'antidote', qty:1 },
+    { id:'vforest_pokeball', x:11, y:20, item:'poke_ball', qty:1 },
+    { id:'vforest_tm45',     x:3,  y:5,  item:'tm45',      qty:1 },
+  ],
   connections: {
-    south: { area:'viridian_city',   entryX:9, entryY:1  },
-    north: { area:'pewter_city',      entryX:10, entryY:22 },
+    south: { area:'viridian_city', entryX:9,  entryY:1  },
+    north: { area:'pewter_city',   entryX:10, entryY:22 },
   },
   warps: [],
 };
@@ -227,56 +242,11 @@ const PEWTER_CITY = {
   name: 'Pewter City',
   width: 24,
   height: 24,
+  encounterRate: 0,
   tiles: buildPewterCity(),
   objects: [],
-  // Source: Bulbapedia — Pewter Gym (Gen I Red/Blue)
-  // Jr. Trainer♂: Diglett Lv11, Sandshrew Lv11
-  // BROCK: Geodude Lv12, Onix Lv14
-  // Brock dialogue verbatim from Bulbapedia /wiki/Brock/Quotes
+  // Source: Bulbapedia — Pewter City (Gen I Red/Blue)
   npcs: [
-    { id:'jr_trainer_pewter', x:10, y:6, name:'JR. TRAINER♂', dir:'south',
-      dialogue:["JR. TRAINER♂: You need to get past me to face BROCK! Go!"],
-      trainerBattle: {
-        trainerName: 'JR. TRAINER♂',
-        party: [
-          { species:'diglett',   level:11 },
-          { species:'sandshrew', level:11 },
-        ],
-        reward: 231,
-        rewardFlag: 'beat_jr_trainer_pewter',
-      },
-      dialogueAfter: ["JR. TRAINER♂: I lost! Go on... BROCK is waiting for you."],
-    },
-    { id:'brock', x:12, y:5, name:'BROCK', dir:'south',
-      // Verbatim pre-battle dialogue from Gen I Red/Blue (Bulbapedia)
-      dialogue:[
-        "I'm BROCK! I'm PEWTER's GYM LEADER!",
-        "I believe in rock hard defense and determination!",
-        "That's why my POKéMON are all the ROCK type!",
-        "Do you still want to challenge me?",
-        "Fine then! Show me your best!",
-      ],
-      trainerBattle: {
-        trainerName: 'BROCK',
-        party: [
-          { species:'geodude', level:12 },
-          { species:'onix',    level:14 },
-        ],
-        reward: 1386,
-        rewardFlag: 'beat_brock',
-        badge: 'Boulder Badge',
-      },
-      // Verbatim post-battle dialogue from Gen I Red/Blue (Bulbapedia)
-      dialogueAfter:[
-        "I took you for granted.",
-        "As proof of your victory, here's the BOULDERBADGE!",
-        "That's an official POKéMON LEAGUE BADGE!",
-        "Its bearer's POKéMON become more powerful!",
-        "The technique FLASH can now be used any time!",
-        "Wait! Take this with you! TM34 contains BIDE.",
-        "There are all kinds of trainers in the world! Go to the GYM in CERULEAN and test your abilities!",
-      ],
-    },
     { id:'gym_guide_pewter', x:7, y:8, name:'Gym Guide', dir:'east',
       dialogue:["GYM GUIDE: BROCK uses ROCK-type POKéMON! WATER or GRASS moves are very effective! His first partner is GEODUDE; his ace is ONIX at level 14."] },
     { id:'youngster_pewter', x:16, y:14, name:'Youngster', dir:'south',
@@ -287,6 +257,8 @@ const PEWTER_CITY = {
       dialogue:["I'm FLINT! I sell rocks for a living... Business isn't going so well. Have you beaten BROCK yet? He's my son, you know."] },
     { id:'pewter_mart_clerk', x:6, y:13, name:'POKé MART Clerk', dir:'south',
       dialogue:["Welcome to the PEWTER CITY POKé MART! We carry Poké Balls (₽200), Great Balls (₽600), Potions (₽300), Super Potions (₽700), and Antidotes (₽100). Use mart_view for the catalog, mart_buy to purchase!"] },
+    { id:'gym_sign_npc', x:11, y:4, name:'Youngster at Gym', dir:'south',
+      dialogue:["BROCK is the GYM LEADER here! He uses ROCK-type POKéMON. Enter through those doors!"] },
   ],
   signs: [
     { x:10, y:22, text:"PEWTER CITY\nA Stone Gray City." },
@@ -295,13 +267,18 @@ const PEWTER_CITY = {
     { x:5,  y:13, text:"POKé MART\nPEWTER CITY BRANCH" },
     { x:11, y:4,  text:"PEWTER GYM\nGym Leader: BROCK\nSpecialty: ROCK-type\nBOULDER BADGE awarded here." },
   ],
+  items: [
+    { id:'pewter_potion', x:5, y:18, item:'potion', qty:1 },
+  ],
   warps: [
-    { x:4,  y:9,  dest:'pokemon_center', destX:5, destY:8, areaName:'Pokémon Center' },
-    { x:5,  y:9,  dest:'pokemon_center', destX:6, destY:8, areaName:'Pokémon Center' },
-    { x:4,  y:14, dest:'poke_mart',      destX:5, destY:8, areaName:'Poké Mart'      },
-    { x:5,  y:14, dest:'poke_mart',      destX:6, destY:8, areaName:'Poké Mart'      },
-    { x:17, y:9,  dest:'pewter_museum',  destX:3, destY:6, areaName:'Pewter Museum'  },
-    { x:18, y:9,  dest:'pewter_museum',  destX:4, destY:6, areaName:'Pewter Museum'  },
+    { x:4,  y:9,  dest:'pewter_pokecenter', destX:4, destY:6, areaName:'Pokémon Center'   },
+    { x:5,  y:9,  dest:'pewter_pokecenter', destX:5, destY:6, areaName:'Pokémon Center'   },
+    { x:4,  y:14, dest:'pewter_mart',       destX:3, destY:5, areaName:'Poké Mart'        },
+    { x:5,  y:14, dest:'pewter_mart',       destX:4, destY:5, areaName:'Poké Mart'        },
+    { x:17, y:9,  dest:'pewter_museum',     destX:5, destY:6, areaName:'Pewter Museum'    },
+    { x:18, y:9,  dest:'pewter_museum',     destX:6, destY:6, areaName:'Pewter Museum'    },
+    { x:10, y:9,  dest:'pewter_gym',        destX:5, destY:8, areaName:'Pewter City Gym'  },
+    { x:11, y:9,  dest:'pewter_gym',        destX:6, destY:8, areaName:'Pewter City Gym'  },
   ],
   connections: {
     south: { area:'viridian_forest', entryX:9, entryY:1 },
@@ -424,13 +401,15 @@ function buildPewterCity() {
       rows[y] = setChar(rows[y], x, y < 9 ? 'B' : (x === 17 || x === 18) ? 'D' : 'B');
 
   // Pewter Gym (cols 9-14, rows 3-9)
-  // Outer walls solid building; interior (cols 10-13, rows 4-8) walkable path
+  // Outer walls solid building; door at (10,9) and (11,9)
   for (let y = 3; y <= 9; y++) {
     for (let x = 9; x <= 14; x++) {
-      if (y === 3 || x === 9 || x === 14) {
+      if (y === 9) {
+        rows[y] = setChar(rows[y], x, (x === 10 || x === 11) ? 'D' : 'B');
+      } else if (y === 3 || x === 9 || x === 14) {
         rows[y] = setChar(rows[y], x, 'B'); // outer walls
       } else {
-        rows[y] = setChar(rows[y], x, 'P'); // walkable interior
+        rows[y] = setChar(rows[y], x, 'P'); // walkable interior columns (unused in overworld)
       }
     }
   }
@@ -513,6 +492,14 @@ function buildViridianCity() {
   rows[28] = setChar(rows[28], 9,  'P');
   rows[28] = setChar(rows[28], 10, 'P');
 
+  // West exit to Route 22 — cols 0, rows 6-8
+  rows[6] = setChar(rows[6], 0, 'P');
+  rows[7] = setChar(rows[7], 0, 'P');
+  rows[8] = setChar(rows[8], 0, 'P');
+  rows[6] = setChar(rows[6], 1, 'P');
+  rows[7] = setChar(rows[7], 1, 'P');
+  rows[8] = setChar(rows[8], 1, 'P');
+
   // Signs
   [8, 11, 17].forEach(x => { rows[10] = setChar(rows[10], x, 'S'); });
   rows[3] = setChar(rows[3], 18, 'S');
@@ -539,6 +526,435 @@ const CHAR_TO_TILE = {
   'O': T.PATH, 'o': T.PATH,
 };
 
+// ── Interior: Player's House ──────────────────────────────────────────────────
+// 8 wide x 6 tall simple interior
+const PLAYERS_HOUSE = {
+  id: 'players_house',
+  name: "Player's House",
+  width: 8,
+  height: 6,
+  tiles: [
+    "WWWWWWWW",   // 0 north wall
+    "WPPPPPPW",   // 1
+    "WPPPPPPW",   // 2
+    "WPPPPPPW",   // 3
+    "WPPPPPPW",   // 4
+    "WWWDDWWW",   // 5 south wall with door at cols 3-4
+  ],
+  objects: [],
+  npcs: [
+    { id:'mom', x:4, y:2, name:'Mom', dir:'south',
+      dialogue:["MOM: Now, don't forget to heal your POKéMON at the POKéMON CENTER before venturing too far!"] },
+  ],
+  items: [
+    { id:'players_house_potion', x:3, y:1, item:'potion', qty:1 },
+  ],
+  signs: [],
+  warps: [
+    { x:3, y:5, dest:'pallet_town', destX:2,  destY:13, areaName:'Pallet Town' },
+    { x:4, y:5, dest:'pallet_town', destX:3,  destY:13, areaName:'Pallet Town' },
+  ],
+};
+
+// ── Interior: Rival's House ───────────────────────────────────────────────────
+const RIVALS_HOUSE = {
+  id: 'rivals_house',
+  name: "Rival's House",
+  width: 8,
+  height: 6,
+  tiles: [
+    "WWWWWWWW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WWWDDWWW",   // door at cols 3-4
+  ],
+  objects: [],
+  npcs: [
+    { id:'gary_sister', x:4, y:2, name:"Gary's Sister", dir:'south',
+      dialogue:["DAISY: Hi! My brother Gary went to get his first POKéMON already. He's always so impatient!"] },
+  ],
+  signs: [],
+  warps: [
+    { x:3, y:5, dest:'pallet_town', destX:12, destY:13, areaName:'Pallet Town' },
+    { x:4, y:5, dest:'pallet_town', destX:13, destY:13, areaName:'Pallet Town' },
+  ],
+};
+
+// ── Interior: Oak's Lab ───────────────────────────────────────────────────────
+// 10 wide x 10 tall
+const OAKS_LAB = {
+  id: 'oaks_lab',
+  name: "Oak's Lab",
+  width: 10,
+  height: 10,
+  tiles: [
+    "WWWWWWWWWW",  // 0 north wall
+    "WPPPPPPPPW",  // 1
+    "WPPPPPPPPW",  // 2
+    "WPPPPPPPPW",  // 3
+    "WPPPPPPPPW",  // 4
+    "WPPPPPPPPW",  // 5
+    "WPPPPPPPPW",  // 6
+    "WPPPPPPPPW",  // 7
+    "WPPPPPPPPW",  // 8
+    "WWWWDDWWWW",  // 9 south wall with exit
+  ],
+  objects: [],
+  npcs: [
+    { id:'oak_lab', x:5, y:3, name:'Prof. Oak', dir:'south',
+      dialogue:["OAK: Ah, welcome! This is my lab. Those 3 Poké Balls on the table each contain a starter POKéMON. Use the starter_select action to choose one!"] },
+    { id:'oak_lab_aide', x:8, y:6, name:"Oak's Aide", dir:'west',
+      dialogue:["OAK'S AIDE: The PROFESSOR is studying POKéMON distribution. Ask him about starting your journey!"] },
+  ],
+  signs: [
+    { x:3, y:4, text:"BULBASAUR — The Seed POKéMON" },
+    { x:5, y:4, text:"CHARMANDER — The Lizard POKéMON" },
+    { x:7, y:4, text:"SQUIRTLE — The Tiny Turtle POKéMON" },
+  ],
+  warps: [
+    { x:4, y:9, dest:'pallet_town', destX:10, destY:8, areaName:'Pallet Town' },
+    { x:5, y:9, dest:'pallet_town', destX:11, destY:8, areaName:'Pallet Town' },
+  ],
+};
+
+// ── Interior: Pokémon Center (Viridian — generic center id) ──────────────────
+// 10 wide x 8 tall
+const POKEMON_CENTER = {
+  id: 'pokemon_center',
+  name: 'Pokémon Center',
+  width: 10,
+  height: 8,
+  tiles: [
+    "WWWWWWWWWW",  // 0
+    "WPPPPPPPPW",  // 1
+    "WPPPPPPPPW",  // 2
+    "WPPPPPPPPW",  // 3
+    "WPPPPPPPPW",  // 4
+    "WPPPPPPPPW",  // 5
+    "WPPPPPPPPW",  // 6
+    "WWWWDDWWWW",  // 7 exit south
+  ],
+  objects: [],
+  npcs: [
+    { id:'nurse_joy', x:5, y:2, name:'Nurse Joy', dir:'south',
+      dialogue:["NURSE JOY: Welcome to our POKéMON CENTER! We restore your tired POKéMON to full health. Use the heal action to restore your party!"] },
+    { id:'pc_terminal', x:3, y:2, name:'PC Terminal', dir:'south',
+      dialogue:["A PC terminal. Use pc_deposit and pc_withdraw to manage your Pokémon storage."] },
+  ],
+  signs: [],
+  warps: [
+    { x:4, y:7, dest:'viridian_city', destX:11, destY:15, areaName:'Viridian City' },
+    { x:5, y:7, dest:'viridian_city', destX:12, destY:15, areaName:'Viridian City' },
+  ],
+};
+
+// ── Interior: Poké Mart (Viridian — generic mart id) ─────────────────────────
+// 8 wide x 7 tall
+const POKE_MART = {
+  id: 'poke_mart',
+  name: 'Poké Mart',
+  width: 8,
+  height: 7,
+  tiles: [
+    "WWWWWWWW",  // 0
+    "WPPPPPPW",  // 1
+    "WPPPPPPW",  // 2
+    "WPPPPPPW",  // 3
+    "WPPPPPPW",  // 4
+    "WPPPPPPW",  // 5
+    "WWWDDWWW",  // 6 exit south
+  ],
+  objects: [],
+  npcs: [
+    { id:'viridian_mart_clerk_inside', x:4, y:2, name:'POKé MART Clerk', dir:'south',
+      dialogue:["Welcome to the VIRIDIAN CITY POKé MART! Use mart_view to see items, mart_buy to purchase."] },
+  ],
+  signs: [],
+  warps: [
+    { x:3, y:6, dest:'viridian_city', destX:17, destY:11, areaName:'Viridian City' },
+    { x:4, y:6, dest:'viridian_city', destX:18, destY:11, areaName:'Viridian City' },
+  ],
+};
+
+// ── Interior: Pewter Pokémon Center ──────────────────────────────────────────
+const PEWTER_POKECENTER = {
+  id: 'pewter_pokecenter',
+  name: 'Pewter Pokémon Center',
+  width: 10,
+  height: 8,
+  tiles: [
+    "WWWWWWWWWW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WWWWDDWWWW",
+  ],
+  objects: [],
+  npcs: [
+    { id:'nurse_joy_pewter', x:5, y:2, name:'Nurse Joy', dir:'south',
+      dialogue:["NURSE JOY: Welcome to our POKéMON CENTER! We restore your tired POKéMON to full health. Use the heal action to restore your party!"] },
+    { id:'pc_terminal_pewter', x:3, y:2, name:'PC Terminal', dir:'south',
+      dialogue:["A PC terminal. Use pc_deposit and pc_withdraw to manage your Pokémon storage."] },
+  ],
+  signs: [],
+  warps: [
+    { x:4, y:7, dest:'pewter_city', destX:4, destY:9, areaName:'Pewter City' },
+    { x:5, y:7, dest:'pewter_city', destX:5, destY:9, areaName:'Pewter City' },
+  ],
+};
+
+// ── Interior: Pewter Poké Mart ────────────────────────────────────────────────
+const PEWTER_MART = {
+  id: 'pewter_mart',
+  name: 'Pewter Poké Mart',
+  width: 8,
+  height: 7,
+  tiles: [
+    "WWWWWWWW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WWWDDWWW",
+  ],
+  objects: [],
+  npcs: [
+    { id:'pewter_mart_clerk_inside', x:4, y:2, name:'POKé MART Clerk', dir:'south',
+      dialogue:["Welcome to the PEWTER CITY POKé MART! Use mart_view to see items, mart_buy to purchase."] },
+  ],
+  signs: [],
+  warps: [
+    { x:3, y:6, dest:'pewter_city', destX:4, destY:14, areaName:'Pewter City' },
+    { x:4, y:6, dest:'pewter_city', destX:5, destY:14, areaName:'Pewter City' },
+  ],
+};
+
+// ── Interior: Pewter Gym ──────────────────────────────────────────────────────
+// Brock and Jr Trainer moved here from Pewter City overworld.
+const PEWTER_GYM = {
+  id: 'pewter_gym',
+  name: 'Pewter City Gym',
+  width: 12,
+  height: 10,
+  tiles: [
+    "WWWWWWWWWWWW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WWWWWDDWWWWW",
+  ],
+  objects: [],
+  npcs: [
+    { id:'gym_guide_interior', x:6, y:8, name:'GYM GUIDE', dir:'north',
+      dialogue:["GYM GUIDE: BROCK uses ROCK-type POKéMON! WATER or GRASS moves are very effective! His ace is ONIX at level 14."] },
+    { id:'jr_trainer_pewter', x:5, y:5, name:'JR. TRAINER♂', dir:'south',
+      sightRange: 3,
+      dialogue:["JR. TRAINER♂: You need to get past me to face BROCK! Go!"],
+      trainerBattle: {
+        trainerName: 'JR. TRAINER♂',
+        party: [{ species:'diglett', level:11 }, { species:'sandshrew', level:11 }],
+        reward: 231,
+        rewardFlag: 'beat_jr_trainer_pewter',
+      },
+      dialogueAfter: ["JR. TRAINER♂: I lost! Go on..."],
+    },
+    { id:'brock', x:6, y:2, name:'BROCK', dir:'south',
+      sightRange: 0,
+      dialogue:[
+        "I'm BROCK! I'm PEWTER's GYM LEADER!",
+        "I believe in rock hard defense and determination!",
+        "That's why my POKéMON are all the ROCK type!",
+        "Do you still want to challenge me?",
+        "Fine then! Show me your best!",
+      ],
+      trainerBattle: {
+        trainerName: 'BROCK',
+        party: [{ species:'geodude', level:12 }, { species:'onix', level:14 }],
+        reward: 1386,
+        rewardFlag: 'beat_brock',
+        badge: 'boulder_badge',
+      },
+      dialogueAfter:[
+        "I took you for granted.",
+        "As proof of your victory, here's the BOULDERBADGE!",
+        "That's an official POKéMON LEAGUE BADGE!",
+        "Its bearer's POKéMON become more powerful!",
+        "The technique FLASH can now be used any time!",
+        "Wait! Take this with you! TM34 contains BIDE.",
+        "There are all kinds of trainers in the world! Go to the GYM in CERULEAN and test your abilities!",
+      ],
+    },
+  ],
+  signs: [
+    { x:6, y:1, text:"PEWTER GYM\nGym Leader: BROCK\nSpecialty: ROCK-type POKéMON" },
+  ],
+  warps: [
+    { x:5, y:9, dest:'pewter_city', destX:10, destY:9, areaName:'Pewter City' },
+    { x:6, y:9, dest:'pewter_city', destX:11, destY:9, areaName:'Pewter City' },
+  ],
+};
+
+// ── Interior: Pewter Museum ───────────────────────────────────────────────────
+const PEWTER_MUSEUM = {
+  id: 'pewter_museum',
+  name: 'Pewter Museum',
+  width: 12,
+  height: 8,
+  tiles: [
+    "WWWWWWWWWWWW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WPPPPPPPPPPW",
+    "WWWWWDDWWWWW",
+  ],
+  objects: [],
+  npcs: [
+    { id:'museum_guide', x:6, y:2, name:'Museum Guide', dir:'south',
+      dialogue:["Welcome to PEWTER MUSEUM! The DOME FOSSIL can restore KABUTO. The HELIX FOSSIL can restore OMANYTE. These are the mysteries of ancient POKéMON!"] },
+    { id:'fossil_amber', x:4, y:3, name:'Display Case', dir:'south',
+      dialogue:["OLD AMBER: Scientists say a POKéMON is encased inside... (AERODACTYL)"] },
+  ],
+  signs: [
+    { x:3, y:2, text:"DOME FOSSIL\nFrom the ancient sea..." },
+    { x:9, y:2, text:"HELIX FOSSIL\nA rare fossil..." },
+  ],
+  warps: [
+    { x:5, y:7, dest:'pewter_city', destX:17, destY:9, areaName:'Pewter City' },
+    { x:6, y:7, dest:'pewter_city', destX:18, destY:9, areaName:'Pewter City' },
+  ],
+};
+
+// ── Route 22 (20 wide x 15 tall) — west of Viridian, rival encounter ──────────
+function buildRoute22() {
+  const rows = [];
+  for (let y = 0; y < 15; y++) {
+    let row = '';
+    for (let x = 0; x < 20; x++) {
+      // Perimeter trees
+      if (y === 0 || y === 14) { row += 'T'; continue; }
+      // Path corridor runs west-east through rows 5-9
+      if (y >= 5 && y <= 9 && x >= 2 && x <= 17) { row += 'P'; continue; }
+      // Tall grass patches north and south of path
+      const inGrass = (
+        (y >= 1 && y <= 4  && x >= 3 && x <= 16) ||
+        (y >= 10 && y <= 13 && x >= 3 && x <= 16)
+      );
+      if (inGrass) { row += 'G'; continue; }
+      row += 'T';
+    }
+    rows.push(row);
+  }
+  // East connection to Viridian City at x=19, rows 6-8
+  rows[6]  = setChar(rows[6],  19, 'P');
+  rows[7]  = setChar(rows[7],  19, 'P');
+  rows[8]  = setChar(rows[8],  19, 'P');
+  // West terminus (blocked by League gate — just trees for now)
+  return rows;
+}
+
+const ROUTE_22 = {
+  id: 'route_22',
+  name: 'Route 22',
+  width: 20,
+  height: 15,
+  encounterRate: 10,
+  tiles: buildRoute22(),
+  objects: [],
+  npcs: [
+    { id:'rival_route22', x:10, y:7, name:'RIVAL', dir:'east',
+      sightRange: 0,
+      dialogue:["RIVAL: So, you finally decided to leave PALLET TOWN. I've already caught 2 POKéMON! Let's battle — I'll show you how it's done!"],
+      trainerBattle: {
+        trainerName: 'RIVAL',
+        party: [
+          { species:'charmander', level:9 },
+          { species:'pidgey',     level:9 },
+        ],
+        reward: 350,
+        rewardFlag: 'beat_rival_route22',
+      },
+      dialogueAfter: ["RIVAL: WHAT?! I lost?! Humph! I'll train harder and beat you next time! Just you wait!"],
+    },
+  ],
+  signs: [
+    { x:3, y:12, text:"ROUTE 22\nVIRIDIAN CITY →\nPOKéMON LEAGUE Gate ahead..." },
+  ],
+  encounters: {
+    tall_grass: [
+      { species:'nidoran_m', levelMin:3, levelMax:7, rate:45 },
+      { species:'nidoran_f', levelMin:3, levelMax:7, rate:45 },
+      { species:'mankey',    levelMin:3, levelMax:6, rate:10 },
+    ],
+  },
+  connections: {
+    east:  { area:'viridian_city', entryX:1, entryY:7  },
+    north: { area:'route_23',      entryX:10, entryY:9 },
+  },
+};
+
+// ── Route 23 (20 wide x 10 tall) — stub, leads toward Victory Road ────────────
+function buildRoute23() {
+  const rows = [];
+  for (let y = 0; y < 10; y++) {
+    let row = '';
+    for (let x = 0; x < 20; x++) {
+      if (x === 0 || x === 19 || y === 0) { row += 'T'; continue; }
+      // Central path cols 8-11
+      if (x >= 8 && x <= 11) { row += 'P'; continue; }
+      // Sparse tall grass on the sides
+      const inGrass = (
+        (y >= 3 && y <= 7 && x >= 2 && x <= 6) ||
+        (y >= 3 && y <= 7 && x >= 13 && x <= 17)
+      );
+      if (inGrass) { row += 'G'; continue; }
+      row += 'T';
+    }
+    rows.push(row);
+  }
+  // South connection to Route 22
+  rows[9] = setChar(rows[9], 9,  'P');
+  rows[9] = setChar(rows[9], 10, 'P');
+  rows[9] = setChar(rows[9], 11, 'P');
+  return rows;
+}
+
+const ROUTE_23 = {
+  id: 'route_23',
+  name: 'Route 23',
+  width: 20,
+  height: 10,
+  encounterRate: 15,
+  tiles: buildRoute23(),
+  objects: [],
+  npcs: [],
+  signs: [
+    { x:10, y:1, text:"ROUTE 23\nVICTORY ROAD lies ahead.\nOnly trainers with all 8 badges may pass!" },
+  ],
+  encounters: {
+    tall_grass: [
+      { species:'rattata', levelMin:15, levelMax:20, rate:50 },
+      { species:'spearow', levelMin:13, levelMax:18, rate:50 },
+    ],
+  },
+  connections: {
+    south: { area:'route_22', entryX:10, entryY:14 },
+  },
+};
+
 // ── Area registry ─────────────────────────────────────────────────────────────
 const AREAS = {
   pallet_town:      PALLET_TOWN,
@@ -546,6 +962,17 @@ const AREAS = {
   viridian_city:    VIRIDIAN_CITY,
   viridian_forest:  VIRIDIAN_FOREST,
   pewter_city:      PEWTER_CITY,
+  players_house:    PLAYERS_HOUSE,
+  rivals_house:     RIVALS_HOUSE,
+  oaks_lab:         OAKS_LAB,
+  pokemon_center:   POKEMON_CENTER,
+  poke_mart:        POKE_MART,
+  pewter_pokecenter: PEWTER_POKECENTER,
+  pewter_mart:      PEWTER_MART,
+  pewter_gym:       PEWTER_GYM,
+  pewter_museum:    PEWTER_MUSEUM,
+  route_22:         ROUTE_22,
+  route_23:         ROUTE_23,
 };
 
 // ── Tile accessors ─────────────────────────────────────────────────────────────

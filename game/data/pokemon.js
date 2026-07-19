@@ -792,6 +792,21 @@ const ENCOUNTER_TABLES = {
       { species:'weedle',  levelMin:4, levelMax:6, rate:10 },
     ],
   },
+  route_22: {
+    // Source: Bulbapedia — Route 22 (Gen I Red/Blue)
+    tall_grass: [
+      { species:'nidoran_m', levelMin:3, levelMax:7, rate:45 },
+      { species:'nidoran_f', levelMin:3, levelMax:7, rate:45 },
+      { species:'mankey',    levelMin:3, levelMax:6, rate:10 },
+    ],
+  },
+  route_23: {
+    // Source: Bulbapedia — Route 23 (Gen I Red/Blue) — post-League approach
+    tall_grass: [
+      { species:'rattata', levelMin:15, levelMax:20, rate:50 },
+      { species:'spearow', levelMin:13, levelMax:18, rate:50 },
+    ],
+  },
 };
 
 function rollEncounter(areaId, terrain) {
