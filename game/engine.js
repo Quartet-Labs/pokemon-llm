@@ -250,10 +250,12 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
 
   const isSpecial = mv.cat === 'special';
 
-  // #14: Critical hit — Gen I: threshold = floor(attacker.spd * critMult / 2) out of 256
+  // #14: Critical hit — Gen I: threshold = floor(baseSpd * critMult / 2) out of 256
   // High-crit moves (Slash, Razor Leaf) have crit_rate: 8 → 8× threshold
+  // #55: Gen I uses BASE Speed (not stat-modified Speed) for crit calculation
   const critMult = mv.effect?.crit_rate || 1;
-  const critThreshold = Math.min(255, Math.floor(attacker.spd * critMult / 2));
+  const baseSpd = POKEMON[attacker.species]?.spd ?? attacker.spd;
+  const critThreshold = Math.min(255, Math.floor(baseSpd * critMult / 2));
   const isCrit = (roll(256) - 1) < critThreshold;
 
   // #17: Special moves use spc/spc; physical use atk/def
@@ -275,7 +277,9 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
 
   const eff = getEffectiveness(mv.type, defender.type);
   const stab = attacker.type.includes(mv.type) ? 1.5 : 1;
-  const rand = (roll(39) + 217) / 255;
+  // #3: random factor must be 217..255 inclusive; roll(39) gives 1..39 so +216 = 217..255
+  const randomFactor = 216 + roll(39);
+  const rand = randomFactor / 255;
 
   const raw = Math.floor(
     Math.floor(Math.floor(2 * attacker.level / 5 + 2) * atkStat * mv.power / defStat / 50 + 2)
@@ -308,15 +312,10 @@ function checkCanAct(pokemon, msgs) {
     return false;
   }
 
-  // #16: Freeze — 10% thaw chance each turn; otherwise locked
+  // #57: Freeze — Gen I: never thaws naturally; only fire moves thaw (handled in doAttack)
   if (pokemon.status === 'freeze') {
-    if (roll(10) === 1) {
-      pokemon.status = null;
-      msgs.push(`${pokemon.name} thawed out!`);
-    } else {
-      msgs.push(`${pokemon.name} is frozen solid!`);
-      return false;
-    }
+    msgs.push(`${pokemon.name} is frozen solid!`);
+    return false;
   }
 
   // #16: Flinch — set by previous attack this turn; clears automatically
@@ -449,10 +448,15 @@ function attemptCatch(ball, target) {
 
   if (f >= 255) return { caught: true, shakes: 4 };
 
+  // #54: Gen I shake check — 2-byte random vs sqrt-based threshold
+  // Each shake passes if a 0..65535 uniform r < shakeThreshold
+  const shakeThreshold = Math.floor(65536 / Math.pow(255 / Math.max(1, f), 0.25));
+
   let shakes = 0;
   for (let i = 0; i < 4; i++) {
-    const r = roll(256) - 1;  // roll(n) returns 1..n, so -1 gives 0..255
-    if (r > f) break;
+    // Combine two roll(256) calls to get a 0..65535 uniform random
+    const r = (roll(256) - 1) * 256 + (roll(256) - 1);
+    if (r >= shakeThreshold) break;
     shakes++;
   }
   return { caught: shakes === 4, shakes };
@@ -1186,10 +1190,24 @@ function processBattleAction(state, action, log) {
     const mv = MOVES[mvName];
     if (!mv) { msgs.push('Unknown move!'); return; }
 
-    // Accuracy check (100 acc moves always hit; otherwise roll)
-    if ((mv.acc || 100) < 100 && roll(100) > mv.acc) {
-      msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
-      return;
+    // #57: Fire moves thaw frozen targets (Gen I mechanic)
+    if (mv.type === 'fire' && defender.status === 'freeze') {
+      defender.status = null;
+      defender.statusTurns = 0;
+      msgs.push(`${defender.name} was defrosted by the fire!`);
+    }
+
+    // #1: Accuracy check with Gen I acc/eva stage modifiers
+    const moveAcc = mv.acc ?? 100;
+    if (moveAcc < 100 && !mv.effect?.always_hit) {
+      const ACC_STAGES = [33, 36, 43, 50, 66, 100, 150, 200, 250, 300, 350];
+      const atkStageIdx = clamp((attacker.statStages?.acc ?? 0) + 5, 0, 10);
+      const defStageIdx = clamp(-(defender.statStages?.eva ?? 0) + 5, 0, 10);
+      const modifiedAcc = Math.min(100, Math.floor(moveAcc * ACC_STAGES[atkStageIdx] / ACC_STAGES[defStageIdx]));
+      if (roll(100) > modifiedAcc) {
+        msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it missed!`);
+        return;
+      }
     }
 
     if (mv.power > 0) {
@@ -1331,6 +1349,23 @@ function processBattleAction(state, action, log) {
     const enemyMv  = selectEnemyMove();
     const enemyMvD = MOVES[enemyMv];
 
+    // #56: Bound player can't act — enemy still attacks; bound damage via applyStatusEnd
+    if (active.boundState) {
+      msgs.push(`${active.name} is bound and can't move!`);
+      if (!getEnemy().boundState) {
+        doAttack(getEnemy(), enemyMv, getActive(), false);
+        checkFaint();
+      }
+      if (state.battle) {
+        msgs.push(...applyStatusEnd(getActive()));
+        msgs.push(...applyStatusEnd(getEnemy()));
+        checkFaint();
+      }
+      state.message = msgs.filter(Boolean).join(' ');
+      msgs.forEach(log);
+      return state;
+    }
+
     // #13: Priority moves (Quick Attack = +1) go first regardless of speed
     const playerPri = mv?.effect?.priority || 0;
     const enemyPri  = enemyMvD?.effect?.priority || 0;
@@ -1348,11 +1383,17 @@ function processBattleAction(state, action, log) {
     if (playerFirst) {
       doAttack(active, moveName, enemy, true);
       if (state.battle && !checkFaint()) {
-        doAttack(getEnemy(), enemyMv, getActive(), false);
-        checkFaint();
+        // #56: enemy can't act if bound
+        if (!getEnemy().boundState) {
+          doAttack(getEnemy(), enemyMv, getActive(), false);
+          checkFaint();
+        }
       }
     } else {
-      doAttack(enemy, enemyMv, active, false);
+      // #56: enemy can't act if bound
+      if (!enemy.boundState) {
+        doAttack(enemy, enemyMv, active, false);
+      }
       if (state.battle && !checkFaint()) {
         doAttack(getActive(), moveName, getEnemy(), true);
         if (state.battle) checkFaint();
