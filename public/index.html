@@ -171,12 +171,162 @@ let selected = 1;
 
 const PCOLORS = { 1:'#e74c3c', 2:'#3498db', 3:'#2ecc71', 4:'#f1c40f' };
 
-const TC = {
-  path:'#8b7355', town:'#8b7355', grass:'#3a8c3a', tall_grass:'#1a5c1a',
-  tree:'#1a4a1a', wall:'#2a2a2a', water:'#1a4a8f', building:'#5a3a2a',
-  door:'#8B4513', sign:'#b8860b', ledge_s:'#5a4a1a', flower:'#a0522d',
-  default:'#111',
+// ── Pixel-art tile atlas (see docs/graphics-overhaul.md) ─────────────────────
+// Every tile is 16x16 authored in code — no external art for the world.
+const TILE = 16;
+const TILE_NAMES = ['path','town','grass','tall_grass','tree','wall','water',
+                    'building','door','sign','ledge_s','flower','default'];
+let FRAME = 0;   // global 2-frame animation bit (water shimmer, walk bob)
+
+function paintTile(c, name, f) {
+  // c: 2d ctx translated so (0,0) is the tile's top-left. f: frame 0|1.
+  const P = (x,y,w,h,col) => { c.fillStyle = col; c.fillRect(x,y,w,h); };
+  switch (name) {
+    case 'path': case 'town':
+      P(0,0,16,16,'#b09a6a');
+      P(3,4,1,1,'#98835a'); P(11,2,1,1,'#98835a'); P(7,9,1,1,'#98835a');
+      P(13,12,1,1,'#98835a'); P(5,13,1,1,'#c4ae7e'); P(9,6,1,1,'#c4ae7e');
+      break;
+    case 'grass':
+      P(0,0,16,16,'#3a8c3a');
+      P(2,3,1,2,'#2d702d'); P(9,2,1,2,'#2d702d'); P(13,8,1,2,'#2d702d');
+      P(5,11,1,2,'#2d702d'); P(11,13,1,2,'#48a848');
+      break;
+    case 'tall_grass':
+      P(0,0,16,16,'#2d702d');
+      for (let x=1;x<16;x+=3) { P(x,10,1,5,'#1a5c1a'); P(x+1,8,1,7,'#164c16'); }
+      P(0,14,16,2,'#1a5c1a');
+      break;
+    case 'tree':
+      P(0,0,16,16,'#3a8c3a');
+      P(6,12,4,3,'#6a4a2a');                       // trunk
+      P(2,7,12,5,'#1a4a1a'); P(3,4,10,4,'#215a21'); P(5,1,6,4,'#2a6a2a'); // canopy
+      P(4,8,2,1,'#0f3a0f'); P(10,5,2,1,'#0f3a0f');
+      break;
+    case 'wall':
+      P(0,0,16,16,'#3a3a3a');
+      for (let y=0;y<16;y+=4) { P(0,y,16,1,'#2a2a2a'); }
+      P(4,1,1,3,'#2a2a2a'); P(12,1,1,3,'#2a2a2a'); P(8,5,1,3,'#2a2a2a');
+      P(4,9,1,3,'#2a2a2a'); P(12,9,1,3,'#2a2a2a'); P(8,13,1,3,'#2a2a2a');
+      break;
+    case 'water':
+      P(0,0,16,16,'#1a4a8f');
+      const o = f ? 3 : 0;
+      P(1+o,3,4,1,'#3a6aaf'); P(9+o,7,4,1,'#3a6aaf'); P(3+o,12,4,1,'#3a6aaf');
+      P(8-o,2,2,1,'#12376b'); P(2+o,8,2,1,'#12376b');
+      break;
+    case 'building':
+      P(0,0,16,16,'#7a5a3a');
+      P(0,0,16,5,'#8f3a2a');  P(0,4,16,1,'#6f2a1a');   // roof
+      P(3,8,3,3,'#2a3a5a'); P(10,8,3,3,'#2a3a5a');     // windows
+      P(3,8,3,1,'#4a5a7a'); P(10,8,3,1,'#4a5a7a');
+      break;
+    case 'door':
+      P(0,0,16,16,'#7a5a3a');
+      P(0,0,16,3,'#8f3a2a');
+      P(5,5,6,11,'#3a2416'); P(6,6,4,10,'#4a2e1c'); P(9,10,1,2,'#c4ae7e'); // knob
+      break;
+    case 'sign':
+      P(0,0,16,16,'#3a8c3a');
+      P(7,9,2,6,'#6a4a2a');                           // post
+      P(2,3,12,6,'#b8860b'); P(3,4,10,4,'#8a6508');   // board
+      P(4,5,8,1,'#5a4205'); P(4,7,6,1,'#5a4205');     // "text"
+      break;
+    case 'ledge_s':
+      P(0,0,16,16,'#b09a6a');
+      P(0,12,16,2,'#7a683f'); P(0,14,16,2,'#5a4c2e');
+      break;
+    case 'flower':
+      P(0,0,16,16,'#3a8c3a');
+      const fo = f ? 1 : 0;
+      P(4,4+fo,2,2,'#e74c3c'); P(5,3+fo,1,1,'#ffcc00');
+      P(11,9-fo,2,2,'#e7813c'); P(12,8-fo,1,1,'#ffcc00');
+      P(2,11,1,2,'#2d702d'); P(13,4,1,2,'#2d702d');
+      break;
+    default:
+      P(0,0,16,16,'#141414');
+  }
+}
+
+// Two prebuilt atlases (frame 0 / frame 1), one 16px cell per tile name.
+const atlases = [0,1].map(f => {
+  const a = document.createElement('canvas');
+  a.width = TILE * TILE_NAMES.length; a.height = TILE;
+  const c = a.getContext('2d');
+  TILE_NAMES.forEach((name, i) => {
+    c.save(); c.translate(i*TILE, 0);
+    c.beginPath(); c.rect(0,0,TILE,TILE); c.clip();
+    paintTile(c, name, f);
+    c.restore();
+  });
+  return a;
+});
+const TILE_IX = Object.fromEntries(TILE_NAMES.map((n,i)=>[n,i]));
+
+// GB-style pixel person, tinted. size = tile px on screen; bob = 1 to dip 1px.
+function drawChar(ctx, sx, sy, size, tint, bob) {
+  const u = size/16;
+  const B = (x,y,w,h,col) => { ctx.fillStyle=col; ctx.fillRect(sx+x*u, sy+(y+bob)*u, w*u, h*u); };
+  B(5,1,6,5,'#f0c8a0');           // head
+  B(5,1,6,2,'#4a3020');           // hair
+  B(6,3,1,1,'#222'); B(9,3,1,1,'#222');  // eyes
+  B(4,6,8,6,tint);                // body
+  B(3,7,1,3,tint); B(12,7,1,3,tint);     // arms
+  B(5,12,2,3,'#333'); B(9,12,2,3,'#333');// legs
+}
+
+// ── Pokémon sprites: PokeAPI Gen-1 Red/Blue archive (see docs) ───────────────
+const SPECIES_ID = {
+  bulbasaur:1, ivysaur:2, venusaur:3, charmander:4, charmeleon:5, charizard:6,
+  squirtle:7, wartortle:8, blastoise:9, caterpie:10, metapod:11, butterfree:12,
+  weedle:13, kakuna:14, beedrill:15, pidgey:16, pidgeotto:17, rattata:19,
+  raticate:20, spearow:21, pikachu:25, raichu:26, sandshrew:27, sandslash:28,
+  diglett:50, dugtrio:51, meowth:52, geodude:74, graveler:75, onix:95, eevee:133,
 };
+const SPR_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-i/red-blue';
+const spriteCache = {};
+// The Gen-1 /back/ sprites have no transparent variant — chroma-key the white
+// background at load time (offscreen canvas, near-white pixels -> alpha 0).
+function keyOutWhite(img) {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const x = c.getContext('2d');
+  x.drawImage(img, 0, 0);
+  try {
+    const d = x.getImageData(0, 0, c.width, c.height);
+    for (let i = 0; i < d.data.length; i += 4) {
+      if (d.data[i] > 238 && d.data[i+1] > 238 && d.data[i+2] > 238) d.data[i+3] = 0;
+    }
+    x.putImageData(d, 0, 0);
+  } catch (e) { /* canvas tainted (no CORS) — keep the white box over nothing */ }
+  return c;
+}
+function getSprite(species, facing) {
+  const id = SPECIES_ID[(species||'').toLowerCase()];
+  if (!id) return null;
+  const key = `${facing}${id}`;
+  if (!(key in spriteCache)) {
+    spriteCache[key] = undefined;   // in flight
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = facing === 'front' ? `${SPR_BASE}/transparent/${id}.png` : `${SPR_BASE}/back/${id}.png`;
+    img.onload = () => { spriteCache[key] = facing === 'back' ? keyOutWhite(img) : img; renderAll(); };
+    img.onerror = () => { spriteCache[key] = null; };
+  }
+  return spriteCache[key] || null;
+}
+function blitSprite(ctx, img, cx, bottomY, targetH) {
+  // nearest-neighbor, bottom-anchored, centered on cx (img may be Image or canvas)
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const scale = targetH / ih;
+  const w = iw * scale, h = targetH;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, Math.round(cx - w/2), Math.round(bottomY - h), Math.round(w), Math.round(h));
+}
+
+const TC_FALLBACK = { path:'#8b7355', town:'#8b7355', grass:'#3a8c3a', tall_grass:'#1a5c1a',
+  tree:'#1a4a1a', wall:'#2a2a2a', water:'#1a4a8f', building:'#5a3a2a',
+  door:'#8B4513', sign:'#b8860b', ledge_s:'#5a4a1a', flower:'#a0522d', default:'#111' };
 
 // Build the four cells
 const couch = document.getElementById('couch');
@@ -224,35 +374,42 @@ function drawOverworld(p) {
   const ox = Math.floor(CW/2) - (px-sc)*tsize;
   const oy = Math.floor(CH/2) - (py-sr)*tsize;
 
+  ctx.imageSmoothingEnabled = false;
   ctx.fillStyle='#111'; ctx.fillRect(0,0,CW,CH);
+  const atlas = atlases[FRAME];
   for (let r=sr; r<Math.min(MH,sr+vRows+1); r++) {
     for (let c=sc; c<Math.min(MW,sc+vCols+1); c++) {
       const tile=(tiles[r]||[])[c]||'wall';
       const sx=ox+(c-sc)*tsize, sy=oy+(r-sr)*tsize;
-      ctx.fillStyle=TC[tile]||TC.default;
-      ctx.fillRect(sx,sy,tsize,tsize);
-      ctx.strokeStyle='rgba(0,0,0,.1)'; ctx.strokeRect(sx,sy,tsize,tsize);
+      const ix = TILE_IX[tile];
+      if (ix !== undefined) ctx.drawImage(atlas, ix*TILE, 0, TILE, TILE, sx, sy, tsize, tsize);
+      else { ctx.fillStyle = TC_FALLBACK[tile]||TC_FALLBACK.default; ctx.fillRect(sx,sy,tsize,tsize); }
     }
   }
   if (npcs) for (const nn of npcs) {
     if (nn.x<sc||nn.x>=sc+vCols||nn.y<sr||nn.y>=sr+vRows) continue;
-    const sx=ox+(nn.x-sc)*tsize, sy=oy+(nn.y-sr)*tsize;
-    ctx.fillStyle='#ffaa00'; ctx.fillRect(sx+2,sy+2,tsize-4,tsize-4);
+    drawChar(ctx, ox+(nn.x-sc)*tsize, oy+(nn.y-sr)*tsize, tsize, '#b8860b', 0);
   }
-  const sx=ox+(px-sc)*tsize, sy=oy+(py-sr)*tsize;
-  ctx.fillStyle = p.color; ctx.fillRect(sx+2,sy+2,tsize-4,tsize-4);
-  ctx.fillStyle='#fff';
-  const d=Math.max(2,Math.floor(tsize/4));
-  ctx.fillRect(sx+d+1,sy+d,d,d);
+  drawChar(ctx, ox+(px-sc)*tsize, oy+(py-sr)*tsize, tsize, p.color,
+           (state.player.steps ?? state.turn) % 2 === FRAME ? 1 : 0);
 }
 
 function drawStarterSelect(p) {
   const { ctx, cv } = p;
   ctx.fillStyle='#0a0a12'; ctx.fillRect(0,0,cv.width,cv.height);
   ctx.fillStyle='#ffcc00'; ctx.font='bold 13px Courier New'; ctx.textAlign='center';
-  ctx.fillText("PROF. OAK'S LAB", cv.width/2, cv.height/2 - 14);
+  ctx.fillText("PROF. OAK'S LAB", cv.width/2, 30);
   ctx.fillStyle='#888'; ctx.font='10px Courier New';
-  ctx.fillText('choosing a starter…', cv.width/2, cv.height/2 + 8);
+  ctx.fillText('choosing a starter…', cv.width/2, 46);
+  const trio = ['bulbasaur','charmander','squirtle'];
+  trio.forEach((sp, i) => {
+    const cx = cv.width*(0.25 + 0.25*i), by = cv.height*0.72;
+    ctx.fillStyle='#222240';
+    ctx.beginPath(); ctx.ellipse(cx, by+4, 30, 8, 0, 0, Math.PI*2); ctx.fill();
+    const img = getSprite(sp, 'front');
+    if (img) blitSprite(ctx, img, cx, by, 64);
+    else { ctx.fillStyle='#444'; ctx.beginPath(); ctx.arc(cx, by-20, 18, 0, Math.PI*2); ctx.fill(); }
+  });
   ctx.textAlign='left';
 }
 
@@ -260,37 +417,43 @@ function drawBattle(p) {
   const { ctx, cv, state } = p;
   const CW = cv.width, CH = cv.height;
   const b = state.battle;
-  ctx.fillStyle='#1a1a2e'; ctx.fillRect(0,0,CW,CH);
-  ctx.fillStyle='#222240';
-  ctx.beginPath(); ctx.ellipse(CW*0.72,CH*0.25,54,13,0,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(CW*0.22,CH*0.59,45,11,0,0,Math.PI*2); ctx.fill();
+  // Gen-1 flat battle backdrop
+  ctx.fillStyle='#f8f8e8'; ctx.fillRect(0,0,CW,CH);
+  ctx.fillStyle='#e0e0c8'; ctx.fillRect(0,CH-52,CW,52);
+  // platforms
+  ctx.fillStyle='#c8c89a';
+  ctx.beginPath(); ctx.ellipse(CW*0.72,CH*0.42,58,12,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(CW*0.24,CH*0.80,52,11,0,0,Math.PI*2); ctx.fill();
 
   const ef=hpInfo(b.enemy.hp), af=hpInfo(b.your_active.hp);
-  ctx.fillStyle=ef.f>0?'#c04040':'#555';
-  ctx.beginPath(); ctx.arc(CW*0.72,CH*0.15,25,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle=af.f>0?'#4040c0':'#555';
-  ctx.beginPath(); ctx.arc(CW*0.22,CH*0.49,21,0,Math.PI*2); ctx.fill();
 
-  ctx.font='9px Courier New';
-  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(8,8,150,42);
-  ctx.strokeStyle='#666'; ctx.strokeRect(8,8,150,42);
-  ctx.fillStyle='#fff'; ctx.fillText(`${b.enemy.name} Lv.${b.enemy.level}`,14,21);
-  ctx.fillStyle='#333'; ctx.fillRect(14,26,130,7);
-  ctx.fillStyle=ef.f>.5?'#44dd44':ef.f>.25?'#ffcc00':'#dd2222';
-  ctx.fillRect(14,26,Math.round(130*ef.f),7);
-  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.enemy.hp}`,14,45);
+  // sprites (front = enemy top-right, back = yours bottom-left)
+  const eImg = getSprite(b.enemy.species, 'front');
+  if (eImg) blitSprite(ctx, eImg, CW*0.72, CH*0.44, 96);
+  else { ctx.fillStyle=ef.f>0?'#c04040':'#555'; ctx.beginPath(); ctx.arc(CW*0.72,CH*0.30,26,0,Math.PI*2); ctx.fill(); }
+  const aImg = getSprite(b.your_active.species, 'back');
+  if (aImg) blitSprite(ctx, aImg, CW*0.24, CH*0.82, 104);
+  else { ctx.fillStyle=af.f>0?'#4040c0':'#555'; ctx.beginPath(); ctx.arc(CW*0.24,CH*0.68,22,0,Math.PI*2); ctx.fill(); }
 
-  const byy = CH-56;
-  ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(CW-160,byy,152,48);
-  ctx.strokeStyle='#666'; ctx.strokeRect(CW-160,byy,152,48);
-  ctx.fillStyle='#fff'; ctx.fillText(`${b.your_active.name} Lv.${b.your_active.level}`,CW-154,byy+13);
-  ctx.fillStyle='#333'; ctx.fillRect(CW-154,byy+18,132,7);
-  ctx.fillStyle=af.f>.5?'#44dd44':af.f>.25?'#ffcc00':'#dd2222';
-  ctx.fillRect(CW-154,byy+18,Math.round(132*af.f),7);
-  ctx.fillStyle='#aaa'; ctx.fillText(`HP: ${b.your_active.hp}`,CW-154,byy+38);
-  ctx.fillStyle='#ffcc00'; ctx.font='bold 14px Courier New'; ctx.fillText('VS',CW*0.45,CH*0.4);
+  // Gen-1 info boxes
+  function infoBox(x, y, w, mon, frac, showHp) {
+    ctx.fillStyle='#f8f8e8'; ctx.fillRect(x,y,w,showHp?46:36);
+    ctx.strokeStyle='#333'; ctx.lineWidth=2; ctx.strokeRect(x,y,w,showHp?46:36);
+    ctx.fillStyle='#222'; ctx.font='bold 11px Courier New';
+    ctx.fillText(`${mon.name}`, x+8, y+14);
+    ctx.font='10px Courier New';
+    ctx.fillText(`Lv.${mon.level}`, x+w-42, y+14);
+    ctx.fillStyle='#222'; ctx.font='8px Courier New'; ctx.fillText('HP:', x+8, y+26);
+    ctx.fillStyle='#a8a888'; ctx.fillRect(x+28, y+19, w-40, 8);
+    ctx.fillStyle=frac>.5?'#30a030':frac>.25?'#d8a020':'#d03030';
+    ctx.fillRect(x+28, y+19, Math.round((w-40)*frac), 8);
+    if (showHp) { ctx.fillStyle='#222'; ctx.font='10px Courier New'; ctx.fillText(mon.hp, x+w-58, y+40); }
+  }
+  infoBox(8, 8, 148, b.enemy, ef.f, false);
+  infoBox(CW-164, CH-100, 156, b.your_active, af.f, true);
+
   if (b.is_trainer && b.trainer_name) {
-    ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(0,CH-18,CW,18);
+    ctx.fillStyle='rgba(20,20,20,.85)'; ctx.fillRect(0,CH-18,CW,18);
     ctx.fillStyle='#ffcc00'; ctx.font='bold 9px Courier New'; ctx.textAlign='center';
     ctx.fillText(`TRAINER — ${b.trainer_name} (${(b.trainer_remaining||0)+1} left)`, CW/2, CH-6);
     ctx.textAlign='left';
@@ -338,6 +501,17 @@ function renderCell(n) {
   document.getElementById(`msg-${n}`).textContent = state.message || '';
   if (n === selected) updateDrawer();
 }
+
+function renderAll() { for (let n = 1; n <= MAXP; n++) renderCell(n); }
+
+// 2-frame world animation: water shimmer + walk bob. 500ms, overworld cells only.
+setInterval(() => {
+  FRAME ^= 1;
+  for (let n = 1; n <= MAXP; n++) {
+    const s = players[n].state;
+    if (s && s.screen === 'overworld') renderCell(n);
+  }
+}, 500);
 
 // ── Detail drawer ─────────────────────────────────────────────────────────────
 const ITEM_LABELS = {
