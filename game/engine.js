@@ -2096,10 +2096,11 @@ function processBattleAction(state, action, log) {
     // [A8] Trapping follow-up: if attacker is locked in AND defender is already bound,
     // skip the full damage path — chip via applyStatusEnd handles it
     if (attacker.trappingState && attacker.trappingState.move === mvName && defender.boundState) {
-      // Deduct PP (still costs PP each turn)
+      // Deduct PP — [H10] Gen I PP rollover bug: PP at 0 wraps to 63 instead of going negative
       if (mvName !== 'struggle') {
         if (!attacker.pp) attacker.pp = {};
-        if ((attacker.pp[mvName] ?? 1) > 0) attacker.pp[mvName]--;
+        const curPP = attacker.pp[mvName] ?? 0;
+        attacker.pp[mvName] = curPP <= 0 ? 63 : curPP - 1;  // [H10] rollover
       }
       attacker.lastMoveUsed = mvName;
       msgs.push(`${attacker.name} keeps using ${mvName.toUpperCase()}!`);
