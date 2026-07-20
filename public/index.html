@@ -102,8 +102,23 @@ h1 { color: #ffcc00; font-size: 1.2rem; letter-spacing: 2px; }
 .log-e { padding:1px 0; border-bottom:1px solid #1a1a1a; color:#888; font-size:.66rem; }
 .log-e:first-child { color:#ddd; }
 
+/* ── Agent status strip (always visible) ── */
+.agent-status {
+  margin-top:8px; padding:5px 8px; background:#0d0d18;
+  border:1px solid #2a2a3a; border-radius:3px;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  font-size:.66rem; min-height:26px;
+}
+.as-label { color:#555; font-size:.58rem; letter-spacing:.5px; }
+.as-turn  { color:#ffcc00; font-weight:bold; white-space:nowrap; }
+.as-area  { color:#aaa; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.as-action { color:#7ec8e3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
+.as-party { color:#2ecc71; white-space:nowrap; font-size:.6rem; }
+.as-idle  { color:#444; font-style:italic; }
+.as-dot   { color:#2ecc71; animation:blink 1s step-end infinite; }
+
 /* ── Agent action log ── */
-.agent-log { margin-top:8px; border:1px solid #2a2a2a; border-radius:3px; overflow:hidden; }
+.agent-log { margin-top:6px; border:1px solid #2a2a2a; border-radius:3px; overflow:hidden; }
 .agent-log-hdr {
   display:flex; align-items:center; justify-content:space-between;
   padding:4px 8px; background:#161620; cursor:pointer; user-select:none;
@@ -113,25 +128,28 @@ h1 { color: #ffcc00; font-size: 1.2rem; letter-spacing: 2px; }
 .agent-log-hdr .al-chevron { transition:transform .2s; display:inline-block; }
 .agent-log-hdr.open .al-chevron { transform:rotate(90deg); }
 .agent-log-body {
-  display:none; max-height:220px; overflow-y:auto;
+  display:none; max-height:240px; overflow-y:auto;
   background:#0a0a10;
 }
 .agent-log-body.open { display:block; }
 .agent-log-body::-webkit-scrollbar { width:4px; }
 .agent-log-body::-webkit-scrollbar-thumb { background:#333; }
 .al-entry {
-  display:grid; grid-template-columns:40px 1fr auto;
+  display:grid; grid-template-columns:44px 1fr auto;
   gap:0 6px; padding:3px 6px; border-bottom:1px solid #111;
   font-size:.6rem; line-height:1.4; align-items:start;
 }
+.al-entry.al-now { background:#0a0f18; }
 .al-entry:last-child { border-bottom:none; }
 .al-entry:hover { background:#111120; }
 .al-t  { color:#555; white-space:nowrap; padding-top:1px; }
 .al-main { min-width:0; }
 .al-action { color:#7ec8e3; font-weight:bold; }
+.al-count { color:#f1c40f; font-size:.56rem; }
 .al-result { color:#888; margin-top:1px; }
 .al-party { color:#2ecc71; white-space:nowrap; font-size:.58rem; text-align:right; padding-top:1px; }
 .al-area { color:#666; font-size:.58rem; }
+.al-now-badge { background:#1a3a5a; color:#7ec8e3; font-size:.54rem; padding:0 4px; border-radius:3px; margin-left:4px; letter-spacing:.5px; }
 
 .starter-row { display:flex; gap:6px; margin-top:6px; }
 .sbtn {
@@ -192,6 +210,9 @@ h1 { color: #ffcc00; font-size: 1.2rem; letter-spacing: 2px; }
         <div class="log-wrap"><div id="d-log"></div></div>
         <div id="d-starter"></div>
       </div>
+    </div>
+    <div class="agent-status" id="agent-status">
+      <span class="as-idle">no session selected</span>
     </div>
     <div class="agent-log" id="agent-log">
       <div class="agent-log-hdr" id="agent-log-hdr" onclick="toggleAgentLog()">
@@ -684,7 +705,10 @@ function updateDrawer() {
   if (p.sessionId !== agentLogSession) {
     agentLogSession = p.sessionId;
     agentLogEntries = [];
+    document.getElementById('agent-log-count').textContent = '';
     fetchAgentLog(p.sessionId);
+  } else {
+    updateStatusStrip(agentLogEntries);
   }
 
   document.getElementById('d-starter').innerHTML = (state.screen === 'starter_select' && p.sessionId === 'default') ? `
@@ -718,7 +742,13 @@ function fmtAction(action) {
   if (t === 'throw_ball') return `throw ${action.ball || 'ball'}`;
   if (t === 'mart_buy') return `buy ${action.quantity || 1}× ${action.item || '?'}`;
   if (t === 'use_item') return `use ${action.item || '?'}`;
+  if (t === 'reset') return '— reset —';
   return Object.entries(action).filter(([k])=>k!=='type').map(([k,v])=>`${k}:${v}`).join(' ') || t;
+}
+
+function actionKey(e) {
+  // key for collapsing consecutive identical actions
+  return `${e.action?.type}|${e.action?.direction||''}|${e.action?.move_index??''}|${e.area||''}`;
 }
 
 function fmtParty(party) {
@@ -737,15 +767,47 @@ function fmtTime(ts) {
   } catch { return ts ? ts.slice(11,19) : ''; }
 }
 
+function updateStatusStrip(entries) {
+  const strip = document.getElementById('agent-status');
+  if (!strip) return;
+  // show current state from selected player's game state
+  const p = players[selected];
+  const state = p?.state;
+  if (!state && !entries.length) {
+    strip.innerHTML = '<span class="as-idle">no session selected</span>';
+    return;
+  }
+  const last = entries[entries.length - 1];
+  const turn = state?.turn ?? (last ? '?' : '—');
+  const area = (state?.area?.name || (last?.area||'').replace(/_/g,' ') || '—').toUpperCase();
+  const actionStr = last ? fmtAction(last.action) : '—';
+  const party = fmtParty(last?.party || state?.player?.party?.map(p=>({name:p.name, hp:p.hp})));
+  const screen = state?.screen || '';
+  strip.innerHTML = `
+    <span class="as-dot">●</span>
+    <span class="as-turn">T${turn}</span>
+    <span style="color:#444">·</span>
+    <span class="as-area">${area}${screen === 'battle' ? ' ⚔' : ''}</span>
+    <span style="color:#444">·</span>
+    <span class="as-action">${actionStr}</span>
+    ${party ? `<span style="color:#444">·</span><span class="as-party">${party}</span>` : ''}`;
+}
+
 async function fetchAgentLog(sessionId) {
   if (!sessionId) return;
   try {
-    const r = await fetch(`/logs?session=${sessionId}&limit=100`);
+    const r = await fetch(`/logs?session=${sessionId}&limit=200`);
     const data = await r.json();
     if (data.entries) {
-      agentLogEntries = data.entries;
+      // filter to only entries since the last reset
+      const all = data.entries;
+      const lastResetIdx = all.reduceRight((found, e, i) =>
+        found !== -1 ? found : (e.action?.type === 'reset' ? i : -1), -1);
+      agentLogEntries = lastResetIdx !== -1 ? all.slice(lastResetIdx + 1) : all;
+
       const countEl = document.getElementById('agent-log-count');
-      if (countEl) countEl.textContent = `${data.total} actions`;
+      if (countEl) countEl.textContent = `${agentLogEntries.length} actions`;
+      updateStatusStrip(agentLogEntries);
       if (agentLogOpen) renderAgentLog(false);
     }
   } catch (e) { /* silent */ }
@@ -758,23 +820,48 @@ function renderAgentLog(scrollToBottom) {
     body.innerHTML = '<div style="color:#555;font-size:.66rem;padding:8px 10px">No actions yet.</div>';
     return;
   }
-  const entries = agentLogEntries.slice(-100);
-  body.innerHTML = entries.map(e => {
+
+  // collapse consecutive identical actions into runs
+  const collapsed = [];
+  for (const e of agentLogEntries) {
+    const last = collapsed[collapsed.length - 1];
+    if (last && actionKey(last) === actionKey(e) && last.area === e.area) {
+      last._count = (last._count || 1) + 1;
+      last._latestTs = e.ts;
+      // carry forward the latest result/party
+      if (e.log?.length) last.log = e.log;
+      if (e.party?.length) last.party = e.party;
+    } else {
+      collapsed.push({ ...e, _count: 1, _latestTs: e.ts });
+    }
+  }
+
+  const visible = collapsed.slice(-100);
+  body.innerHTML = visible.map((e, i) => {
+    const isNow = i === visible.length - 1;
     const actionStr = fmtAction(e.action);
     const result = (e.log || []).join(' ').slice(0, 120);
     const party = fmtParty(e.party);
     const area = (e.area || '').replace(/_/g, ' ');
-    return `<div class="al-entry">
-      <span class="al-t">${fmtTime(e.ts)}</span>
+    const countBadge = e._count > 1 ? `<span class="al-count"> ×${e._count}</span>` : '';
+    const nowBadge = isNow ? `<span class="al-now-badge">NOW</span>` : '';
+    return `<div class="al-entry${isNow ? ' al-now' : ''}">
+      <span class="al-t">${fmtTime(isNow ? e._latestTs : e.ts)}</span>
       <span class="al-main">
-        <span class="al-action">${actionStr}</span>
+        <span class="al-action">${actionStr}${countBadge}${nowBadge}</span>
         <span class="al-area">${area ? ' · ' + area : ''}</span>
         ${result ? `<div class="al-result">${result}</div>` : ''}
       </span>
       <span class="al-party">${party}</span>
     </div>`;
   }).join('');
+
   if (scrollToBottom) body.scrollTop = body.scrollHeight;
+  else {
+    // keep scroll at bottom if already there
+    const atBottom = body.scrollTop >= body.scrollHeight - body.clientHeight - 20;
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  }
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
