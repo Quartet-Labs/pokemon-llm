@@ -1998,12 +1998,45 @@ function processAction(state, action) {
 
     // [G1] Pokédex view action
     if (type === 'pokedex_view') {
-      const dex = state.pokedex || { seen: {}, caught: {} };
-      const seenCount = Object.keys(dex.seen).length;
-      const caughtCount = Object.keys(dex.caught).length;
-      const caughtList = Object.keys(dex.caught).sort();
-      state.message = `POKéDEX: Seen ${seenCount} · Caught ${caughtCount}` +
-        (caughtList.length ? `\nCaught: ${caughtList.map(s => s.toUpperCase()).join(', ')}` : '');
+      if (!state.pokedex) {
+        state.message = "You don't have a POKéDEX yet!";
+        return state;
+      }
+      if (!state.player.flags?.has_pokedex) {
+        state.message = "You don't have a POKéDEX yet! Deliver OAK's parcel to get one.";
+        return state;
+      }
+      const seen = Object.keys(state.pokedex.seen || {});
+      const caught = Object.keys(state.pokedex.caught || {});
+      const species = action.species;
+      if (species) {
+        // Show individual species entry
+        const pkmn = POKEMON[species];
+        if (!pkmn) { state.message = `Unknown species: ${species}`; return state; }
+        const wasSeen = state.pokedex.seen[species];
+        if (!wasSeen) { state.message = `${pkmn.name}: No data. You haven't encountered this POKéMON yet.`; return state; }
+        const wasCaught = state.pokedex.caught?.[species];
+        state.message = [
+          `POKéDEX — #${String(pkmn.id).padStart(3,'0')} ${pkmn.name}`,
+          `Type: ${(Array.isArray(pkmn.type) ? pkmn.type : [pkmn.type]).join('/')}`,
+          pkmn.height ? `Height: ${pkmn.height}  Weight: ${pkmn.weight}` : '',
+          pkmn.dexEntry || '',
+          `Status: ${wasCaught ? 'OWNED' : 'SEEN'}`,
+        ].filter(Boolean).join('\n');
+        return state;
+      }
+      // Summary view
+      const oakMsg = caught.length >= 151
+        ? "OAK: Congratulations! You've completed the POKéDEX! You are a true POKéMON MASTER!"
+        : caught.length >= 100
+        ? `OAK: Excellent progress! ${caught.length}/151 caught. The rare ones await!`
+        : caught.length >= 50
+        ? `OAK: Great work! ${caught.length}/151 caught. Keep exploring!`
+        : `OAK: You've caught ${caught.length} POKéMON so far. There are 151 in the world!`;
+      const seenList = seen.map(s => {
+        return POKEMON[s] ? `#${String(POKEMON[s].id).padStart(3,'0')} ${POKEMON[s].name}${state.pokedex.caught?.[s] ? '✓' : ''}` : s;
+      }).join(', ');
+      state.message = `POKéDEX: ${seen.length} seen / ${caught.length} caught (of 151)\n${oakMsg}\nSeen: ${seenList || 'none yet'}`;
       return state;
     }
 
@@ -3484,6 +3517,8 @@ function getView(state) {
       tm_count: Object.keys(state.player.tms || {}).length,
       money: state.player.money,
       badges: state.player.badges,
+      pokedex_seen: Object.keys(state.pokedex?.seen || {}).length,
+      pokedex_caught: Object.keys(state.pokedex?.caught || {}).length,
       pc_count: state.player.pcBoxes
         ? state.player.pcBoxes.reduce((s, b) => s + b.length, 0)
         : (state.player.pc || []).length,
@@ -3570,6 +3605,7 @@ function getView(state) {
       'pc_withdraw (index: 0-19)',
       'pc_deposit (party_index: 0-5)',
       'pc_release (index: 0-19)',
+      'pokedex_view — show seen/caught counts (add species: "name" for individual entry)',
     ];
     // Expose NPC effective positions (for wander/spin)
     if (area.npcs) {
