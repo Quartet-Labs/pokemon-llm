@@ -13,12 +13,22 @@ DELAY = 1.5   # seconds between actions — be a little gentle on the server
 
 client = anthropic.Anthropic()
 
+# Per-session auth state — set in main() after POST /session
+_session_id: str | None = None
+_session_token: str | None = None
+
 
 def api(method: str, path: str, body=None):
     url = BASE + path
+    # Attach session query param so each agent hits its own isolated game state
+    if _session_id and "session=" not in path:
+        sep = "&" if "?" in url else "?"
+        url = url + sep + f"session={_session_id}"
     data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(url, data=data, method=method,
-                                 headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    if _session_token:
+        headers["Authorization"] = f"Bearer {_session_token}"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             return json.loads(r.read())
@@ -140,17 +150,30 @@ def pick_action(state: dict, history: list) -> dict:
 
 
 def main():
+    global _session_id, _session_token
+
+    label = sys.argv[1] if len(sys.argv) > 1 else MODEL
     print(f"🎮 Pokemon Haiku agent — model: {MODEL}")
     print(f"   Target: {BASE}")
     print()
 
-    # Reset
+    # Create an isolated named session so multiple agents don't clobber each other
+    print("⟳  Creating session...")
+    sess = api("POST", "/session")
+    if not sess or "sessionId" not in sess:
+        print("Session creation failed — is the server up?", file=sys.stderr)
+        sys.exit(1)
+    _session_id = sess["sessionId"]
+    _session_token = sess["token"]
+    print(f"   Session: {_session_id}  label: {sess.get('label')}")
+
+    # Reset to get a fresh game state in this session
     print("⟳  Resetting game...")
     state = api("POST", "/reset")
     if not state:
-        print("Reset failed — is the server up?", file=sys.stderr)
+        print("Reset failed.", file=sys.stderr)
         sys.exit(1)
-    print(f"   Phase: {state.get('phase')}")
+    print(f"   Screen: {state.get('screen')}")
     print()
 
     history = []
