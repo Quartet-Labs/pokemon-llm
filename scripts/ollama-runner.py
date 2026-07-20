@@ -17,9 +17,17 @@ Usage:
 import argparse
 import json
 import os
+import sys
 import time
 import urllib.request
 import urllib.error
+
+# Reusable training layer: reward function + trajectory logger. Both live in
+# scripts/ next to this driver; import them by adding scripts/ to sys.path so the
+# runner works regardless of the cwd it's launched from.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from reward import compute_reward  # noqa: E402
+from trajectory import TrajectoryLogger  # noqa: E402
 
 # Single tool the model calls each turn. `type` is always required; the other
 # fields are filled in only when the chosen action needs them. The game server
@@ -188,6 +196,14 @@ def main():
     ap.add_argument("--label", default="qwen3:32b · Boulder Badge")
     ap.add_argument("--sleep", type=float, default=0.3)
     ap.add_argument("--logfile", default="/home/carmody/.karakos/workspace/data/ollama-run.jsonl")
+    # Trajectory logging is ON by default: every episode writes a training-ready
+    # JSONL to data/trajectories/<session_id>.jsonl (full view + reward per turn).
+    ap.add_argument("--log-trajectories", dest="log_trajectories",
+                    action="store_true", default=True,
+                    help="Write per-turn reward + full-view trajectory JSONL (default on).")
+    ap.add_argument("--no-log-trajectories", dest="log_trajectories",
+                    action="store_false",
+                    help="Disable trajectory logging.")
     args = ap.parse_args()
 
     base = args.base.rstrip("/")
@@ -204,8 +220,13 @@ def main():
         log.write(json.dumps(obj) + "\n")
         log.flush()
 
+    # Training trajectory logger (reward + full-view JSONL per turn). Separate
+    # from the operational `log` above — this one is the SFT/GRPO training feed.
+    traj = TrajectoryLogger(sid, seed=seed, model=args.model) if args.log_trajectories else None
+
     record({"event": "start", "session": sid, "seed": seed, "model": args.model,
-            "ollama": ollama, "spectate": f"{base}/", "budget": args.budget})
+            "ollama": ollama, "spectate": f"{base}/", "budget": args.budget,
+            "trajectories": traj.path if traj else None})
     print(f"[ollama-runner] session={sid} seed={seed} model={args.model}", flush=True)
     print(f"[ollama-runner] watch: {base}/", flush=True)
 
@@ -268,15 +289,47 @@ def main():
         consecutive_errors = 0
         if result.get("halted") or result.get("outcome") not in (None, "ongoing"):
             record({"event": "server_stop", "turn": turn, "result": result})
-            if str(result.get("outcome", "")).startswith("badge"):
+            reached_badge = str(result.get("outcome", "")).startswith("badge")
+            if reached_badge:
                 reached = True
+            # Terminal reward: the /action payload here is a stop/summary object,
+            # not a full view. `view` (from /state) is the last real observation;
+            # score the terminal transition against the stop message so a
+            # badge-earning final turn still records its BADGE reward. We hand
+            # compute_reward a synthetic result_view that carries the (possibly
+            # bumped) badge count and the terminal area so the delta is correct.
+            if traj:
+                stop_msg = result.get("message") or ""
+                stop_view = {
+                    "area": view.get("area"),
+                    "message": stop_msg,
+                    "player": {
+                        "badges": badges + (1 if reached_badge else 0),
+                        "position": (view.get("player") or {}).get("position"),
+                    },
+                    # No map on a stop payload -> no new-tile signal, which is
+                    # correct for a terminal transition.
+                }
+                r, bd = compute_reward(view, action, stop_view, stop_msg)
+                traj.log_turn(turn, state=view, action=action, reward=r,
+                              reward_breakdown=bd, done=True)
             break
 
-        msg = (result.get("state") or {}).get("message") or result.get("message") or ""
+        # Normal turn: `result` IS the next full view (server returns getView()).
+        msg = result.get("message") or (result.get("state") or {}).get("message") or ""
+        if traj:
+            r, bd = compute_reward(view, action, result, msg)
+            # `state` is the FULL view the model saw this turn (view from /state),
+            # so the row is replayable as an SFT prompt.
+            traj.log_turn(turn, state=view, action=action, reward=r,
+                          reward_breakdown=bd, done=False)
         history.append((action, msg[:120]))
         record({"event": "turn", "turn": turn, "badges": badges, "action": action, "msg": msg[:160]})
         time.sleep(args.sleep)
 
+    if traj:
+        traj.log_summary(reached=reached)
+        traj.close()
     log.close()
     if reached:
         poke_amos(f"OLLAMA POKEMON RUN: {args.model} earned the Boulder Badge in {turn} turns "

@@ -1,3 +1,6 @@
 node_modules/
 .env
 *.log
+__pycache__/
+# Training trajectory logs are run artifacts, not source.
+data/trajectories/*.jsonl
