@@ -125,12 +125,16 @@ def ollama_decide(ollama, model, system, user):
     body = {
         "model": model,
         "stream": False,
+        "keep_alive": "30m",
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         "tools": TOOLS,
-        "options": {"temperature": 0.4},
+        # num_ctx 4096 keeps a 32B model's KV cache small enough to fit fully in a
+        # 24GB GPU alongside the desktop — without it qwen3:32b spills and runs at
+        # ~40s/turn instead of ~5s. Game prompts are well under 4k tokens.
+        "options": {"temperature": 0.4, "num_ctx": 4096},
     }
     resp = http_post(f"{ollama}/api/chat", body)
     msg = resp.get("message", {}) or {}
