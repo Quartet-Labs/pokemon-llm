@@ -102,6 +102,37 @@ h1 { color: #ffcc00; font-size: 1.2rem; letter-spacing: 2px; }
 .log-e { padding:1px 0; border-bottom:1px solid #1a1a1a; color:#888; font-size:.66rem; }
 .log-e:first-child { color:#ddd; }
 
+/* ── Agent action log ── */
+.agent-log { margin-top:8px; border:1px solid #2a2a2a; border-radius:3px; overflow:hidden; }
+.agent-log-hdr {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:4px 8px; background:#161620; cursor:pointer; user-select:none;
+  font-size:.7rem; color:#ffcc00; letter-spacing:.5px;
+}
+.agent-log-hdr:hover { background:#1e1e30; }
+.agent-log-hdr .al-chevron { transition:transform .2s; display:inline-block; }
+.agent-log-hdr.open .al-chevron { transform:rotate(90deg); }
+.agent-log-body {
+  display:none; max-height:220px; overflow-y:auto;
+  background:#0a0a10;
+}
+.agent-log-body.open { display:block; }
+.agent-log-body::-webkit-scrollbar { width:4px; }
+.agent-log-body::-webkit-scrollbar-thumb { background:#333; }
+.al-entry {
+  display:grid; grid-template-columns:40px 1fr auto;
+  gap:0 6px; padding:3px 6px; border-bottom:1px solid #111;
+  font-size:.6rem; line-height:1.4; align-items:start;
+}
+.al-entry:last-child { border-bottom:none; }
+.al-entry:hover { background:#111120; }
+.al-t  { color:#555; white-space:nowrap; padding-top:1px; }
+.al-main { min-width:0; }
+.al-action { color:#7ec8e3; font-weight:bold; }
+.al-result { color:#888; margin-top:1px; }
+.al-party { color:#2ecc71; white-space:nowrap; font-size:.58rem; text-align:right; padding-top:1px; }
+.al-area { color:#666; font-size:.58rem; }
+
 .starter-row { display:flex; gap:6px; margin-top:6px; }
 .sbtn {
   flex:1; background:#0d1a0d; border:1px solid #2a5a2a; border-radius:4px;
@@ -161,6 +192,13 @@ h1 { color: #ffcc00; font-size: 1.2rem; letter-spacing: 2px; }
         <div class="log-wrap"><div id="d-log"></div></div>
         <div id="d-starter"></div>
       </div>
+    </div>
+    <div class="agent-log" id="agent-log">
+      <div class="agent-log-hdr" id="agent-log-hdr" onclick="toggleAgentLog()">
+        <span>⚡ AGENT ACTION LOG</span>
+        <span><span id="agent-log-count" style="color:#666;font-size:.62rem;margin-right:6px"></span><span class="al-chevron">▶</span></span>
+      </div>
+      <div class="agent-log-body" id="agent-log-body"></div>
     </div>
   </div>
   <div class="panel">
@@ -642,6 +680,13 @@ function updateDrawer() {
 
   // Pass-the-controller — only the token-less default session accepts
   // spectator actions; authed sessions would 401.
+  // refresh agent log when inspected player changes
+  if (p.sessionId !== agentLogSession) {
+    agentLogSession = p.sessionId;
+    agentLogEntries = [];
+    fetchAgentLog(p.sessionId);
+  }
+
   document.getElementById('d-starter').innerHTML = (state.screen === 'starter_select' && p.sessionId === 'default') ? `
     <h2 style="margin-top:8px">CHOOSE STARTER (P${selected})</h2>
     <div class="starter-row">
@@ -649,6 +694,87 @@ function updateDrawer() {
       <button class="sbtn" onclick="chooseStarter(${selected},'charmander')">🔥 CHAR</button>
       <button class="sbtn" onclick="chooseStarter(${selected},'squirtle')">💧 SQUIRT</button>
     </div>` : '';
+}
+
+// ── Agent action log ─────────────────────────────────────────────────────────
+let agentLogOpen = false;
+let agentLogSession = null;
+let agentLogEntries = [];
+
+function toggleAgentLog() {
+  agentLogOpen = !agentLogOpen;
+  document.getElementById('agent-log-hdr').classList.toggle('open', agentLogOpen);
+  document.getElementById('agent-log-body').classList.toggle('open', agentLogOpen);
+  if (agentLogOpen) renderAgentLog(true);
+}
+
+function fmtAction(action) {
+  if (!action) return '—';
+  const t = action.type || '?';
+  if (t === 'move') return `move ${action.direction || ''}`;
+  if (t === 'battle_move') return `use move #${action.move_index ?? '?'}`;
+  if (t === 'choose_starter') return `choose ${action.species || '?'}`;
+  if (t === 'talk') return `talk ${action.npc_id || ''}`;
+  if (t === 'throw_ball') return `throw ${action.ball || 'ball'}`;
+  if (t === 'mart_buy') return `buy ${action.quantity || 1}× ${action.item || '?'}`;
+  if (t === 'use_item') return `use ${action.item || '?'}`;
+  return Object.entries(action).filter(([k])=>k!=='type').map(([k,v])=>`${k}:${v}`).join(' ') || t;
+}
+
+function fmtParty(party) {
+  if (!party || !party.length) return '';
+  return party.map(p => {
+    const [cur, max] = (p.hp||'0/0').split('/').map(Number);
+    const pct = max ? Math.round(cur/max*100) : 0;
+    return `${p.name} ${pct}%`;
+  }).join(' · ');
+}
+
+function fmtTime(ts) {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+  } catch { return ts ? ts.slice(11,19) : ''; }
+}
+
+async function fetchAgentLog(sessionId) {
+  if (!sessionId) return;
+  try {
+    const r = await fetch(`/logs?session=${sessionId}&limit=100`);
+    const data = await r.json();
+    if (data.entries) {
+      agentLogEntries = data.entries;
+      const countEl = document.getElementById('agent-log-count');
+      if (countEl) countEl.textContent = `${data.total} actions`;
+      if (agentLogOpen) renderAgentLog(false);
+    }
+  } catch (e) { /* silent */ }
+}
+
+function renderAgentLog(scrollToBottom) {
+  const body = document.getElementById('agent-log-body');
+  if (!body) return;
+  if (!agentLogEntries.length) {
+    body.innerHTML = '<div style="color:#555;font-size:.66rem;padding:8px 10px">No actions yet.</div>';
+    return;
+  }
+  const entries = agentLogEntries.slice(-100);
+  body.innerHTML = entries.map(e => {
+    const actionStr = fmtAction(e.action);
+    const result = (e.log || []).join(' ').slice(0, 120);
+    const party = fmtParty(e.party);
+    const area = (e.area || '').replace(/_/g, ' ');
+    return `<div class="al-entry">
+      <span class="al-t">${fmtTime(e.ts)}</span>
+      <span class="al-main">
+        <span class="al-action">${actionStr}</span>
+        <span class="al-area">${area ? ' · ' + area : ''}</span>
+        ${result ? `<div class="al-result">${result}</div>` : ''}
+      </span>
+      <span class="al-party">${party}</span>
+    </div>`;
+  }).join('');
+  if (scrollToBottom) body.scrollTop = body.scrollHeight;
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -753,6 +879,10 @@ function connect() {
         if (msg.map) players[n].map = msg.map;
         if (msg.state) players[n].state = msg.state;
         renderCell(n);
+        // refresh action log for the currently inspected player
+        if (n === selected && agentLogSession === (msg.sessionId || 'default')) {
+          fetchAgentLog(msg.sessionId || 'default');
+        }
       }
     }
     if (msg.event === 'halted') {
