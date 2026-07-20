@@ -3722,6 +3722,11 @@ function getView(state) {
     view.dialogue = {
       text: state.dialogue.lines[state.dialogue.index],
       remaining: state.dialogue.lines.length - state.dialogue.index - 1,
+      // Additive (#reward-v1.1): expose which NPC this dialogue is with so the
+      // reward layer can key NPC-novelty on a stable id (not a fuzzy position)
+      // and so the model can tell speakers apart. May be undefined for system /
+      // sign dialogue that has no originating NPC.
+      npc_id: state.dialogue.npcId,
       hint: 'Use {"type":"talk"} to advance.',
     };
   }

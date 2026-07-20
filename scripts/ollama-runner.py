@@ -26,7 +26,7 @@ import urllib.error
 # scripts/ next to this driver; import them by adding scripts/ to sys.path so the
 # runner works regardless of the cwd it's launched from.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from reward import compute_reward  # noqa: E402
+from reward import RewardTracker  # noqa: E402
 from trajectory import TrajectoryLogger  # noqa: E402
 
 # Single tool the model calls each turn. `type` is always required; the other
@@ -223,6 +223,10 @@ def main():
     # Training trajectory logger (reward + full-view JSONL per turn). Separate
     # from the operational `log` above — this one is the SFT/GRPO training feed.
     traj = TrajectoryLogger(sid, seed=seed, model=args.model) if args.log_trajectories else None
+    # One RewardTracker per EPISODE: holds cross-turn novelty memory (trainers
+    # fought, NPCs talked to) so first-encounter bonuses fire exactly once. The
+    # deterministic terms stay pure inside it; we call reward.step() per turn.
+    reward_tracker = RewardTracker()
 
     record({"event": "start", "session": sid, "seed": seed, "model": args.model,
             "ollama": ollama, "spectate": f"{base}/", "budget": args.budget,
@@ -310,7 +314,7 @@ def main():
                     # No map on a stop payload -> no new-tile signal, which is
                     # correct for a terminal transition.
                 }
-                r, bd = compute_reward(view, action, stop_view, stop_msg)
+                r, bd = reward_tracker.step(view, action, stop_view, stop_msg)
                 traj.log_turn(turn, state=view, action=action, reward=r,
                               reward_breakdown=bd, done=True)
             break
@@ -318,7 +322,7 @@ def main():
         # Normal turn: `result` IS the next full view (server returns getView()).
         msg = result.get("message") or (result.get("state") or {}).get("message") or ""
         if traj:
-            r, bd = compute_reward(view, action, result, msg)
+            r, bd = reward_tracker.step(view, action, result, msg)
             # `state` is the FULL view the model saw this turn (view from /state),
             # so the row is replayable as an SFT prompt.
             traj.log_turn(turn, state=view, action=action, reward=r,
