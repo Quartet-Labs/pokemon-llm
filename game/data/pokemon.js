@@ -809,6 +809,397 @@ const ENCOUNTER_TABLES = {
       { species:'spearow', levelMin:13, levelMax:18, rate:50 },
     ],
   },
+  route_2: {
+    // Route 2 south section (between Viridian City and Viridian Forest gate) — Red version
+    tall_grass: [
+      { species:'pidgey',   levelMin:3, levelMax:5, rate:45 },
+      { species:'rattata',  levelMin:3, levelMax:4, rate:30 },
+      { species:'caterpie', levelMin:3, levelMax:4, rate:13 },
+      { species:'weedle',   levelMin:3, levelMax:4, rate:12 },
+    ],
+  },
+  route_3: {
+    // Source: Bulbapedia Route 3 (Red)
+    tall_grass: [
+      { species:'spearow',   levelMin:6, levelMax:8, rate:55 },
+      { species:'jigglypuff',levelMin:3, levelMax:8, rate:20 },
+      { species:'sandshrew', levelMin:6, levelMax:7, rate:15 }, // Blue only, Red has nidoran
+      { species:'nidoran_f', levelMin:6, levelMax:8, rate:5  },
+      { species:'nidoran_m', levelMin:6, levelMax:8, rate:5  },
+    ],
+    water: [
+      { species:'magikarp', levelMin:5, levelMax:15, rate:100 },
+    ],
+  },
+  route_4: {
+    // Source: Bulbapedia Route 4 (Red)
+    tall_grass: [
+      { species:'spearow',   levelMin:13, levelMax:15, rate:35 },
+      { species:'rattata',   levelMin:13, levelMax:15, rate:30 },
+      { species:'ekans',     levelMin:13, levelMax:15, rate:20 },
+      { species:'sandshrew', levelMin:13, levelMax:15, rate:15 },
+    ],
+    water: [
+      { species:'magikarp', levelMin:5, levelMax:15, rate:100 },
+    ],
+  },
+  mt_moon_1f: {
+    // Source: Bulbapedia Mt. Moon 1F (Red)
+    tall_grass: [
+      { species:'zubat',   levelMin:6,  levelMax:8,  rate:51 },
+      { species:'geodude', levelMin:8,  levelMax:10, rate:39 },
+      { species:'paras',   levelMin:8,  levelMax:10, rate:10 },
+    ],
+  },
+  mt_moon_b1f: {
+    tall_grass: [
+      { species:'zubat',    levelMin:8,  levelMax:12, rate:51 },
+      { species:'geodude',  levelMin:8,  levelMax:12, rate:35 },
+      { species:'paras',    levelMin:10, levelMax:13, rate:5  },
+      { species:'clefairy', levelMin:8,  levelMax:12, rate:9  },
+    ],
+  },
+  mt_moon_b2f: {
+    tall_grass: [
+      { species:'zubat',    levelMin:8,  levelMax:12, rate:51 },
+      { species:'geodude',  levelMin:8,  levelMax:12, rate:35 },
+      { species:'clefairy', levelMin:8,  levelMax:12, rate:9  },
+      { species:'paras',    levelMin:10, levelMax:13, rate:5  },
+    ],
+  },
+  route_24: {
+    // Nugget Bridge
+    tall_grass: [
+      { species:'caterpie', levelMin:13, levelMax:17, rate:35 },
+      { species:'metapod',  levelMin:13, levelMax:17, rate:30 },
+      { species:'oddish',   levelMin:13, levelMax:17, rate:25 },
+      { species:'abra',     levelMin:8,  levelMax:15, rate:10 },
+    ],
+    water: [
+      { species:'goldeen',  levelMin:10, levelMax:30, rate:90 },
+      { species:'poliwag',  levelMin:10, levelMax:25, rate:10 },
+    ],
+  },
+  route_25: {
+    tall_grass: [
+      { species:'caterpie', levelMin:13, levelMax:17, rate:35 },
+      { species:'metapod',  levelMin:13, levelMax:17, rate:30 },
+      { species:'oddish',   levelMin:13, levelMax:17, rate:25 },
+      { species:'abra',     levelMin:8,  levelMax:15, rate:10 },
+    ],
+    water: [
+      { species:'goldeen',  levelMin:10, levelMax:30, rate:90 },
+      { species:'poliwag',  levelMin:10, levelMax:25, rate:10 },
+    ],
+  },
+  route_5: {
+    tall_grass: [
+      { species:'oddish',  levelMin:13, levelMax:15, rate:35 },
+      { species:'meowth',  levelMin:10, levelMax:15, rate:35 },
+      { species:'mankey',  levelMin:13, levelMax:15, rate:20 },
+      { species:'pidgey',  levelMin:13, levelMax:15, rate:10 },
+    ],
+  },
+  route_6: {
+    tall_grass: [
+      { species:'oddish',  levelMin:13, levelMax:15, rate:35 },
+      { species:'meowth',  levelMin:10, levelMax:15, rate:35 },
+      { species:'mankey',  levelMin:13, levelMax:15, rate:20 },
+      { species:'pidgey',  levelMin:13, levelMax:15, rate:10 },
+    ],
+    water: [
+      { species:'poliwag',  levelMin:15, levelMax:25, rate:90 },
+      { species:'goldeen',  levelMin:15, levelMax:25, rate:10 },
+    ],
+  },
+  route_7: {
+    tall_grass: [
+      { species:'vulpix',    levelMin:18, levelMax:22, rate:5  },
+      { species:'growlithe', levelMin:18, levelMax:22, rate:20 },
+      { species:'oddish',    levelMin:22, levelMax:24, rate:20 },
+      { species:'pidgey',    levelMin:22, levelMax:24, rate:25 },
+      { species:'meowth',    levelMin:18, levelMax:22, rate:20 },
+      { species:'abra',      levelMin:15, levelMax:20, rate:10 },
+    ],
+  },
+  route_8: {
+    tall_grass: [
+      { species:'growlithe', levelMin:20, levelMax:25, rate:25 },
+      { species:'meowth',    levelMin:20, levelMax:25, rate:25 },
+      { species:'pidgey',    levelMin:20, levelMax:25, rate:20 },
+      { species:'abra',      levelMin:15, levelMax:22, rate:10 },
+      { species:'drowzee',   levelMin:20, levelMax:23, rate:20 },
+    ],
+  },
+  route_9: {
+    tall_grass: [
+      { species:'nidoran_f', levelMin:17, levelMax:20, rate:25 },
+      { species:'nidoran_m', levelMin:17, levelMax:20, rate:25 },
+      { species:'oddish',    levelMin:17, levelMax:20, rate:20 },
+      { species:'rattata',   levelMin:17, levelMax:20, rate:15 },
+      { species:'ekans',     levelMin:17, levelMax:20, rate:15 },
+    ],
+  },
+  route_10: {
+    tall_grass: [
+      { species:'voltorb',   levelMin:20, levelMax:25, rate:35 },
+      { species:'magnemite', levelMin:20, levelMax:25, rate:35 },
+      { species:'rattata',   levelMin:20, levelMax:25, rate:20 },
+      { species:'ekans',     levelMin:20, levelMax:25, rate:10 },
+    ],
+    water: [
+      { species:'poliwag',   levelMin:20, levelMax:35, rate:90 },
+      { species:'poliwhirl', levelMin:25, levelMax:35, rate:10 },
+    ],
+  },
+  rock_tunnel_1f: {
+    tall_grass: [
+      { species:'zubat',   levelMin:16, levelMax:22, rate:35 },
+      { species:'geodude', levelMin:16, levelMax:22, rate:35 },
+      { species:'machop',  levelMin:16, levelMax:22, rate:20 },
+      { species:'onix',    levelMin:15, levelMax:22, rate:10 },
+    ],
+  },
+  rock_tunnel_b1f: {
+    tall_grass: [
+      { species:'zubat',   levelMin:18, levelMax:24, rate:35 },
+      { species:'geodude', levelMin:16, levelMax:22, rate:35 },
+      { species:'machop',  levelMin:16, levelMax:22, rate:15 },
+      { species:'onix',    levelMin:16, levelMax:23, rate:15 },
+    ],
+  },
+  route_11: {
+    tall_grass: [
+      { species:'ekans',   levelMin:12, levelMax:15, rate:45 },
+      { species:'spearow', levelMin:13, levelMax:17, rate:35 },
+      { species:'drowzee', levelMin:11, levelMax:15, rate:20 },
+    ],
+  },
+  route_12: {
+    tall_grass: [
+      { species:'snorlax', levelMin:30, levelMax:30, rate:5  }, // static encounter, usually
+      { species:'ekans',   levelMin:20, levelMax:25, rate:35 },
+      { species:'oddish',  levelMin:20, levelMax:25, rate:35 },
+      { species:'pidgey',  levelMin:20, levelMax:25, rate:25 },
+    ],
+    water: [
+      { species:'tentacool',  levelMin:15, levelMax:35, rate:95 },
+      { species:'tentacruel', levelMin:30, levelMax:40, rate:5  },
+    ],
+  },
+  route_13: {
+    tall_grass: [
+      { species:'ekans',   levelMin:20, levelMax:25, rate:30 },
+      { species:'oddish',  levelMin:20, levelMax:25, rate:30 },
+      { species:'ditto',   levelMin:20, levelMax:25, rate:20 },
+      { species:'venonat', levelMin:20, levelMax:25, rate:20 },
+    ],
+    water: [
+      { species:'tentacool',  levelMin:15, levelMax:35, rate:95 },
+      { species:'tentacruel', levelMin:30, levelMax:40, rate:5  },
+    ],
+  },
+  route_14: {
+    tall_grass: [
+      { species:'ekans',   levelMin:22, levelMax:27, rate:30 },
+      { species:'oddish',  levelMin:22, levelMax:27, rate:30 },
+      { species:'ditto',   levelMin:22, levelMax:27, rate:20 },
+      { species:'venonat', levelMin:22, levelMax:27, rate:20 },
+    ],
+  },
+  route_15: {
+    tall_grass: [
+      { species:'ekans',   levelMin:22, levelMax:27, rate:30 },
+      { species:'oddish',  levelMin:22, levelMax:27, rate:30 },
+      { species:'ditto',   levelMin:22, levelMax:27, rate:20 },
+      { species:'venonat', levelMin:22, levelMax:27, rate:20 },
+    ],
+  },
+  route_16: {
+    tall_grass: [
+      { species:'spearow', levelMin:20, levelMax:25, rate:45 },
+      { species:'rattata', levelMin:20, levelMax:25, rate:35 },
+      { species:'fearow',  levelMin:22, levelMax:26, rate:20 },
+    ],
+  },
+  route_17: {
+    // Cycling Road
+    tall_grass: [
+      { species:'spearow', levelMin:20, levelMax:25, rate:40 },
+      { species:'rattata', levelMin:20, levelMax:25, rate:35 },
+      { species:'fearow',  levelMin:22, levelMax:26, rate:25 },
+    ],
+  },
+  route_18: {
+    tall_grass: [
+      { species:'spearow', levelMin:20, levelMax:25, rate:45 },
+      { species:'rattata', levelMin:20, levelMax:25, rate:35 },
+      { species:'fearow',  levelMin:22, levelMax:26, rate:20 },
+    ],
+  },
+  route_19: {
+    water: [
+      { species:'tentacool',  levelMin:15, levelMax:40, rate:95 },
+      { species:'tentacruel', levelMin:30, levelMax:40, rate:5  },
+    ],
+  },
+  route_20: {
+    water: [
+      { species:'tentacool',  levelMin:15, levelMax:40, rate:95 },
+      { species:'tentacruel', levelMin:30, levelMax:40, rate:5  },
+    ],
+  },
+  route_21: {
+    tall_grass: [
+      { species:'pidgey',    levelMin:30, levelMax:35, rate:35 },
+      { species:'rattata',   levelMin:30, levelMax:35, rate:25 },
+      { species:'tangela',   levelMin:28, levelMax:35, rate:25 },
+      { species:'pidgeotto', levelMin:30, levelMax:35, rate:15 },
+    ],
+    water: [
+      { species:'tentacool',  levelMin:15, levelMax:40, rate:95 },
+      { species:'tentacruel', levelMin:30, levelMax:40, rate:5  },
+    ],
+  },
+  seafoam_islands_1f: {
+    tall_grass: [
+      { species:'zubat',   levelMin:28, levelMax:35, rate:35 },
+      { species:'krabby',  levelMin:28, levelMax:35, rate:25 },
+      { species:'psyduck', levelMin:28, levelMax:35, rate:20 },
+      { species:'seel',    levelMin:28, levelMax:35, rate:20 },
+    ],
+    water: [
+      { species:'seel',      levelMin:30, levelMax:40, rate:50 },
+      { species:'dewgong',   levelMin:35, levelMax:45, rate:20 },
+      { species:'tentacool', levelMin:25, levelMax:35, rate:30 },
+    ],
+  },
+  seafoam_islands_b1f: {
+    tall_grass: [
+      { species:'zubat',     levelMin:28, levelMax:35, rate:40 },
+      { species:'psyduck',   levelMin:28, levelMax:35, rate:20 },
+      { species:'slowpoke',  levelMin:28, levelMax:35, rate:20 },
+      { species:'seel',      levelMin:28, levelMax:35, rate:20 },
+    ],
+    water: [
+      { species:'articuno', levelMin:50, levelMax:50, rate:100 }, // static in real game, but stub here
+    ],
+  },
+  pokemon_mansion_1f: {
+    tall_grass: [
+      { species:'ponyta',  levelMin:30, levelMax:35, rate:40 },
+      { species:'grimer',  levelMin:30, levelMax:35, rate:30 },
+      { species:'koffing', levelMin:30, levelMax:35, rate:30 },
+    ],
+  },
+  pokemon_mansion_2f: {
+    tall_grass: [
+      { species:'ponyta',  levelMin:32, levelMax:36, rate:35 },
+      { species:'grimer',  levelMin:32, levelMax:36, rate:30 },
+      { species:'koffing', levelMin:32, levelMax:36, rate:25 },
+      { species:'muk',     levelMin:32, levelMax:36, rate:10 },
+    ],
+  },
+  power_plant: {
+    tall_grass: [
+      { species:'voltorb',    levelMin:24, levelMax:35, rate:40 },
+      { species:'magnemite',  levelMin:24, levelMax:35, rate:25 },
+      { species:'magneton',   levelMin:24, levelMax:35, rate:10 },
+      { species:'electabuzz', levelMin:33, levelMax:40, rate:20 },
+      { species:'pikachu',    levelMin:22, levelMax:28, rate:5  },
+    ],
+  },
+  victory_road_1f: {
+    tall_grass: [
+      { species:'geodude', levelMin:36, levelMax:40, rate:35 },
+      { species:'onix',    levelMin:34, levelMax:40, rate:25 },
+      { species:'zubat',   levelMin:36, levelMax:40, rate:30 },
+      { species:'machoke', levelMin:34, levelMax:40, rate:10 },
+    ],
+  },
+  victory_road_2f: {
+    tall_grass: [
+      { species:'geodude',  levelMin:36, levelMax:40, rate:30 },
+      { species:'graveler', levelMin:36, levelMax:40, rate:20 },
+      { species:'zubat',    levelMin:36, levelMax:40, rate:25 },
+      { species:'machoke',  levelMin:34, levelMax:40, rate:15 },
+      { species:'venomoth', levelMin:36, levelMax:40, rate:10 },
+    ],
+  },
+  cerulean_cave_1f: {
+    tall_grass: [
+      { species:'golbat',    levelMin:46, levelMax:55, rate:30 },
+      { species:'parasect',  levelMin:46, levelMax:55, rate:20 },
+      { species:'kadabra',   levelMin:46, levelMax:55, rate:15 },
+      { species:'ditto',     levelMin:46, levelMax:55, rate:15 },
+      { species:'rhydon',    levelMin:46, levelMax:55, rate:10 },
+      { species:'electrode', levelMin:46, levelMax:55, rate:10 },
+    ],
+    water: [
+      { species:'golduck',  levelMin:46, levelMax:55, rate:50 },
+      { species:'slowbro',  levelMin:46, levelMax:55, rate:30 },
+      { species:'psyduck',  levelMin:46, levelMax:55, rate:20 },
+    ],
+  },
+  cerulean_cave_b1f: {
+    tall_grass: [
+      { species:'mewtwo', levelMin:70, levelMax:70, rate:100 }, // static in real game
+    ],
+  },
+  safari_zone_center: {
+    tall_grass: [
+      { species:'nidoran_f',  levelMin:22, levelMax:28, rate:20 },
+      { species:'nidoran_m',  levelMin:22, levelMax:28, rate:20 },
+      { species:'parasect',   levelMin:30, levelMax:36, rate:15 },
+      { species:'venonat',    levelMin:22, levelMax:28, rate:15 },
+      { species:'scyther',    levelMin:23, levelMax:25, rate:5  }, // Red
+      { species:'pinsir',     levelMin:23, levelMax:25, rate:5  }, // Blue
+      { species:'kangaskhan', levelMin:28, levelMax:32, rate:15 },
+      { species:'rhyhorn',    levelMin:20, levelMax:25, rate:5  },
+    ],
+  },
+  safari_zone_east: {
+    tall_grass: [
+      { species:'nidoran_f', levelMin:22, levelMax:28, rate:20 },
+      { species:'nidoran_m', levelMin:22, levelMax:28, rate:20 },
+      { species:'exeggcute', levelMin:25, levelMax:30, rate:20 },
+      { species:'venomoth',  levelMin:30, levelMax:36, rate:15 },
+      { species:'paras',     levelMin:28, levelMax:35, rate:15 },
+      { species:'chansey',   levelMin:28, levelMax:32, rate:4  },
+      { species:'tauros',    levelMin:28, levelMax:32, rate:6  },
+    ],
+  },
+  safari_zone_north: {
+    tall_grass: [
+      { species:'nidorina',  levelMin:28, levelMax:33, rate:20 },
+      { species:'nidorino',  levelMin:28, levelMax:33, rate:20 },
+      { species:'exeggcute', levelMin:28, levelMax:33, rate:15 },
+      { species:'rhyhorn',   levelMin:25, levelMax:30, rate:15 },
+      { species:'chansey',   levelMin:28, levelMax:32, rate:4  },
+      { species:'tauros',    levelMin:28, levelMax:32, rate:11 },
+      { species:'scyther',   levelMin:23, levelMax:25, rate:5  },
+      { species:'dratini',   levelMin:15, levelMax:15, rate:5  },
+    ],
+    water: [
+      { species:'goldeen',  levelMin:15, levelMax:30, rate:90 },
+      { species:'seaking',  levelMin:25, levelMax:40, rate:10 },
+    ],
+  },
+  safari_zone_west: {
+    tall_grass: [
+      { species:'nidoran_f', levelMin:22, levelMax:28, rate:20 },
+      { species:'nidoran_m', levelMin:22, levelMax:28, rate:20 },
+      { species:'psyduck',   levelMin:22, levelMax:28, rate:20 },
+      { species:'slowpoke',  levelMin:25, levelMax:30, rate:20 },
+      { species:'chansey',   levelMin:28, levelMax:32, rate:4  },
+      { species:'tauros',    levelMin:28, levelMax:32, rate:11 },
+      { species:'pinsir',    levelMin:22, levelMax:28, rate:5  },
+    ],
+    water: [
+      { species:'psyduck',   levelMin:20, levelMax:35, rate:90 },
+      { species:'slowpoke',  levelMin:20, levelMax:35, rate:10 },
+    ],
+  },
 };
 
 // #B9: rollFn(n) mirrors the engine's roll(n) — returns 1..n — for seeded RNG support.
