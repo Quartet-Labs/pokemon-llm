@@ -158,9 +158,6 @@ def main():
     reached = False
     turn = 0
     consecutive_errors = 0
-    last_pos = None      # last DISTINCT overworld position seen
-    stall = 0            # overworld turns stuck at that position (dialogue frames don't reset it)
-    SWEEP = ["down", "left", "right", "up"]
 
     while turn < args.max_turns:
         turn += 1
@@ -180,31 +177,12 @@ def main():
             record({"event": "goal_reached", "turn": turn, "badges": badges})
             break
 
-        # Stall detection: if we keep returning to the same overworld tile we're
-        # wedged against a wall/NPC (e.g. bumping Prof. Oak forever). Dialogue and
-        # battle frames carry no position — they must NOT reset the counter, or an
-        # NPC that talks every bump masks the stall.
-        pos = (view.get("player") or {}).get("position") if view.get("screen") == "overworld" else None
-        if pos is not None:
-            if pos == last_pos:
-                stall += 1
-            else:
-                stall = 0
-                last_pos = pos
-
-        stall_note = ""
-        if stall >= 2:
-            stall_note = (f"\n\nWARNING: your position hasn't changed in {stall} turns — you are "
-                          f"BLOCKED that way (a wall or an NPC). Stop repeating it. To leave a "
-                          f"building, walk to the door (usually DOWN/south) first. Pick a DIFFERENT "
-                          f"direction than your recent moves.")
-
         hist_txt = "\n".join(
             f"  {i+1}. did {json.dumps(h[0])} -> {h[1]}" for i, h in enumerate(history[-10:])
         ) or "  (none yet)"
         user = (f"Recent actions:\n{hist_txt}\n\n"
                 f"Current state:\n{json.dumps(compact_state(view))}\n\n"
-                f"Reply with ONE action as JSON.{stall_note}")
+                f"Reply with ONE action as JSON.")
 
         try:
             reply = call_model(args.model, SYSTEM, user)
@@ -218,18 +196,11 @@ def main():
 
         action = extract_action(reply)
         if not action:
-            # Fallback so a bad parse never stalls the run.
-            action = {"type": "talk"} if view.get("dialogue_active") else {"type": "move", "direction": "up"}
-            record({"event": "parse_fallback", "turn": turn, "reply": reply[:200], "action": action})
-
-        # Hard anti-stall: if the model still hasn't escaped after 4 wedged turns,
-        # override with a deterministic sweep of the other directions so it can't
-        # burn its whole budget bumping the same tile.
-        if stall >= 3 and not view.get("dialogue_active"):
-            forced = {"type": "move", "direction": SWEEP[(stall - 3) % len(SWEEP)]}
-            record({"event": "stall_override", "turn": turn, "stall": stall,
-                    "model_action": action, "action": forced})
-            action = forced
+            # The agent replied with something we can't parse as an action. Don't
+            # play for it — just log and re-request next turn.
+            record({"event": "unparsed", "turn": turn, "reply": reply[:200]})
+            time.sleep(args.sleep)
+            continue
 
         try:
             result = http_post(f"{base}/action?session={sid}", action, token=token)
