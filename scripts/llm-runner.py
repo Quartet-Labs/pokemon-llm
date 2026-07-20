@@ -31,8 +31,11 @@ you can, then stop.
 
 Route to the Boulder Badge (Gen-1 accurate):
 - First you must choose a starter (screen "starter_select"). Pick squirtle.
-- Leave the starting town going NORTH into the grass, through Viridian City, up \
-Route 2, into Viridian Forest, out the north side to Pewter City.
+- You start inside Oak's Lab. Prof. Oak stands to the NORTH and blocks that wall \
+-- do not walk into him repeatedly. EXIT the lab by walking DOWN/south to the \
+door at the bottom of the room.
+- Once outside in Pallet Town, THEN head north into the grass, through Viridian \
+City, up Route 2, into Viridian Forest, out the north side to Pewter City.
 - The Pewter City gym holds the Boulder Badge. Its leader Brock uses ROCK/GROUND \
 Pokemon (Geodude, Onix). Water and Grass moves are super-effective; Normal moves \
 like Tackle are weak against Rock. Grind a few levels on wild Pokemon in the \
@@ -155,8 +158,8 @@ def main():
     reached = False
     turn = 0
     consecutive_errors = 0
-    last_pos = None      # overworld position, to detect being wedged against a tile
-    stall = 0            # consecutive overworld turns with no position change
+    last_pos = None      # last DISTINCT overworld position seen
+    stall = 0            # overworld turns stuck at that position (dialogue frames don't reset it)
     SWEEP = ["down", "left", "right", "up"]
 
     while turn < args.max_turns:
@@ -177,14 +180,17 @@ def main():
             record({"event": "goal_reached", "turn": turn, "badges": badges})
             break
 
-        # Stall detection: if we're on the overworld and haven't moved, we're
-        # wedged against a wall/NPC (e.g. bumping Prof. Oak forever). Count it.
+        # Stall detection: if we keep returning to the same overworld tile we're
+        # wedged against a wall/NPC (e.g. bumping Prof. Oak forever). Dialogue and
+        # battle frames carry no position — they must NOT reset the counter, or an
+        # NPC that talks every bump masks the stall.
         pos = (view.get("player") or {}).get("position") if view.get("screen") == "overworld" else None
-        if pos is not None and pos == last_pos and not view.get("dialogue_active"):
-            stall += 1
-        else:
-            stall = 0
-        last_pos = pos
+        if pos is not None:
+            if pos == last_pos:
+                stall += 1
+            else:
+                stall = 0
+                last_pos = pos
 
         stall_note = ""
         if stall >= 2:
@@ -219,8 +225,8 @@ def main():
         # Hard anti-stall: if the model still hasn't escaped after 4 wedged turns,
         # override with a deterministic sweep of the other directions so it can't
         # burn its whole budget bumping the same tile.
-        if stall >= 4 and not view.get("dialogue_active"):
-            forced = {"type": "move", "direction": SWEEP[stall % len(SWEEP)]}
+        if stall >= 3 and not view.get("dialogue_active"):
+            forced = {"type": "move", "direction": SWEEP[(stall - 3) % len(SWEEP)]}
             record({"event": "stall_override", "turn": turn, "stall": stall,
                     "model_action": action, "action": forced})
             action = forced
