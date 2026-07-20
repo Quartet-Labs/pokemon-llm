@@ -1047,6 +1047,7 @@ function newGame(seed) {
     dialogue: null,
     npcState: {},      // { [areaId]: { [npcId]: { x, y, dir } } } — wander/spin overrides
     cuttedTrees: {},   // { [areaId]: ['x,y', ...] } — tiles cleared by CUT
+    explored: {},      // { [areaId]: { 'x,y': tileType } } — fog-of-war exploration memory
     // [G1] Pokédex — keys are species names (e.g. 'bulbasaur'), values true
     pokedex: { seen: {}, caught: {} },
     // Oak's intro dialogue — verbatim from Gen I Red/Blue (Bulbapedia)
@@ -3503,8 +3504,87 @@ function processBattleAction(state, action, log) {
   return state;
 }
 
+// ── Fog-of-war exploration memory + ASCII minimap ────────────────────────────
+// state.explored is { [areaId]: { "x,y": tileType } } — only tiles the player
+// has actually observed. Recorded every overworld turn from getView(), which is
+// the single choke point the agent (and viewer) read through after each action.
+//
+// Glyph map: one char per observed tile type for the rendered minimap.
+const MAP_GLYPHS = {
+  path: '.', grass: ',', tall_grass: '"', flower: '*', item_ball: 'o',
+  wall: '#', tree: 'T', tree_cut: 't', building: 'B', door: 'D',
+  sign: 's', water: '~', ledge_s: 'v', npc: 'N',
+};
+const MAP_LEGEND = {
+  '@': 'you', '.': 'path', ',': 'grass', '"': 'tall grass (encounters)',
+  '*': 'flower', 'o': 'item', '#': 'wall', 'T': 'tree', 't': 'cut tree',
+  'B': 'building', 'D': 'door', 's': 'sign', '~': 'water', 'v': 'ledge (jump S)',
+  'N': 'NPC', '?': 'unexplored',
+};
+const MAP_VIEW_W = 15;   // viewport width  (odd → player centered)
+const MAP_VIEW_H = 11;   // viewport height (odd → player centered)
+
+// Record the tiles the player can currently observe into state.explored.
+// Observes the player's own tile plus the 8 surrounding tiles (Chebyshev r=1),
+// using the same tile source (getAreaTile) that getSurroundings/isWalkable use.
+function recordExploration(state) {
+  if (state.screen !== 'overworld') return;
+  const area = AREAS[state.areaId];
+  if (!area) return;
+  if (!state.explored) state.explored = {};
+  if (!state.explored[state.areaId]) state.explored[state.areaId] = {};
+  const seen = state.explored[state.areaId];
+  const px = state.player.x, py = state.player.y;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const tx = px + dx, ty = py + dy;
+      if (tx < 0 || ty < 0 || tx >= area.width || ty >= area.height) continue;
+      seen[`${tx},${ty}`] = getAreaTile(area, tx, ty);
+    }
+  }
+}
+
+// Render a fog-of-war ASCII minimap centered on the player. Draws ONLY tiles
+// present in state.explored[areaId]; everything else is fogged ('?').
+function renderExploredMap(state) {
+  const area = AREAS[state.areaId];
+  if (!area) return null;
+  const seen = (state.explored && state.explored[state.areaId]) || {};
+  const px = state.player.x, py = state.player.y;
+  const halfW = Math.floor(MAP_VIEW_W / 2);
+  const halfH = Math.floor(MAP_VIEW_H / 2);
+  // NPC positions (with wander/spin overrides) so they show as N when observed.
+  const npcPos = {};
+  for (const npc of (area.npcs || [])) {
+    const o = state.npcState?.[state.areaId]?.[npc.id];
+    npcPos[`${o?.x ?? npc.x},${o?.y ?? npc.y}`] = true;
+  }
+  const rows = [];
+  for (let dy = -halfH; dy <= halfH; dy++) {
+    let line = '';
+    for (let dx = -halfW; dx <= halfW; dx++) {
+      const tx = px + dx, ty = py + dy;
+      if (tx === px && ty === py) { line += '@'; continue; }
+      const key = `${tx},${ty}`;
+      if (!(key in seen)) { line += '?'; continue; }      // fog: never observed
+      if (npcPos[key]) { line += 'N'; continue; }
+      line += MAP_GLYPHS[seen[key]] || '?';
+    }
+    rows.push(line);
+  }
+  return {
+    ascii: rows.join('\n'),
+    legend: MAP_LEGEND,
+    position: { x: px, y: py },
+    viewport: { width: MAP_VIEW_W, height: MAP_VIEW_H },
+  };
+}
+
 // ── public view ─────────────────────────────────────────────────────────────
 function getView(state) {
+  // Record what the player can see this turn BEFORE building the view, so the
+  // minimap includes the current tile. state.explored persists via saveSessions.
+  recordExploration(state);
   const area = AREAS[state.areaId] || {};
   const active = state.battle ? state.player.party[state.battle.playerPartyIndex]
                               : (state.player.party[0] || null);
@@ -3624,6 +3704,10 @@ function getView(state) {
         return { id: npc.id, name: npc.name, x: override?.x ?? npc.x, y: override?.y ?? npc.y, dir: override?.dir ?? npc.dir };
       });
     }
+    // Fog-of-war explored minimap (additive — surroundings kept as-is above).
+    // Only tiles the player has observed are drawn; unexplored tiles are '?'.
+    const map = renderExploredMap(state);
+    if (map) view.map = map;
     // Expose cut trees and uncollected ground items
     view.cut_trees_cleared = state.cuttedTrees?.[state.areaId] || [];
     view.ground_items = (area.items || [])
