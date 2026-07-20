@@ -44,6 +44,11 @@ h1 { color: #ffcc00; font-size: 1.2rem; letter-spacing: 2px; }
   color:#ff6666; cursor:pointer; font-size:.7rem; padding:0 5px; line-height:1.3;
 }
 .cell-halt:hover { background:#3a0000; border-color:#dd2222; }
+.cell-remove {
+  background:#111; border:1px solid #555; border-radius:3px;
+  color:#999; cursor:pointer; font-size:.7rem; padding:0 5px; line-height:1.3; margin-left:3px;
+}
+.cell-remove:hover { background:#333; border-color:#999; color:#fff; }
 .pcv { display:block; image-rendering:pixelated; width:100%; background:#111; }
 
 .phud { display:flex; align-items:center; gap:6px; font-size:.65rem; min-height:16px; }
@@ -352,6 +357,7 @@ for (let n = 1; n <= MAXP; n++) {
       <span class="parea" id="area-${n}"></span>
       <span class="pturn" id="turn-${n}">T0</span>
       <button class="cell-halt" id="haltbtn-${n}" title="Signal this agent to stop">⛔</button>
+      <button class="cell-remove" id="rmbtn-${n}" title="Remove this agent — frees the slot">✕</button>
     </div>
     <canvas class="pcv" id="cv-${n}" width="320" height="256"></canvas>
     <div class="phud" id="hud-${n}"></div>
@@ -364,6 +370,37 @@ for (let n = 1; n <= MAXP; n++) {
     e.stopPropagation();
     toggleHalt(n);
   });
+  document.getElementById(`rmbtn-${n}`).addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeSlot(n);
+  });
+}
+
+// Remove the agent in slot n from the server; the session_removed broadcast
+// (below) blanks the slot for every spectator and backfills any waiting session.
+async function removeSlot(n) {
+  const p = players[n];
+  if (!p.sessionId || p.sessionId === 'default') return;
+  try {
+    await fetch(`/session?session=${p.sessionId}`, { method: 'DELETE' });
+  } catch (e) { console.error(e); }
+}
+
+// Blank a slot locally and pull in any session that had no slot yet.
+function clearSlot(sessionId) {
+  const n = slotOf[sessionId];
+  if (!n) return;
+  delete slotOf[sessionId];
+  Object.assign(players[n], { sessionId:null, label:null, halted:false, state:null, map:null });
+  renderCell(n);
+  resyncSessions();
+}
+
+async function resyncSessions() {
+  try {
+    const list = await (await fetch('/sessions')).json();
+    for (const s of list) if (!slotOf[s.sessionId]) bindSession(s);
+  } catch (e) { console.error(e); }
 }
 
 async function toggleHalt(n) {
@@ -709,6 +746,7 @@ function connect() {
       if (msg.chatHistory) msg.chatHistory.forEach(addChatMsg);
     }
     if (msg.event === 'session_created' && msg.session) bindSession(msg.session);
+    if (msg.event === 'session_removed' && msg.sessionId) clearSlot(msg.sessionId);
     if (msg.event === 'state_update' || msg.event === 'reset') {
       const n = slotOf[msg.sessionId || 'default'];
       if (n) {

@@ -378,6 +378,18 @@ app.post('/halt', (req, res) => {
   res.json({ halted: true, message: 'Run halted by spectator — stop playing.' });
 });
 
+// Remove a session entirely (frees its viewer slot). The 'default' session is
+// permanent and cannot be removed.
+app.delete('/session', (req, res) => {
+  const session = resolveSession(req);
+  if (!session) return res.status(404).json({ error: 'Session not found.' });
+  if (session.id === 'default') return res.status(400).json({ error: 'Cannot remove the default session.' });
+  sessions.delete(session.id);
+  saveSessions();
+  broadcastAll({ event: 'session_removed', sessionId: session.id });
+  res.json({ removed: true, sessionId: session.id });
+});
+
 app.get('/logs', (req, res) => {
   const session = resolveSession(req);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
