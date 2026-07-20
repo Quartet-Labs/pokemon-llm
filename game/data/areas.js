@@ -308,7 +308,7 @@ const PEWTER_CITY = {
   ],
   connections: {
     south: { area:'viridian_forest', entryX:9, entryY:1 },
-    // east → Route 3 (future)
+    east:  { area:'route_3', entryX:1, entryY:9 },
   },
 };
 
@@ -460,6 +460,14 @@ function buildPewterCity() {
   rows[22] = setChar(rows[22], 9,  'P');
   rows[22] = setChar(rows[22], 10, 'P');
   rows[22] = setChar(rows[22], 11, 'P');
+
+  // East exit to Route 3 — col 22-23, rows 17-19
+  rows[17] = setChar(rows[17], 22, 'P');
+  rows[17] = setChar(rows[17], 23, 'P');
+  rows[18] = setChar(rows[18], 22, 'P');
+  rows[18] = setChar(rows[18], 23, 'P');
+  rows[19] = setChar(rows[19], 22, 'P');
+  rows[19] = setChar(rows[19], 23, 'P');
 
   return rows;
 }
@@ -1197,6 +1205,694 @@ const ROUTE_2_GATE = {
   ],
 };
 
+// ── Route 3 builder (30 wide x 20 tall) ──────────────────────────────────────
+function buildRoute3() {
+  const rows = [];
+  for (let y = 0; y < 20; y++) {
+    let row = '';
+    for (let x = 0; x < 30; x++) {
+      if (y === 0 || y === 19) { row += 'T'; continue; }
+      // Path corridor rows 8-11 (full width; perimeter set open below)
+      if (y >= 8 && y <= 11) { row += 'P'; continue; }
+      // Tall grass patches above and below the path
+      const inGrass = (
+        (y >= 1 && y <= 7  && x >= 2  && x <= 9)  ||
+        (y >= 1 && y <= 7  && x >= 12 && x <= 20) ||
+        (y >= 12 && y <= 18 && x >= 2  && x <= 11) ||
+        (y >= 12 && y <= 18 && x >= 14 && x <= 21)
+      );
+      if (inGrass) { row += 'G'; continue; }
+      row += 'T';
+    }
+    rows.push(row);
+  }
+  // Mt. Moon PC building (cols 22-27, rows 2-6)
+  for (let y = 2; y <= 6; y++)
+    for (let x = 22; x <= 27; x++)
+      rows[y] = setChar(rows[y], x, y < 6 ? 'B' : (x === 24 || x === 25) ? 'D' : 'B');
+  // Open path tiles below PC doors so player can exit building to path
+  rows[7] = setChar(rows[7], 24, 'P');
+  rows[7] = setChar(rows[7], 25, 'P');
+  return rows;
+}
+
+// ── Cerulean City builder (28 wide x 24 tall) ─────────────────────────────────
+function buildCeruleanCity() {
+  const rows = [];
+  for (let y = 0; y < 24; y++) {
+    let row = '';
+    for (let x = 0; x < 28; x++) {
+      if (x === 0 || x === 27 || y === 0 || y === 23) row += 'T';
+      else row += 'P';
+    }
+    rows.push(row);
+  }
+  // Perimeter row 1 all trees; row 2 mostly trees with north exit open at cols 12-13
+  for (let x = 1; x <= 26; x++) {
+    rows[1] = setChar(rows[1], x, 'T');
+    if (x !== 12 && x !== 13) rows[2] = setChar(rows[2], x, 'T');
+  }
+  // Open north exit cols 12-13
+  rows[0] = setChar(rows[0], 12, 'P');
+  rows[0] = setChar(rows[0], 13, 'P');
+
+  // Pokémon Center (cols 2-8, rows 4-8)
+  for (let y = 4; y <= 8; y++)
+    for (let x = 2; x <= 8; x++)
+      rows[y] = setChar(rows[y], x, y < 8 ? 'B' : (x === 4 || x === 5) ? 'D' : 'B');
+
+  // Poké Mart (cols 2-8, rows 11-15)
+  for (let y = 11; y <= 15; y++)
+    for (let x = 2; x <= 8; x++)
+      rows[y] = setChar(rows[y], x, y < 15 ? 'B' : (x === 4 || x === 5) ? 'D' : 'B');
+
+  // Bike Shop (cols 10-16, rows 4-8) — placeholder building, not interactive yet
+  for (let y = 4; y <= 8; y++)
+    for (let x = 10; x <= 16; x++)
+      rows[y] = setChar(rows[y], x, 'B');
+
+  // Cerulean Gym (cols 18-24, rows 4-10)
+  for (let y = 4; y <= 10; y++)
+    for (let x = 18; x <= 24; x++)
+      rows[y] = setChar(rows[y], x, y < 10 ? 'B' : (x === 20 || x === 21) ? 'D' : 'B');
+
+  // House (cols 18-24, rows 13-17)
+  for (let y = 13; y <= 17; y++)
+    for (let x = 18; x <= 24; x++)
+      rows[y] = setChar(rows[y], x, y < 17 ? 'B' : (x === 20 || x === 21) ? 'D' : 'B');
+
+  // West exit to Route 4 — col 0, rows 11-13
+  rows[11] = setChar(rows[11], 0, 'P');
+  rows[12] = setChar(rows[12], 0, 'P');
+  rows[13] = setChar(rows[13], 0, 'P');
+
+  // South exit to Route 5 (future) — cols 12-13, rows 22-23
+  rows[23] = setChar(rows[23], 12, 'P');
+  rows[23] = setChar(rows[23], 13, 'P');
+  rows[22] = setChar(rows[22], 12, 'P');
+  rows[22] = setChar(rows[22], 13, 'P');
+
+  // Signs (on building faces)
+  rows[4]  = setChar(rows[4],  4,  'S'); // PC sign
+  rows[4]  = setChar(rows[4],  21, 'S'); // Gym sign
+  rows[11] = setChar(rows[11], 4,  'S'); // Mart sign
+
+  return rows;
+}
+
+// ── Route 3 (30 wide x 20 tall) — east of Pewter City, leads to Mt. Moon ─────
+// Source: Bulbapedia — Route 3 (Gen I Red/Blue)
+const ROUTE_3 = {
+  id: 'route_3',
+  name: 'Route 3',
+  width: 30,
+  height: 20,
+  encounterRate: 20,
+  tiles: buildRoute3(),
+  objects: [],
+  npcs: [
+    // Bug Catcher above path (west section), facing south into path
+    { id:'bug_catcher_r3a', x:8, y:7, name:'BUG CATCHER', dir:'south', sightRange:3,
+      dialogue:["BUG CATCHER: I have the best bug-type team! Come on!"],
+      trainerBattle: {
+        trainerName: 'BUG CATCHER',
+        party: [{ species:'caterpie', level:7 }, { species:'caterpie', level:8 }],
+        reward: 80,
+        rewardFlag: 'beat_bug_catcher_r3a',
+      },
+      dialogueAfter: ["BUG CATCHER: Aww, I lost! Your POKéMON are better than mine!"],
+    },
+    // Bug Catcher below path (mid section), facing north into path
+    { id:'bug_catcher_r3b', x:19, y:12, name:'BUG CATCHER', dir:'north', sightRange:3,
+      dialogue:["BUG CATCHER: I've been training extra hard! Watch this!"],
+      trainerBattle: {
+        trainerName: 'BUG CATCHER',
+        party: [{ species:'weedle', level:9 }, { species:'kakuna', level:9 }],
+        reward: 90,
+        rewardFlag: 'beat_bug_catcher_r3b',
+      },
+      dialogueAfter: ["BUG CATCHER: You're really good! I'll train more!"],
+    },
+    // Lass on path facing east (mid-east section)
+    { id:'lass_r3', x:13, y:8, name:'LASS', dir:'east', sightRange:4,
+      dialogue:["LASS: My RATTATA are adorable AND powerful!"],
+      trainerBattle: {
+        trainerName: 'LASS',
+        party: [{ species:'rattata', level:10 }, { species:'rattata', level:10 }],
+        reward: 200,
+        rewardFlag: 'beat_lass_r3',
+      },
+      dialogueAfter: ["LASS: You beat my cute POKéMON! No fair!"],
+    },
+    // Youngster near east end, facing west
+    { id:'youngster_r3', x:23, y:10, name:'YOUNGSTER', dir:'west', sightRange:4,
+      dialogue:["YOUNGSTER: My SPEAROW are really fast! Try and keep up!"],
+      trainerBattle: {
+        trainerName: 'YOUNGSTER',
+        party: [{ species:'spearow', level:11 }],
+        reward: 220,
+        rewardFlag: 'beat_youngster_r3',
+      },
+      dialogueAfter: ["YOUNGSTER: Wow, you're incredible! I'll be back!"],
+    },
+    // NPC near Mt. Moon PC building
+    { id:'hiker_r3', x:28, y:5, name:'HIKER', dir:'south',
+      dialogue:["HIKER: Make sure to rest up at the POKéMON CENTER before heading into MT. MOON! Team Rocket's been lurking in there."] },
+  ],
+  signs: [
+    { x:3,  y:1,  text:"ROUTE 3\nPEWTER CITY ←   MT. MOON →" },
+    { x:24, y:2,  text:"MT. MOON POKéMON CENTER\nHeal here before entering the cave!" },
+  ],
+  items: [
+    { id:'r3_super_potion', x:4, y:2, item:'super_potion', qty:1 },
+    { id:'r3_antidote',     x:8, y:15, item:'antidote',    qty:1 },
+  ],
+  encounters: {
+    tall_grass: [
+      { species:'spearow',    level:[6,8],  rate:55 },
+      { species:'jigglypuff', level:[3,8],  rate:20 },
+      { species:'sandshrew',  level:[6,7],  rate:15 },
+      { species:'nidoran_f',  level:[6,8],  rate:5  },
+      { species:'nidoran_m',  level:[6,8],  rate:5  },
+    ],
+  },
+  warps: [
+    { x:24, y:6, dest:'mt_moon_pc', destX:4, destY:5, areaName:'Mt. Moon Pokémon Center' },
+    { x:25, y:6, dest:'mt_moon_pc', destX:5, destY:5, areaName:'Mt. Moon Pokémon Center' },
+  ],
+  connections: {
+    west: { area:'pewter_city', entryX:22, entryY:18 },
+    east: { area:'mt_moon_1f', entryX:1, entryY:8 },
+  },
+};
+
+// ── Interior: Mt. Moon Pokémon Center (on Route 3) ────────────────────────────
+const MT_MOON_PC = {
+  id: 'mt_moon_pc',
+  name: 'Mt. Moon Pokémon Center',
+  width: 10,
+  height: 7,
+  tiles: [
+    "WWWWWWWWWW",  // 0
+    "WPPPPPPPPW",  // 1
+    "WPPPPPPPPW",  // 2
+    "WPPPPPPPPW",  // 3
+    "WPPPPPPPPW",  // 4
+    "WPPPPPPPPW",  // 5
+    "WWWWDDWWWW",  // 6 exit south
+  ],
+  objects: [],
+  npcs: [
+    { id:'nurse_joy_mt_moon', x:5, y:2, name:'Nurse Joy', dir:'south',
+      dialogue:["NURSE JOY: Welcome! MT. MOON lies ahead — it's full of TEAM ROCKET grunts and wild POKéMON. We'll restore your tired POKéMON to full health! Use the heal action."] },
+    { id:'pc_terminal_mt_moon', x:3, y:2, name:'PC Terminal', dir:'south',
+      dialogue:["A PC terminal. Use pc_deposit and pc_withdraw to manage your POKéMON storage."] },
+    { id:'mt_moon_pc_hiker', x:7, y:4, name:'HIKER', dir:'west',
+      dialogue:["HIKER: Team Rocket is after the fossils in MT. MOON! They say there's a DOME FOSSIL and a HELIX FOSSIL down on B2F. Only one expedition can uncover them — whoever gets there first!"] },
+  ],
+  signs: [],
+  warps: [
+    { x:4, y:6, dest:'route_3', destX:24, destY:7, areaName:'Route 3' },
+    { x:5, y:6, dest:'route_3', destX:25, destY:7, areaName:'Route 3' },
+  ],
+};
+
+// ── Interior: Mt. Moon 1F (20 wide x 12 tall) ────────────────────────────────
+// Entry from Route 3 (west connection). One staircase down to B1F.
+// Wild encounters use G (tall_grass) tiles — all walkable cave floor.
+const MT_MOON_1F = {
+  id: 'mt_moon_1f',
+  name: 'Mt. Moon 1F',
+  width: 20,
+  height: 12,
+  encounterRate: 25,
+  tiles: [
+    "WWWWWWWWWWWWWWWWWWWW",  // 0  top wall
+    "WGGWWWWWWWGGGGGWWWWW",  // 1  NE side room (x=1-2, x=10-14)
+    "WGGWWWWWWWGGGGGWWWWW",  // 2
+    "WGGWWWWWWWGGGGGWWWWW",  // 3
+    "WGGGGGGGGGGGGGWWWWWW",  // 4  main east-west corridor; stair-down at x=13
+    "WGWWWWWWWWWWWWWWWWWW",  // 5  vertical connector (col 1)
+    "WGWWWWWWWWWWWWWWWWWW",  // 6
+    "WGGGGGGGGWWWWWWWWWWW",  // 7  connector widens near entry
+    "GGGGGGGGGGWWWWWWWWWW",  // 8  ENTRY from Route 3 (x=0..9 open)
+    "GGGGGGGGGGWWWWWWWWWW",  // 9
+    "WGGGGGGGGGGGGGGGWWWW",  // 10 south room (encounters)
+    "WWWWWWWWWWWWWWWWWWWW",  // 11 bottom wall
+  ],
+  objects: [
+    { x:13, y:4, tile:T.DOOR },  // staircase down to B1F
+  ],
+  npcs: [
+    // Team Rocket Grunt patrols NE room — optional fight (sightRange 0, must talk)
+    { id:'rocket_grunt_1f', x:12, y:2, name:'TEAM ROCKET GRUNT', dir:'south', sightRange:0,
+      dialogue:["GRUNT: Team Rocket will steal every fossil in MT. MOON! Out of our way!"],
+      trainerBattle: {
+        trainerName: 'TEAM ROCKET GRUNT',
+        party: [{ species:'rattata', level:8 }, { species:'sandshrew', level:8 }],
+        reward: 300,
+        rewardFlag: 'beat_rocket_grunt_1f',
+      },
+      dialogueAfter: ["GRUNT: How did you beat us?! This isn't over!"],
+    },
+    // Hiker in south room — optional fight
+    { id:'hiker_mt_moon_1f', x:9, y:10, name:'HIKER', dir:'north', sightRange:0,
+      dialogue:["HIKER: I've been exploring this cave for days! The deeper you go, the tougher the POKéMON!"],
+      trainerBattle: {
+        trainerName: 'HIKER',
+        party: [{ species:'machop', level:10 }],
+        reward: 600,
+        rewardFlag: 'beat_hiker_mt_moon_1f',
+      },
+      dialogueAfter: ["HIKER: Impressive fighting technique! You'll do fine deeper in!"],
+    },
+  ],
+  signs: [],
+  items: [
+    { id:'mt_moon_moon_stone_1', x:2, y:1, item:'moon_stone', qty:1 },
+  ],
+  warps: [
+    { x:13, y:4, dest:'mt_moon_b1f', destX:2, destY:4, areaName:'Mt. Moon B1F' },
+  ],
+  connections: {
+    west: { area:'route_3', entryX:28, entryY:9 },
+  },
+};
+
+// ── Interior: Mt. Moon B1F (20 wide x 12 tall) ───────────────────────────────
+// Stair up to 1F at x=2,y=1. Stair down to B2F at x=12,y=4.
+const MT_MOON_B1F = {
+  id: 'mt_moon_b1f',
+  name: 'Mt. Moon B1F',
+  width: 20,
+  height: 12,
+  encounterRate: 25,
+  tiles: [
+    "WWWWWWWWWWWWWWWWWWWW",  // 0
+    "WGGGGGWWWWWWWWWGGGWW",  // 1  stair-up at x=2 (NW), side room NE x=15-17
+    "WGWWWWWWWWWWWWWGGGWW",  // 2
+    "WGWWWWWWWWWWWWWGWWWW",  // 3
+    "WGGGGGGGGGGGGGWWWWWW",  // 4  main corridor; stair-down at x=12
+    "WWWWWWWWWWWWGWWWWWWW",  // 5  vertical connector at col 12
+    "WWWWWWWWWWWWGWWWWWWW",  // 6
+    "WWWWWWWWWWWWGWWWWWWW",  // 7
+    "GGGGGGGGGGGGWWWWWWWW",  // 8  south room entry
+    "WGGGGGGGGGGGWWWWWWWW",  // 9
+    "WGGGGGWWWWWWWWWWWWWW",  // 10
+    "WWWWWWWWWWWWWWWWWWWW",  // 11
+  ],
+  objects: [
+    { x:2,  y:1, tile:T.DOOR },  // stair up to 1F
+    { x:12, y:4, tile:T.DOOR },  // stair down to B2F
+  ],
+  npcs: [
+    // Mandatory Rocket Grunt facing west (catches player coming from west along row 4)
+    { id:'rocket_grunt_b1f', x:9, y:4, name:'TEAM ROCKET GRUNT', dir:'west', sightRange:6,
+      dialogue:["GRUNT: You won't get past us! Team Rocket owns these caves!"],
+      trainerBattle: {
+        trainerName: 'TEAM ROCKET GRUNT',
+        party: [{ species:'rattata', level:8 }, { species:'zubat', level:8 }],
+        reward: 300,
+        rewardFlag: 'beat_rocket_grunt_b1f',
+      },
+      dialogueAfter: ["GRUNT: We'll be back with reinforcements!"],
+    },
+    // Hiker in NE side room
+    { id:'hiker_mt_moon_b1f', x:16, y:2, name:'HIKER', dir:'south', sightRange:0,
+      dialogue:["HIKER: I've been fossil-hunting for years! The B2F fossil chamber is close — head east through the main corridor."],
+      trainerBattle: {
+        trainerName: 'HIKER',
+        party: [{ species:'geodude', level:8 }, { species:'onix', level:10 }],
+        reward: 600,
+        rewardFlag: 'beat_hiker_mt_moon_b1f',
+      },
+      dialogueAfter: ["HIKER: You have strong POKéMON! The fossils on B2F are just ahead."],
+    },
+  ],
+  signs: [],
+  items: [
+    { id:'mt_moon_escape_rope', x:4, y:9, item:'escape_rope', qty:1 },
+  ],
+  warps: [
+    { x:2,  y:1, dest:'mt_moon_1f',  destX:13, destY:4, areaName:'Mt. Moon 1F'  },
+    { x:12, y:4, dest:'mt_moon_b2f', destX:2,  destY:4, areaName:'Mt. Moon B2F' },
+  ],
+};
+
+// ── Interior: Mt. Moon B2F (20 wide x 12 tall) ───────────────────────────────
+// Stair up to B1F at x=2,y=1. East connection to Route 4.
+// Fossil chamber in south section — Rocket Grunt guards it, Scientist gives fossils.
+const MT_MOON_B2F = {
+  id: 'mt_moon_b2f',
+  name: 'Mt. Moon B2F',
+  width: 20,
+  height: 12,
+  encounterRate: 25,
+  tiles: [
+    "WWWWWWWWWWWWWWWWWWWW",  // 0
+    "WGGGWWWWWWWWWWWWWWWW",  // 1  stair-up at x=2
+    "WGWWWWWWWWWWWWWWWWWW",  // 2
+    "WGWWWWWWWWWWWWWWWWWW",  // 3
+    "WGGGGGGGGGGGGGGWWWWW",  // 4  main corridor (stair-up obj at x=2)
+    "WWWWWGWWWWWWWWGWWWWW",  // 5  two connectors: x=5 (fossil) x=14 (east exit)
+    "WWWWWGWWWWWWWWGGGGGG",  // 6  east corridor opens at x=14..19
+    "WWWWWGWWWWWWWWGGGGGG",  // 7  east exit at x=19 (connection to Route 4)
+    "WWWWWGWWWWWWWWWWWWWW",  // 8
+    "WWWWWGGGGGGGGGWWWWWW",  // 9  fossil chamber (x=5..13)
+    "WWWWWGGGGGGGGGWWWWWW",  // 10
+    "WWWWWWWWWWWWWWWWWWWW",  // 11
+  ],
+  objects: [
+    { x:2, y:1, tile:T.DOOR },  // stair up to B1F
+  ],
+  npcs: [
+    // Rocket Grunt guards fossil chamber entrance — mandatory fight
+    { id:'rocket_grunt_b2f', x:9, y:9, name:'TEAM ROCKET GRUNT', dir:'west', sightRange:4,
+      dialogue:["GRUNT: These fossils belong to Team Rocket! Nobody gets past me!"],
+      trainerBattle: {
+        trainerName: 'TEAM ROCKET GRUNT',
+        party: [{ species:'rattata', level:8 }, { species:'rattata', level:8 }, { species:'zubat', level:8 }],
+        reward: 300,
+        rewardFlag: 'beat_rocket_grunt_b2f',
+      },
+      dialogueAfter: ["GRUNT: No!! Those fossils... fine, take them!"],
+    },
+    // Scientist gives fossils after Grunt is defeated
+    { id:'fossil_scientist_b2f', x:11, y:10, name:'SCIENTIST', dir:'north',
+      flagDialogue: [
+        { requireFlag: 'beat_rocket_grunt_b2f', denyFlag: 'got_mt_moon_fossils',
+          lines: [
+            "SCIENTIST: Thank goodness you drove off that TEAM ROCKET thug!",
+            "SCIENTIST: These fossils are incredibly rare. I can only carry one — please take the other! The DOME FOSSIL can be restored to KABUTO, and the HELIX FOSSIL to OMANYTE. Take them to CINNABAR ISLAND's lab for revival!",
+            { give: 'dome_fossil',  qty: 1 },
+            { give: 'helix_fossil', qty: 1 },
+            { setFlag: 'got_mt_moon_fossils' },
+          ]
+        },
+        { requireFlag: 'got_mt_moon_fossils',
+          lines: ["SCIENTIST: Safe travels! Take those fossils to the lab on CINNABAR ISLAND for revival!"] },
+        { default: true,
+          lines: ["SCIENTIST: A TEAM ROCKET grunt is blocking me from the fossils! Help!"] },
+      ],
+    },
+  ],
+  signs: [],
+  items: [
+    { id:'mt_moon_moon_stone_2', x:7, y:9, item:'moon_stone', qty:1 },
+  ],
+  warps: [
+    { x:2, y:1, dest:'mt_moon_b1f', destX:12, destY:4, areaName:'Mt. Moon B1F' },
+  ],
+  connections: {
+    east: { area:'route_4', entryX:1, entryY:7 },
+  },
+};
+
+// ── Route 4 (20 wide x 14 tall) — east of Mt. Moon, west of Cerulean ─────────
+// Source: Bulbapedia — Route 4 (Gen I Red/Blue)
+const ROUTE_4 = {
+  id: 'route_4',
+  name: 'Route 4',
+  width: 20,
+  height: 14,
+  encounterRate: 15,
+  tiles: (() => {
+    const rows = [];
+    for (let y = 0; y < 14; y++) {
+      let row = '';
+      for (let x = 0; x < 20; x++) {
+        if (y === 0 || y === 13) { row += 'T'; continue; }
+        // Path rows 5-8 (full width open for east-west connection)
+        if (y >= 5 && y <= 8) { row += 'P'; continue; }
+        // Tall grass
+        const inGrass = (
+          (y >= 1 && y <= 4  && x >= 2 && x <= 17) ||
+          (y >= 9 && y <= 12 && x >= 2 && x <= 17)
+        );
+        if (inGrass) { row += 'G'; continue; }
+        row += 'T';
+      }
+      rows.push(row);
+    }
+    return rows;
+  })(),
+  objects: [],
+  npcs: [
+    { id:'youngster_r4', x:5, y:3, name:'YOUNGSTER', dir:'south', sightRange:0,
+      dialogue:["YOUNGSTER: MT. MOON is scary! I barely made it through."],
+      trainerBattle: {
+        trainerName: 'YOUNGSTER',
+        party: [{ species:'rattata', level:13 }, { species:'spearow', level:13 }],
+        reward: 260,
+        rewardFlag: 'beat_youngster_r4',
+      },
+      dialogueAfter: ["YOUNGSTER: You beat me so easily... Are you heading to CERULEAN?"],
+    },
+    { id:'lass_r4', x:13, y:10, name:'LASS', dir:'north', sightRange:0,
+      dialogue:["LASS: CERULEAN CITY is just ahead! The GYM LEADER MISTY is really tough!"],
+      trainerBattle: {
+        trainerName: 'LASS',
+        party: [{ species:'nidoran_f', level:14 }],
+        reward: 280,
+        rewardFlag: 'beat_lass_r4',
+      },
+      dialogueAfter: ["LASS: Wow, you're strong! Misty will be a great challenge for you!"],
+    },
+  ],
+  signs: [
+    { x:9, y:1, text:"ROUTE 4\nMT. MOON ←   CERULEAN CITY →" },
+  ],
+  items: [
+    { id:'r4_potion', x:3, y:10, item:'potion', qty:1 },
+  ],
+  encounters: {
+    tall_grass: [
+      { species:'spearow',   level:[13,15], rate:35 },
+      { species:'rattata',   level:[13,15], rate:30 },
+      { species:'ekans',     level:[13,15], rate:20 },
+      { species:'sandshrew', level:[13,15], rate:15 },
+    ],
+  },
+  connections: {
+    west: { area:'mt_moon_b2f', entryX:18, entryY:7 },
+    east: { area:'cerulean_city', entryX:1, entryY:12 },
+  },
+  warps: [],
+};
+
+// ── Cerulean City (28 wide x 24 tall) ────────────────────────────────────────
+// Source: Bulbapedia — Cerulean City (Gen I Red/Blue)
+const CERULEAN_CITY = {
+  id: 'cerulean_city',
+  name: 'Cerulean City',
+  flyDestination: true, flyName: 'Cerulean City', flyLandX: 13, flyLandY: 12,
+  width: 28,
+  height: 24,
+  encounterRate: 0,
+  tiles: buildCeruleanCity(),
+  objects: [],
+  npcs: [
+    { id:'cerulean_gym_guide', x:9, y:12, name:'GYM GUIDE', dir:'east',
+      dialogue:["GYM GUIDE: MISTY is the GYM LEADER here! She uses WATER-type POKéMON. ELECTRIC and GRASS moves hit them for super-effective damage! Her ace is STARMIE at level 21 — watch out for its PSYCHIC attack!"] },
+    { id:'cerulean_merchant', x:14, y:18, name:'Merchant', dir:'south',
+      dialogue:["MERCHANT: This is CERULEAN CITY! Famous for the beautiful CERULEAN GYM! The bike shop nearby sells BICYCLES, but they're ₽1,000,000... maybe the shop owner will give you a discount?"] },
+    { id:'cerulean_mart_clerk', x:5, y:12, name:'POKé MART Clerk', dir:'south',
+      dialogue:["Welcome to the CERULEAN CITY POKé MART! Use mart_view to see the catalog, mart_buy to purchase!"] },
+    { id:'bike_shop_sign_npc', x:13, y:9, name:'Bike Shop Employee', dir:'south',
+      dialogue:["EMPLOYEE: Welcome to the CERULEAN CITY BIKE SHOP! Our BICYCLE is normally ₽1,000,000. But if you have a BIKE VOUCHER from the POKÉMON FAN CLUB in VERMILION CITY, we'll give you one for free!"] },
+  ],
+  signs: [
+    { x:13, y:3,  text:"CERULEAN CITY\nA Mysterious, Blue Aura Surrounds It." },
+    { x:4,  y:4,  text:"POKéMON CENTER\nWe restore your tired POKéMON to full health!" },
+    { x:4,  y:11, text:"POKé MART\nCERULEAN CITY BRANCH" },
+    { x:21, y:4,  text:"CERULEAN GYM\nGym Leader: MISTY\nSpecialty: WATER-type\nCASCADE BADGE awarded here." },
+  ],
+  items: [
+    { id:'cerulean_super_potion', x:16, y:12, item:'super_potion', qty:1 },
+  ],
+  warps: [
+    { x:4,  y:8,  dest:'cerulean_pokecenter', destX:4, destY:5, areaName:'Pokémon Center'     },
+    { x:5,  y:8,  dest:'cerulean_pokecenter', destX:5, destY:5, areaName:'Pokémon Center'     },
+    { x:4,  y:15, dest:'cerulean_mart',        destX:3, destY:5, areaName:'Poké Mart'          },
+    { x:5,  y:15, dest:'cerulean_mart',        destX:4, destY:5, areaName:'Poké Mart'          },
+    { x:20, y:10, dest:'cerulean_gym',         destX:5, destY:8, areaName:'Cerulean City Gym'  },
+    { x:21, y:10, dest:'cerulean_gym',         destX:6, destY:8, areaName:'Cerulean City Gym'  },
+    { x:20, y:17, dest:'cerulean_house',       destX:3, destY:4, areaName:'Cerulean House'     },
+    { x:21, y:17, dest:'cerulean_house',       destX:4, destY:4, areaName:'Cerulean House'     },
+  ],
+  connections: {
+    west:  { area:'route_4', entryX:18, entryY:7 },
+    north: { area:'route_24', entryX:10, entryY:9 },  // Nugget Bridge — future content
+  },
+};
+
+// ── Interior: Cerulean Pokémon Center ─────────────────────────────────────────
+const CERULEAN_POKECENTER = {
+  id: 'cerulean_pokecenter',
+  name: 'Cerulean Pokémon Center',
+  width: 10,
+  height: 8,
+  tiles: [
+    "WWWWWWWWWW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WPPPPPPPPW",
+    "WWWWDDWWWW",
+  ],
+  objects: [],
+  npcs: [
+    { id:'nurse_joy_cerulean', x:5, y:2, name:'Nurse Joy', dir:'south',
+      dialogue:["NURSE JOY: Welcome to our POKéMON CENTER! We restore your tired POKéMON to full health. Use the heal action to restore your party!"] },
+    { id:'pc_terminal_cerulean', x:3, y:2, name:'PC Terminal', dir:'south',
+      dialogue:["A PC terminal. Use pc_deposit and pc_withdraw to manage your POKéMON storage."] },
+    { id:'cerulean_pc_trainer', x:7, y:4, name:'TRAINER', dir:'west',
+      dialogue:["TRAINER: MISTY is a real powerhouse! Make sure your party can handle WATER types before heading to the gym. ELECTRIC or GRASS attacks are super effective!"] },
+  ],
+  signs: [],
+  warps: [
+    { x:4, y:7, dest:'cerulean_city', destX:4, destY:9,  areaName:'Cerulean City' },
+    { x:5, y:7, dest:'cerulean_city', destX:5, destY:9,  areaName:'Cerulean City' },
+  ],
+};
+
+// ── Interior: Cerulean Poké Mart ──────────────────────────────────────────────
+const CERULEAN_MART = {
+  id: 'cerulean_mart',
+  name: 'Cerulean Poké Mart',
+  width: 8,
+  height: 7,
+  tiles: [
+    "WWWWWWWW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WWWDDWWW",
+  ],
+  objects: [],
+  npcs: [
+    { id:'cerulean_mart_clerk_inside', x:4, y:2, name:'POKé MART Clerk', dir:'south',
+      dialogue:["Welcome to the CERULEAN CITY POKé MART! Use mart_view to see items, mart_buy to purchase."] },
+  ],
+  signs: [],
+  warps: [
+    { x:3, y:6, dest:'cerulean_city', destX:4, destY:15, areaName:'Cerulean City' },
+    { x:4, y:6, dest:'cerulean_city', destX:5, destY:15, areaName:'Cerulean City' },
+  ],
+};
+
+// ── Interior: Cerulean Gym ────────────────────────────────────────────────────
+// Gym Leader MISTY — Water-type specialist. Awards CASCADE BADGE + TM11.
+const CERULEAN_GYM = {
+  id: 'cerulean_gym',
+  name: 'Cerulean City Gym',
+  width: 12,
+  height: 10,
+  tiles: [
+    "WWWWWWWWWWWW",  // 0
+    "WPPPPPPPPPPW",  // 1
+    "WPPPPPPPPPPW",  // 2
+    "WPPPPPPPPPPW",  // 3
+    "WPPPPPPPPPPW",  // 4
+    "WPPPPPPPPPPW",  // 5
+    "WPPPPPPPPPPW",  // 6
+    "WPPPPPPPPPPW",  // 7
+    "WPPPPPPPPPPW",  // 8
+    "WWWWWDDWWWWW",  // 9 exit
+  ],
+  objects: [],
+  npcs: [
+    { id:'gym_guide_cerulean', x:6, y:8, name:'GYM GUIDE', dir:'north',
+      dialogue:["GYM GUIDE: MISTY uses WATER-type POKéMON! ELECTRIC and GRASS moves are very effective! Her ace is STARMIE at level 21 — a tough opponent!"] },
+    // Jr. Trainer♀ — Goldeen, mandatory fight before Misty
+    { id:'jr_trainer_cerulean', x:5, y:5, name:'JR. TRAINER♀', dir:'south', sightRange:3,
+      dialogue:["JR. TRAINER♀: Hohoho! MISTY and I will both show you the power of WATER POKéMON!"],
+      trainerBattle: {
+        trainerName: 'JR. TRAINER♀',
+        party: [{ species:'goldeen', level:14 }],
+        reward: 280,
+        rewardFlag: 'beat_jr_trainer_cerulean',
+      },
+      dialogueAfter: ["JR. TRAINER♀: I lost! But MISTY won't be beaten that easily!"],
+    },
+    // Gym Leader MISTY
+    { id:'misty', x:6, y:2, name:'MISTY', dir:'south', sightRange:0,
+      flagDialogue: [
+        // First talk after beating Misty — give TM11 (shown until got_tm11_from_misty flag is set)
+        { requireFlag: 'beat_misty', denyFlag: 'got_tm11_from_misty',
+          lines: [
+            "MISTY: You're... incredible! I can't believe I lost!",
+            "As proof of your victory, here's the CASCADE BADGE!",
+            "With it, your POKéMON's SPEED stat gets a boost!",
+            "Also, CUT can now be used outside of battle!",
+            "Take this too — TM11 contains BUBBLEBEAM.",
+            { give: 'tm11', qty: 1 },
+            "BUBBLEBEAM can cut an enemy's SPEED. Good luck in VERMILION CITY!",
+          ]
+        },
+        // Subsequent visits after TM11 collected
+        { requireFlag: 'beat_misty',
+          lines: [
+            "MISTY: Congratulations on earning the CASCADE BADGE! CERULEAN CITY awaits your return anytime.",
+          ]
+        },
+        // Default: challenge speech
+        { default: true,
+          lines: [
+            "MISTY: Hiya! I'm MISTY! The CERULEAN GYM LEADER!",
+            "My policy is an all-out offensive with WATER-type POKéMON!",
+            "Fufufu... Just try and keep up!",
+          ]
+        },
+      ],
+      trainerBattle: {
+        trainerName: 'MISTY',
+        party: [{ species:'staryu', level:18 }, { species:'starmie', level:21 }],
+        reward: 2142,
+        rewardFlag: 'beat_misty',
+        badge: 'cascade_badge',
+      },
+    },
+  ],
+  signs: [
+    { x:6, y:1, text:"CERULEAN GYM\nGym Leader: MISTY\nSpecialty: WATER-type POKéMON" },
+  ],
+  warps: [
+    { x:5, y:9, dest:'cerulean_city', destX:20, destY:11, areaName:'Cerulean City' },
+    { x:6, y:9, dest:'cerulean_city', destX:21, destY:11, areaName:'Cerulean City' },
+  ],
+};
+
+// ── Interior: Cerulean House (simple interior for the house in city) ───────────
+const CERULEAN_HOUSE = {
+  id: 'cerulean_house',
+  name: 'Cerulean House',
+  width: 8,
+  height: 6,
+  tiles: [
+    "WWWWWWWW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WPPPPPPW",
+    "WWWDDWWW",
+  ],
+  objects: [],
+  npcs: [
+    { id:'cerulean_house_resident', x:4, y:2, name:'COOLTRAINER', dir:'south',
+      dialogue:["COOLTRAINER: I heard a NUGGET BRIDGE lies north of CERULEAN on Route 24! You can earn a NUGGET there if you beat all five trainers!"] },
+  ],
+  signs: [],
+  warps: [
+    { x:3, y:5, dest:'cerulean_city', destX:20, destY:17, areaName:'Cerulean City' },
+    { x:4, y:5, dest:'cerulean_city', destX:21, destY:17, areaName:'Cerulean City' },
+  ],
+};
+
 // ── Area registry ─────────────────────────────────────────────────────────────
 const AREAS = {
   pallet_town:      PALLET_TOWN,
@@ -1218,6 +1914,18 @@ const AREAS = {
   route_2_gate:     ROUTE_2_GATE,
   route_22:         ROUTE_22,
   route_23:         ROUTE_23,
+  // ── Badge 2 arc ─────────────────────────────────────────────────────────────
+  route_3:          ROUTE_3,
+  mt_moon_pc:       MT_MOON_PC,
+  mt_moon_1f:       MT_MOON_1F,
+  mt_moon_b1f:      MT_MOON_B1F,
+  mt_moon_b2f:      MT_MOON_B2F,
+  route_4:          ROUTE_4,
+  cerulean_city:    CERULEAN_CITY,
+  cerulean_pokecenter: CERULEAN_POKECENTER,
+  cerulean_mart:    CERULEAN_MART,
+  cerulean_gym:     CERULEAN_GYM,
+  cerulean_house:   CERULEAN_HOUSE,
 };
 
 // ── Tile accessors ─────────────────────────────────────────────────────────────

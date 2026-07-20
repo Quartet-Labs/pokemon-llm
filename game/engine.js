@@ -31,6 +31,15 @@ const MART_CATALOG = {
     { item: 'awakening',     price: 250 },
     { item: 'paralyze_heal', price: 200 },
   ],
+  cerulean: [
+    // Cerulean: Poké Ball/Great Ball/Super Potion/Antidote/Parlyz Heal/Repel
+    { item: 'poke_ball',     price: 200  },
+    { item: 'great_ball',    price: 600  },
+    { item: 'super_potion',  price: 700  },
+    { item: 'antidote',      price: 100  },
+    { item: 'paralyze_heal', price: 200  },
+    { item: 'repel',         price: 350  },
+  ],
   celadon: [
     { item: 'fire_stone',    price: 2100 },
     { item: 'water_stone',   price: 2100 },
@@ -169,6 +178,7 @@ function getMartTierForArea(areaId, state) {
     return 'viridian';
   }
   if (areaId === 'pewter_city' || areaId === 'pewter_mart') return 'pewter';
+  if (areaId === 'cerulean_city' || areaId === 'cerulean_mart') return 'cerulean';
   if (areaId === 'celadon_city') return 'celadon';
   return null;
 }
