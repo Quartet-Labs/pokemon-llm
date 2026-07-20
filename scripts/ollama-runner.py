@@ -122,13 +122,18 @@ def ollama_decide(ollama, model, system, user):
     no usable tool call. Prefers native tool_calls; falls back to parsing a JSON
     object out of message content only if the model returned no tool_calls.
     """
+    # qwen3 and other hybrid-reasoning models emit long think-chains before the
+    # tool call by default (60-1400s/turn, wildly variable). "/no_think" disables
+    # that per-message and still returns a clean tool call in a few seconds. (The
+    # native `think: false` param can't be combined with `tools` here — it returns
+    # an empty response — so we steer via the prompt instead.)
     body = {
         "model": model,
         "stream": False,
         "keep_alive": "30m",
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": user},
+            {"role": "user", "content": "/no_think\n" + user},
         ],
         "tools": TOOLS,
         # num_ctx 4096 keeps a 32B model's KV cache small enough to fit fully in a
