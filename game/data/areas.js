@@ -27,6 +27,7 @@ const ENCOUNTER_TILES = new Set([T.TALL_GRASS]);
 const PALLET_TOWN = {
   id: 'pallet_town',
   name: 'Pallet Town',
+  flyDestination: true, flyName: 'Pallet Town', flyLandX: 8, flyLandY: 12,
   width: 20,
   height: 18,
   // P=path T=tree B=building D=door S=sign ~=water
@@ -77,6 +78,9 @@ const PALLET_TOWN = {
     { x:4,  y:14, text:"PALLET TOWN\nShades of your journey await!" },
     { x:13, y:14, text:"OAK POKéMON RESEARCH LABORATORY\nProf. OAK resides here." },
   ],
+  items: [
+    { id:'pallet_hidden_ether', x:3, y:7, item:'ether', qty:1, hidden:true },
+  ],
   warps: [
     { x:2,  y:13, dest:'players_house', destX:3, destY:4, areaName:"Player's House" },
     { x:3,  y:13, dest:'players_house', destX:4, destY:4, areaName:"Player's House" },
@@ -116,6 +120,7 @@ const ROUTE_1 = {
   },
   items: [
     { id:'r1_potion', x:9, y:11, item:'potion', qty:1 },
+    { id:'r1_hidden_ether', x:4, y:22, item:'ether', qty:1, hidden:true },
   ],
   connections: {
     north: { area:'viridian_city', entryX:9, entryY:27 },
@@ -128,6 +133,7 @@ const ROUTE_1 = {
 const VIRIDIAN_CITY = {
   id: 'viridian_city',
   name: 'Viridian City',
+  flyDestination: true, flyName: 'Viridian City', flyLandX: 9, flyLandY: 16,
   width: 30,
   height: 30,
   encounterRate: 0,
@@ -245,6 +251,7 @@ const VIRIDIAN_FOREST = {
     { id:'vforest_antidote', x:5,  y:15, item:'antidote', qty:1 },
     { id:'vforest_pokeball', x:11, y:20, item:'poke_ball', qty:1 },
     { id:'vforest_tm45',     x:3,  y:5,  item:'tm45',      qty:1 },
+    { id:'vforest_hidden_pp_up', x:7, y:18, item:'pp_up', qty:1, hidden:true },
   ],
   connections: {
     south: { area:'route_2',     entryX:7,  entryY:1  },  // [E2] now exits to Route 2
@@ -257,6 +264,7 @@ const VIRIDIAN_FOREST = {
 const PEWTER_CITY = {
   id: 'pewter_city',
   name: 'Pewter City',
+  flyDestination: true, flyName: 'Pewter City', flyLandX: 10, flyLandY: 20,
   width: 24,
   height: 24,
   encounterRate: 0,
@@ -286,6 +294,7 @@ const PEWTER_CITY = {
   ],
   items: [
     { id:'pewter_potion', x:5, y:18, item:'potion', qty:1 },
+    { id:'pewter_hidden_rare_candy', x:18, y:19, item:'rare_candy', qty:1, hidden:true },
   ],
   warps: [
     { x:4,  y:9,  dest:'pewter_pokecenter', destX:4, destY:6, areaName:'Pokémon Center'   },

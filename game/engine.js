@@ -86,7 +86,31 @@ const ITEM_NAMES = {
   iron:          'Iron',
   carbos:        'Carbos',
   calcium:       'Calcium',
+  // Restorative
+  ether:         'Ether',
+  max_ether:     'Max Ether',
+  elixir:        'Elixir',
+  max_elixir:    'Max Elixir',
+  full_heal:     'Full Heal',
+  // Key items
+  itemfinder:    'Itemfinder',
+  itemfinder_key:'Itemfinder',
+  poke_flute:    'Poké Flute',
+  bicycle:       'Bicycle',
+  old_rod:       'Old Rod',
+  good_rod:      'Good Rod',
+  super_rod:     'Super Rod',
+  oaks_parcel:   "Oak's Parcel",
+  old_amber:     'Old Amber',
+  dome_fossil:   'Dome Fossil',
+  helix_fossil:  'Helix Fossil',
 };
+
+// [D5/E6] Badge helper — badge flags stored as 'badge_<name>' by the battle-end handler.
+// e.g. Boulder Badge → badge_boulder_badge, Cascade Badge → badge_cascade_badge
+function hasBadge(state, badgeName) {
+  return !!(state.player.flags && state.player.flags[`badge_${badgeName}`]);
+}
 
 // [C8] Two-turn move definitions (charge message + invulnerability flag + optional charge buff)
 // Invulnerable: target can't be hit except by Swift during the charging turn.
@@ -1181,6 +1205,15 @@ function processAction(state, action) {
       // Helper: check requireFlag gate on a connection object
       const connBlocked = (conn) =>
         conn.requireFlag && !state.player.flags[conn.requireFlag];
+      // [G10] Helper: record fly destinations when entering a new area via connection
+      const trackFlyDest = (newAreaId) => {
+        const newAreaDef = AREAS[newAreaId];
+        if (newAreaDef?.flyDestination) {
+          if (!state.player.flyDestinations) state.player.flyDestinations = {};
+          state.player.flyDestinations[newAreaId] = newAreaDef.flyName || newAreaDef.name;
+        }
+      };
+
       if (ny < 0) {
         const conn = area.connections?.north;
         if (conn) {
@@ -1188,6 +1221,7 @@ function processAction(state, action) {
           state.areaId = conn.area;
           state.player.x = conn.entryX;
           state.player.y = conn.entryY;
+          trackFlyDest(conn.area);
           state.message = `Heading north to ${AREAS[conn.area]?.name || conn.area}...`;
           log(state.message);
           const rivalResult = checkRivalEncounter(state);
@@ -1203,6 +1237,7 @@ function processAction(state, action) {
           state.areaId = conn.area;
           state.player.x = conn.entryX;
           state.player.y = conn.entryY;
+          trackFlyDest(conn.area);
           state.message = `Heading south to ${AREAS[conn.area]?.name || conn.area}...`;
           log(state.message);
           const rivalResult = checkRivalEncounter(state);
@@ -1216,6 +1251,7 @@ function processAction(state, action) {
         if (conn) {
           if (connBlocked(conn)) { state.message = conn.blockMessage || "You can't go that way."; return state; }
           state.areaId = conn.area; state.player.x = conn.entryX; state.player.y = conn.entryY;
+          trackFlyDest(conn.area);
           state.message = `Heading west to ${AREAS[conn.area]?.name}...`;
           const rivalResult = checkRivalEncounter(state);
           if (rivalResult) return rivalResult;
@@ -1228,6 +1264,7 @@ function processAction(state, action) {
         if (conn) {
           if (connBlocked(conn)) { state.message = conn.blockMessage || "You can't go that way."; return state; }
           state.areaId = conn.area; state.player.x = conn.entryX; state.player.y = conn.entryY;
+          trackFlyDest(conn.area);
           state.message = `Heading east to ${AREAS[conn.area]?.name}...`;
           const rivalResult = checkRivalEncounter(state);
           if (rivalResult) return rivalResult;
@@ -1338,9 +1375,13 @@ function processAction(state, action) {
         return state;
       }
 
-      // Surf check: can cross water if a party member knows 'surf'
+      // Surf check: can cross water if a party member knows 'surf' + has Soul Badge
       if (getAreaTile(area, nx, ny) === T.WATER) {
         const hasSurf = state.player.party.some(p => (p.moves || []).includes('surf'));
+        if (hasSurf && !hasBadge(state, 'soul_badge')) {
+          state.message = "You need the SOUL BADGE to use SURF outside of battle!";
+          return state;
+        }
         if (hasSurf) {
           state.player.x = nx;
           state.player.y = ny;
@@ -1460,9 +1501,10 @@ function processAction(state, action) {
       }
       state.npcState[state.areaId] = npcStateArea;
 
-      // Ground item auto-pickup
+      // Ground item auto-pickup (hidden items require Itemfinder action)
       if (area.items) {
         for (const item of area.items) {
+          if (item.hidden) continue;  // [E5] hidden items only found via itemfinder action
           if (item.x === state.player.x && item.y === state.player.y) {
             const flagKey = `picked_up_${item.id}`;
             if (!state.player.flags[flagKey]) {
@@ -1708,6 +1750,7 @@ function processAction(state, action) {
       const DIRS = [[0,-1],[0,1],[1,0],[-1,0]];
       const hasCut = state.player.party.some(p => (p.moves || []).includes('cut'));
       if (!hasCut) { state.message = "No Pokémon in your party knows CUT!"; return state; }
+      if (!hasBadge(state, 'cascade_badge')) { state.message = "You need the CASCADE BADGE to use CUT outside of battle!"; return state; }
       for (const [dx, dy] of DIRS) {
         const tx = state.player.x + dx, ty = state.player.y + dy;
         if (getAreaTile(area, tx, ty) === T.TREE_CUT) {
@@ -1768,6 +1811,103 @@ function processAction(state, action) {
       state.screen = 'overworld';
       state.dialogue = null;
       state.message = `Used ${moveName.toUpperCase()}! Returned to the last POKéMON CENTER area.`;
+      log(state.message);
+      return state;
+    }
+
+    // [E6] FLASH field move — illuminates dark areas, lowers wild encounter accuracy flag
+    if (type === 'flash') {
+      const hasFlash = state.player.party.some(p => (p.moves || []).includes('flash'));
+      if (!hasFlash) { state.message = "No Pokémon in your party knows FLASH!"; return state; }
+      if (!hasBadge(state, 'boulder_badge')) { state.message = "You need the BOULDER BADGE to use FLASH outside of battle!"; return state; }
+      if (!state.flashedAreas) state.flashedAreas = {};
+      state.flashedAreas[state.areaId] = true;
+      state.message = "Used FLASH! The area is illuminated — wild Pokémon encounter rate is reduced!";
+      log(state.message);
+      return state;
+    }
+
+    // [E6] STRENGTH field move — activates boulder-pushing in the current area
+    if (type === 'strength') {
+      const hasStrength = state.player.party.some(p => (p.moves || []).includes('strength'));
+      if (!hasStrength) { state.message = "No Pokémon in your party knows STRENGTH!"; return state; }
+      if (!hasBadge(state, 'rainbow_badge')) { state.message = "You need the RAINBOW BADGE to use STRENGTH outside of battle!"; return state; }
+      if (!state.strengthActive) state.strengthActive = {};
+      state.strengthActive[state.areaId] = true;
+      state.message = "Used STRENGTH! You can now push boulders in this area!";
+      log(state.message);
+      return state;
+    }
+
+    // [G10] FLY field move — fast travel to any previously visited fly destination
+    if (type === 'fly') {
+      const hasFly = state.player.party.some(p => (p.moves || []).includes('fly'));
+      if (!hasFly) { state.message = "No Pokémon in your party knows FLY!"; return state; }
+      if (!hasBadge(state, 'thunder_badge')) { state.message = "You need the THUNDER BADGE to use FLY outside of battle!"; return state; }
+      const dests = state.player.flyDestinations || {};
+      const destKeys = Object.keys(dests);
+      if (!action.destination) {
+        if (destKeys.length === 0) {
+          state.message = "FLY: You haven't visited any cities yet!";
+        } else {
+          state.message = "FLY: Where to? Available: " + destKeys.map(k => `${k} (${dests[k]})`).join(', ') + ". Use: { type: 'fly', destination: '<area_id>' }";
+        }
+        return state;
+      }
+      const destId = action.destination;
+      if (!dests[destId] && !AREAS[destId]?.flyDestination) {
+        state.message = "FLY: You haven't visited " + (AREAS[destId]?.name || destId) + " yet!";
+        return state;
+      }
+      const destArea = AREAS[destId];
+      if (!destArea) { state.message = "FLY: Unknown destination: " + destId; return state; }
+      const landX = destArea.flyLandX ?? Math.floor(destArea.width / 2);
+      const landY = destArea.flyLandY ?? Math.floor(destArea.height * 0.75);
+      state.areaId = destId;
+      state.player.x = landX;
+      state.player.y = landY;
+      state.screen = 'overworld';
+      state.dialogue = null;
+      if (!state.player.flyDestinations) state.player.flyDestinations = {};
+      state.player.flyDestinations[destId] = dests[destId] || destArea.name;
+      state.message = `Used FLY! Soared to ${dests[destId] || destArea.name}!`;
+      log(state.message);
+      return state;
+    }
+
+    // [E5] ITEMFINDER — beeps near hidden items; picks them up when standing on them
+    if (type === 'itemfinder') {
+      const hasItemfinder = (state.player.bag?.itemfinder ?? state.player.bag?.itemfinder_key ?? 0) > 0
+        || state.player.flags?.has_itemfinder;
+      if (!hasItemfinder) { state.message = "You don't have the ITEMFINDER!"; return state; }
+      const nearby = (area.items || []).filter(item => {
+        if (!item.hidden) return false;
+        if (state.player.flags[`picked_up_${item.id}`]) return false;
+        return Math.abs(item.x - state.player.x) + Math.abs(item.y - state.player.y) <= 4;
+      });
+      if (nearby.length === 0) {
+        state.message = "ITEMFINDER: *silence* Nothing hidden nearby.";
+        return state;
+      }
+      const closest = nearby.sort((a, b) =>
+        (Math.abs(a.x - state.player.x) + Math.abs(a.y - state.player.y)) -
+        (Math.abs(b.x - state.player.x) + Math.abs(b.y - state.player.y))
+      )[0];
+      const dist = Math.abs(closest.x - state.player.x) + Math.abs(closest.y - state.player.y);
+      if (dist === 0) {
+        // Standing on it — pick it up
+        state.player.flags[`picked_up_${closest.id}`] = true;
+        const iname = closest.item;
+        if (iname.startsWith('tm') || iname.startsWith('hm')) {
+          if (!state.player.tms) state.player.tms = {};
+          state.player.tms[iname] = (state.player.tms[iname] || 0) + (closest.qty || 1);
+        } else {
+          state.player.bag[iname] = (state.player.bag[iname] || 0) + (closest.qty || 1);
+        }
+        state.message = `ITEMFINDER: *beep!* Found a hidden ${iname.replace(/_/g, ' ').toUpperCase()}!`;
+      } else {
+        state.message = `ITEMFINDER: *beep beep* Something is hidden nearby! (${dist} step${dist > 1 ? 's' : ''} away, heading toward ${closest.x > state.player.x ? 'east' : closest.x < state.player.x ? 'west' : closest.y > state.player.y ? 'south' : 'north'})`;
+      }
       log(state.message);
       return state;
     }
@@ -1866,6 +2006,12 @@ function handleWarp(state, warp, area) {
     state.areaId = destId;
     state.player.x = warp.destX;
     state.player.y = warp.destY;
+    // [G10] Track fly destinations on warp entry
+    const destAreaDef = AREAS[destId];
+    if (destAreaDef?.flyDestination) {
+      if (!state.player.flyDestinations) state.player.flyDestinations = {};
+      state.player.flyDestinations[destId] = destAreaDef.flyName || destAreaDef.name;
+    }
     state.message = `Entered ${warp.areaName || AREAS[destId].name}.`;
     return state;
   }
@@ -1994,6 +2140,39 @@ function useItemOverworld(state, action) {
     recalcStats(target);
     bag[item]--;
     state.message = `Used ${itemName} on ${target.name}! ${vStat.toUpperCase()} stat EXP increased.`;
+
+  } else if (item === 'ether' || item === 'max_ether') {
+    // Ether: restore 10 PP to one move; Max Ether: fully restore PP of one move
+    if (!((bag[item] ?? 0) > 0)) { state.message = `You have no ${itemName}s.`; return state; }
+    const mIdx = action.moveIndex ?? 0;
+    const mv = target.moves?.[mIdx];
+    if (!mv) return { ...state, message: 'No move at that slot.' };
+    const basePP = MOVES[mv]?.pp ?? 20;
+    const ups = target.ppUps?.[mv] || 0;
+    const maxPP = Math.floor(basePP * (1 + ups * 0.2));
+    const curPP = target.pp?.[mv] ?? maxPP;
+    if (curPP >= maxPP) { state.message = `${target.name}'s ${mv.toUpperCase()} PP is already full!`; return state; }
+    if (!target.pp) target.pp = {};
+    target.pp[mv] = item === 'max_ether' ? maxPP : Math.min(maxPP, curPP + 10);
+    bag[item]--;
+    state.message = `Used ${itemName} on ${target.name}'s ${mv.toUpperCase()}! PP restored${item === 'max_ether' ? ' fully' : ' by ' + (target.pp[mv] - curPP)}.`;
+
+  } else if (item === 'elixir' || item === 'max_elixir') {
+    // Elixir: restore 10 PP to all moves; Max Elixir: fully restore all moves' PP
+    if (!((bag[item] ?? 0) > 0)) { state.message = `You have no ${itemName}s.`; return state; }
+    if (!target.pp) target.pp = {};
+    let restored = 0;
+    for (const mv of (target.moves || [])) {
+      const basePP = MOVES[mv]?.pp ?? 20;
+      const ups = target.ppUps?.[mv] || 0;
+      const maxPP = Math.floor(basePP * (1 + ups * 0.2));
+      const curPP = target.pp[mv] ?? maxPP;
+      const newPP = item === 'max_elixir' ? maxPP : Math.min(maxPP, curPP + 10);
+      if (newPP > curPP) { target.pp[mv] = newPP; restored += newPP - curPP; }
+    }
+    if (restored === 0) { state.message = `${target.name}'s moves have full PP!`; return state; }
+    bag[item]--;
+    state.message = `Used ${itemName} on ${target.name}! All moves' PP restored${item === 'max_elixir' ? ' fully' : ''}.`;
 
   } else if (item === 'pp_up' || item === 'pp_max') {
     // [C19] PP Up / PP Max — raise a move's maximum PP
@@ -3220,8 +3399,15 @@ function getView(state) {
     view.available_actions = [
       'move (direction: north|south|east|west)',
       'talk',
-      'cut',
-      'use_item (item: potion|super_potion|hyper_potion|max_potion|full_restore|revive|max_revive|rare_candy|antidote|paralyze_heal|burn_heal|ice_heal|awakening|full_heal|escape_rope|pp_up|pp_max|tm##|hm##, target_index: 0-5, moveIndex: 0-3 for pp_up/pp_max)',
+      'cut — [HM01, needs Cascade Badge] remove adjacent tree',
+      'surf — [HM03, needs Soul Badge] cross adjacent water (party must know Surf)',
+      'flash — [HM05, needs Boulder Badge] illuminate dark area (party must know Flash)',
+      'strength — [HM04, needs Rainbow Badge] push boulders (party must know Strength)',
+      'fly (destination: area_id) — [HM02, needs Thunder Badge] fast travel to visited city',
+      'dig — [field escape, no badge] warp to last Pokémon Center',
+      'teleport — [field escape, no badge] warp to last Pokémon Center',
+      'itemfinder — use Itemfinder to locate hidden items nearby',
+      'use_item (item: potion|super_potion|hyper_potion|max_potion|full_restore|revive|max_revive|rare_candy|antidote|paralyze_heal|burn_heal|ice_heal|awakening|full_heal|escape_rope|ether|elixir|max_ether|max_elixir|pp_up|pp_max|tm##|hm##, target_index: 0-5, moveIndex: 0-3 for pp_up/pp_max)',
       'mart_view',
       'mart_buy (item: ..., quantity: N)',
       'mart_sell (item: ..., qty: N)',
