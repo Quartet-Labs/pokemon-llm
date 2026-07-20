@@ -3578,7 +3578,7 @@ function renderExploredMap(state) {
   }
   return {
     ascii: rows.join('\n'),
-    legend: MAP_LEGEND,
+    legend: 'see GET /map-legend',
     position: { x: px, y: py },
     viewport: { width: MAP_VIEW_W, height: MAP_VIEW_H },
   };
@@ -3732,4 +3732,4 @@ function getView(state) {
   return view;
 }
 
-module.exports = { newGame, processAction, getView, makePokemon, STARTERS };
+module.exports = { newGame, processAction, getView, makePokemon, STARTERS, MAP_LEGEND };

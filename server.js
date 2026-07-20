@@ -4,7 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { newGame, processAction, getView } = require('./game/engine');
+const { newGame, processAction, getView, MAP_LEGEND } = require('./game/engine');
 
 const app = express();
 const server = http.createServer(app);
@@ -407,6 +407,13 @@ app.get('/map', (req, res) => {
   res.json(snap);
 });
 
+// Glyph key for the fog-of-war ASCII minimap (view.map.ascii). Single source of
+// truth: MAP_LEGEND is exported from game/engine.js — never duplicated here.
+app.get('/map-legend', (req, res) => res.json({
+  description: 'ASCII minimap glyph key',
+  glyphs: MAP_LEGEND,
+}));
+
 app.get('/api-docs', (req, res) => res.json({
   description: 'Pokémon LLM — REST API reference',
   benchmark: {
@@ -419,16 +426,20 @@ app.get('/api-docs', (req, res) => res.json({
   sessions: {
     'POST /session': 'Create session. Body: {seed?, label?}. Returns: {sessionId, token}.',
     'GET /sessions': 'List all active sessions.',
+    'DELETE /session': 'Remove a session (?session=X), freeing its viewer slot. The default session cannot be removed.',
   },
   auth: { note: 'Named/benchmark sessions require Authorization: Bearer <token> on write endpoints.' },
   rate_limiting: { note: 'Default 500ms per named session (ACTION_RATE_LIMIT_MS env). Benchmark/default: no limit.' },
   endpoints: {
-    'GET /state': 'Game state (?session=X)',
+    'GET /state': 'Game state (?session=X). Overworld state includes view.map = {ascii, legend, position, viewport} — the fog-of-war minimap; legend is a pointer to GET /map-legend.',
     'POST /action': 'Submit action. Returns {budgetExhausted:true} when benchmark budget runs out.',
     'POST /reset': 'Reset (?session=X). Body: {seed?}.',
     'GET /halt': 'Halt status. POST /halt to halt, {clear:true} to resume.',
     'GET /logs': 'Action log (?session=X&limit=N)',
     'GET /map': 'Area tile map (?session=X)',
+    'GET /map-legend': 'ASCII minimap glyph key for view.map.ascii.',
+    'GET /api-docs': 'This API reference.',
+    'GET /help': 'Complete one-line index of every endpoint.',
     'GET /leaderboard.html': 'Visual leaderboard page',
   },
   action_types: {
@@ -438,6 +449,30 @@ app.get('/api-docs', (req, res) => res.json({
     throw_ball: { ball: 'pokeball|great_ball' },
     use_item: { item: 'potion', target_index: '0-5' },
     switch: { party_index: '0-5' },
+  },
+}));
+
+// Complete, canonical index of every registered endpoint — one line each.
+app.get('/help', (req, res) => res.json({
+  description: 'Pokémon LLM — endpoint index. See GET /api-docs for full request/response detail.',
+  endpoints: {
+    'GET /state': 'Current game state (?session=X). Overworld includes view.map fog-of-war minimap.',
+    'POST /action': 'Submit a game action (?session=X). Body: {type, ...}.',
+    'POST /session': 'Create a session. Body: {seed?, label?}. Returns {sessionId, token}.',
+    'DELETE /session': 'Remove a session (?session=X). Default session cannot be removed.',
+    'GET /sessions': 'List all active sessions.',
+    'POST /benchmark': 'Create a benchmark run. Body: {model, seed?, actionBudget?, label?}.',
+    'GET /benchmarks': 'Benchmark leaderboard (?model=X&seed=N&limit=N).',
+    'GET /benchmarks/:id': 'Single benchmark result + replay instructions.',
+    'POST /reset': 'Reset a session (?session=X). Body: {seed?}.',
+    'GET /halt': 'Halt status for a session (?session=X).',
+    'POST /halt': 'Halt a session; body {clear:true} to resume.',
+    'GET /logs': 'Action log (?session=X&limit=N).',
+    'GET /map': 'Full area tile map (?session=X).',
+    'GET /map-legend': 'ASCII minimap glyph key for view.map.ascii.',
+    'GET /api-docs': 'Full REST API reference.',
+    'GET /help': 'This endpoint index.',
+    'GET /leaderboard.html': 'Visual leaderboard page.',
   },
 }));
 
