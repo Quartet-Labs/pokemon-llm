@@ -104,6 +104,43 @@ const ITEM_NAMES = {
   old_amber:     'Old Amber',
   dome_fossil:   'Dome Fossil',
   helix_fossil:  'Helix Fossil',
+  // Poké Balls
+  master_ball:   'Master Ball',
+  safari_ball:   'Safari Ball',
+  // Repels
+  repel:         'Repel',
+  super_repel:   'Super Repel',
+  max_repel:     'Max Repel',
+  // Battle stat boosters (single use, battle only)
+  x_attack:      'X Attack',
+  x_defend:      'X Defend',
+  x_speed:       'X Speed',
+  x_special:     'X Special',
+  x_accuracy:    'X Accuracy',
+  guard_spec:    'Guard Spec.',
+  dire_hit:      'Dire Hit',
+  // Vending machine drinks
+  fresh_water:   'Fresh Water',
+  soda_pop:      'Soda Pop',
+  lemonade:      'Lemonade',
+  // Sellable
+  nugget:        'Nugget',
+  big_mushroom:  'Big Mushroom',
+  tiny_mushroom: 'Tiny Mushroom',
+  // Overworld use
+  poke_doll:     'Poké Doll',
+  // Key items (extended)
+  town_map:      'Town Map',
+  ss_ticket:     'S.S. Ticket',
+  bike_voucher:  'Bike Voucher',
+  coin_case:     'Coin Case',
+  silph_scope:   'Silph Scope',
+  lift_key:      'Lift Key',
+  card_key:      'Card Key',
+  secret_key:    'Secret Key',
+  exp_all:       'Exp. All',
+  gold_teeth:    'Gold Teeth',
+  safari_pass:   'Safari Pass',
 };
 
 // [D5/E6] Badge helper — badge flags stored as 'badge_<name>' by the battle-end handler.
@@ -459,6 +496,9 @@ function calcDamage(attacker, moveName, defender, opts = {}) {
   let critThreshold = Math.min(255, Math.floor(baseSpd * critMult / 2));
   // [H2] Gen I Focus Energy bug: flag is supposed to ×4 crits but actually ÷4 due to bit-shift error
   if (attacker.focusEnergy) critThreshold = Math.max(1, Math.floor(critThreshold / 4));
+  // [F1] Dire Hit: use high-crit bracket (same as Slash/Razor Leaf) — multiply base speed by 8
+  // opts.direHit is passed from processBattleAction when battle.direHit is set
+  if (opts.direHit) critThreshold = Math.min(255, Math.floor(baseSpd * 8 / 2));
   const isCrit = (roll(256) - 1) < critThreshold;
 
   // #17: Special moves use spc/spc; physical use atk/def
@@ -1436,6 +1476,8 @@ function processAction(state, action) {
       state.player.x = nx;
       state.player.y = ny;
       state.player.steps++;
+      // [F1] Repel: decrement repel steps counter after each move
+      if (state.repelSteps > 0) state.repelSteps--;
 
       // Trainer sight-line check (after successful move)
       for (const npc of (area.npcs || [])) {
@@ -1526,7 +1568,9 @@ function processAction(state, action) {
       }
 
       // Encounter check (variable rate via area.encounterRate)
-      if (hasEncounter(area, nx, ny) && roll(100) <= (area.encounterRate ?? 20)) {
+      // [F1] Repel: skip encounters while repelSteps > 0
+      const repelActive = (state.repelSteps || 0) > 0;
+      if (hasEncounter(area, nx, ny) && !repelActive && roll(100) <= (area.encounterRate ?? 20)) {
         const tile = getAreaTile(area, nx, ny);
         const terrain = tile === T.TALL_GRASS ? 'tall_grass' : 'grass';
         const encounter = rollEncounter(state.areaId, terrain, roll);  // #B9: pass seeded roll
@@ -2252,6 +2296,53 @@ function useItemOverworld(state, action) {
     state.message = 'Used Escape Rope! Returned to the last POKéMON CENTER area.';
     return state;
 
+  } else if (item === 'repel' || item === 'super_repel' || item === 'max_repel') {
+    // [F1] Repel line — block wild encounters for N steps
+    const steps = item === 'repel' ? 100 : item === 'super_repel' ? 200 : 250;
+    if (!((bag[item] ?? 0) > 0)) { state.message = `You have no ${itemName}s.`; return state; }
+    bag[item]--;
+    state.repelSteps = (state.repelSteps || 0) + steps;
+    state.message = `Used ${itemName}! Wild Pokémon will avoid you for ${steps} steps.`;
+
+  } else if (item === 'fresh_water' || item === 'soda_pop' || item === 'lemonade') {
+    // [F1] Vending machine drinks — heal HP
+    const heal = item === 'fresh_water' ? 50 : item === 'soda_pop' ? 60 : 80;
+    if (!((bag[item] ?? 0) > 0)) { state.message = `You have no ${itemName}!`; return state; }
+    if (target.currentHp <= 0) { state.message = `${target.name} has fainted!`; return state; }
+    if (target.currentHp >= target.maxHp) { state.message = `${target.name}'s HP is already full!`; return state; }
+    const restored = Math.min(heal, target.maxHp - target.currentHp);
+    target.currentHp += restored;
+    bag[item]--;
+    state.message = `${target.name} drank the ${itemName} and recovered ${restored} HP!`;
+
+  } else if (item === 'poke_doll') {
+    // [F1] Poké Doll — only usable in battle to flee
+    state.message = "The POKÉ DOLL can only be used in battle to flee from wild Pokémon!";
+
+  } else if (['x_attack','x_defend','x_speed','x_special','x_accuracy','guard_spec','dire_hit'].includes(item)) {
+    // [F1] X-items — battle only
+    state.message = `${itemName} can only be used in battle!`;
+
+  } else if (item === 'exp_all') {
+    // [F1] Exp. All — toggle party-wide EXP sharing
+    const active = !!(state.player.flags?.exp_all_active);
+    state.player.flags = state.player.flags || {};
+    state.player.flags.exp_all_active = !active;
+    state.message = `EXP. ALL turned ${active ? 'OFF' : 'ON'}! ${active ? 'Only the battling Pokémon gains EXP.' : 'All party Pokémon will gain EXP from battles.'}`;
+
+  } else if (item === 'poke_flute') {
+    // [F1/D5] Poké Flute — wakes sleeping Snorlax NPCs on adjacent tiles
+    const adjNpcs = (area.npcs || []).filter(n =>
+      Math.abs(n.x - state.player.x) + Math.abs(n.y - state.player.y) <= 1 && n.id?.includes('snorlax')
+    );
+    if (adjNpcs.length > 0) {
+      state.player.flags = state.player.flags || {};
+      adjNpcs.forEach(n => { state.player.flags[`snorlax_awake_${n.id}`] = true; });
+      state.message = "The POKÉ FLUTE's melody echoes... The SNORLAX stirs and wakes up! It's angry!";
+    } else {
+      state.message = "You play the POKÉ FLUTE! A soothing melody echoes through the area. Nothing seems to happen here.";
+    }
+
   } else {
     // Stone evolution items
     const STONE_MAP = {
@@ -2660,7 +2751,7 @@ function processBattleAction(state, action, log) {
         }
         let totalDmg = 0;
         let subBrokeOnHit = false;
-        const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
+        const opts = isPlayer ? { badgeBoost: playerBadgeBoost, direHit: !!battle?.direHit } : {};
         for (let h = 0; h < hits; h++) {
           if (defender.currentHp <= 0) { hits = h; break; }
           const { dmg: hDmg } = calcDamage(attacker, mvName, defender, opts);
@@ -2689,7 +2780,7 @@ function processBattleAction(state, action, log) {
           msgs.push(`${attacker.name} used ${mvName.toUpperCase()}! But it failed — target is not asleep!`);
           return;
         }
-        const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
+        const opts = isPlayer ? { badgeBoost: playerBadgeBoost, direHit: !!battle?.direHit } : {};
         const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
         const effMsg = effectiveness > 1 ? " It's super effective!"
                      : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
@@ -2710,7 +2801,7 @@ function processBattleAction(state, action, log) {
         return;
       }
 
-      const opts = isPlayer ? { badgeBoost: playerBadgeBoost } : {};
+      const opts = isPlayer ? { badgeBoost: playerBadgeBoost, direHit: !!battle?.direHit } : {};
       const { dmg, effectiveness, crit } = calcDamage(attacker, mvName, defender, opts);
       const effMsg = effectiveness > 1 ? " It's super effective!"
                    : effectiveness < 1 && effectiveness > 0 ? " It's not very effective..."
@@ -2770,10 +2861,20 @@ function processBattleAction(state, action, log) {
         battle.payDayGold += coins;
         msgs.push(`Coins scattered everywhere! (+${coins} coins)`);
       }
-      msgs.push(...applyMoveEffect(mvName, defender, attacker));
+      // [F1] Guard Spec.: block status effects targeting the player's Pokémon
+      if (!isPlayer && battle?.guardSpec && MOVES[mvName]?.effect?.status) {
+        msgs.push(`Guard Spec. blocked the status effect!`);
+      } else {
+        msgs.push(...applyMoveEffect(mvName, defender, attacker));
+      }
     } else {
       msgs.push(`${attacker.name} used ${mvName.toUpperCase()}!`);
-      msgs.push(...applyMoveEffect(mvName, defender, attacker));
+      // [F1] Guard Spec.: block status effects targeting the player's Pokémon (status moves)
+      if (!isPlayer && battle?.guardSpec && MOVES[mvName]?.effect?.status) {
+        msgs.push(`Guard Spec. blocked the status effect!`);
+      } else {
+        msgs.push(...applyMoveEffect(mvName, defender, attacker));
+      }
     }
     // #23 [A8] Bind/Wrap — full Gen I partial-trapping implementation
     if (mv?.effect?.bind && !defender.boundState) {
@@ -3264,6 +3365,56 @@ function processBattleAction(state, action, log) {
       bag.full_heal--;
       msgs.push(`Used Full Heal on ${target.name}. Cured ${cured}!`);
       used = true;
+    } else if (['x_attack','x_defend','x_speed','x_special','x_accuracy'].includes(item)) {
+      // [F1] X-items — raise battle stat stage by +2
+      if (!((bag[item] ?? 0) > 0)) { state.message = `You have no ${itemName}s!`; return state; }
+      bag[item]--;
+      const STAT = { x_attack:'atk', x_defend:'def', x_speed:'spd', x_special:'spc', x_accuracy:'acc' };
+      const stat = STAT[item];
+      const stages = battle.playerStatStages || {};
+      battle.playerStatStages = stages;
+      stages[stat] = Math.min(6, (stages[stat] || 0) + 2);
+      // Apply to the active Pokémon's statStages
+      active.statStages = active.statStages || { atk:0, def:0, spd:0, spc:0, acc:0, eva:0 };
+      active.statStages[stat] = Math.min(6, (active.statStages[stat] || 0) + 2);
+      msgs.push(`Used ${itemName} on ${active.name}! ${stat.toUpperCase()} sharply rose!`);
+      used = true;
+    } else if (item === 'guard_spec') {
+      // [F1] Guard Spec. — protect from status conditions this battle
+      if (!((bag.guard_spec ?? 0) > 0)) { state.message = 'You have no Guard Specs.!'; return state; }
+      bag.guard_spec--;
+      battle.guardSpec = true;
+      msgs.push(`Used Guard Spec.! ${active.name} is protected from status conditions!`);
+      used = true;
+    } else if (item === 'dire_hit') {
+      // [F1] Dire Hit — raise critical hit ratio this battle
+      if (!((bag.dire_hit ?? 0) > 0)) { state.message = 'You have no Dire Hits!'; return state; }
+      bag.dire_hit--;
+      battle.direHit = true;
+      msgs.push(`Used Dire Hit! ${active.name}'s critical hit ratio went up!`);
+      used = true;
+    } else if (item === 'poke_doll') {
+      // [F1] Poké Doll — flee wild battle safely
+      if (!((bag.poke_doll ?? 0) > 0)) { state.message = 'You have no Poké Dolls!'; return state; }
+      if (battle.isTrainer) { state.message = "You can't flee from a trainer battle!"; return state; }
+      bag.poke_doll--;
+      for (const p of state.player.party) resetVolatileState(p);
+      state.screen = 'overworld';
+      state.battle = null;
+      state.message = "You threw the POKÉ DOLL and fled safely!";
+      msgs.forEach(log);
+      return state;
+    } else if (item === 'fresh_water' || item === 'soda_pop' || item === 'lemonade') {
+      // [F1] Vending machine drinks — heal HP in battle
+      const heal = item === 'fresh_water' ? 50 : item === 'soda_pop' ? 60 : 80;
+      if (!((bag[item] ?? 0) > 0)) { state.message = `You have no ${itemName}!`; return state; }
+      if (target.currentHp <= 0) { state.message = `${target.name} has fainted!`; return state; }
+      if (target.currentHp >= target.maxHp) { state.message = `${target.name}'s HP is already full!`; return state; }
+      const restored = Math.min(heal, target.maxHp - target.currentHp);
+      target.currentHp += restored;
+      bag[item]--;
+      msgs.push(`${target.name} drank the ${itemName} and recovered ${restored} HP!`);
+      used = true;
     }
 
     if (used) {
@@ -3328,6 +3479,7 @@ function getView(state) {
         ? getSurroundings(area, state.player.x, state.player.y)
         : undefined,
       bag: state.player.bag,
+      repel_steps_remaining: state.repelSteps || 0,
       tms: state.player.tms || {},
       tm_count: Object.keys(state.player.tms || {}).length,
       money: state.player.money,
