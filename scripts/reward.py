@@ -10,8 +10,22 @@ This is the single source of truth for per-turn reward. Both drivers
 (ollama-runner, llm-runner) and the future GRPO/SFT trainer import it, so the
 reward the trainer optimizes is exactly the reward the driver logged — no drift.
 
-Reward v1. Every weight is a named constant below, heavily commented, because
+Reward v1.1. Every weight is a named constant below, heavily commented, because
 these WILL be tuned. To reshape reward, edit the constants; the logic stays put.
+
+v1.1 adds progression + novelty terms. Two kinds:
+
+  * DETERMINISTIC (pure, prev/result only): level-up, exp gain, money gain, and
+    pokédex growth. These are diffs of fields already in the view, so they stay
+    inside `compute_reward` — no memory needed.
+  * NOVELTY (needs memory ACROSS turns): first battle vs. a given trainer, first
+    dialogue with a given NPC. A pure prev/result function can't know whether a
+    trainer/NPC is "new" this episode, so these live in `RewardTracker`, which
+    holds per-episode sets and wraps `compute_reward`. The driver creates ONE
+    tracker per episode; on episode end it's discarded (or `.reset()`).
+
+All new weights are SMALL relative to BADGE (+50): progression should nudge the
+policy toward growth without ever competing with the terminal objective.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +65,65 @@ ILLEGAL = 0.5
 # gently prefer new ground. Not applied to non-move actions or to illegal moves
 # (those already get -ILLEGAL and don't change position).
 REVISIT = 0.05
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REWARD WEIGHTS — v1.1 PROGRESSION + NOVELTY. All SMALL relative to BADGE (+50).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# +LEVEL_UP per level gained by ANY party member this turn (summed across the
+# party). Leveling is durable progress toward surviving Brock, and levels are
+# rare (a few per episode), so a moderate per-level bonus is affordable. Compared
+# element-wise on party level; a fresh evolution/new party member that appears at
+# a higher level is NOT counted (see _party_levels — we only credit slots present
+# in BOTH prev and result, matched by position, so adding a 6th Pokémon or a
+# catch doesn't masquerade as a level-up).
+LEVEL_UP = 1.0
+
+# +EXP_GAIN per experience point gained this turn, summed across the party, then
+# clamped to EXP_GAIN_CAP. Tiny per-point so it's a smooth gradient BETWEEN
+# level-ups (the model gets signal from chipping a wild Pokémon even if no level
+# lands), but the CAP stops a single big trainer battle (hundreds/thousands of
+# exp) from spiking the turn's reward above real milestones. exp is parsed from
+# the "123/456 (next lv)" string; "MAX" (level 100) contributes 0. Level
+# boundaries reset the exp counter, so a level-up shows as a negative raw exp
+# delta — we floor per-member exp delta at 0 and rely on LEVEL_UP for that turn.
+EXP_GAIN = 0.002
+EXP_GAIN_CAP = 0.5   # max total exp reward per turn (= 250 exp at full weight)
+
+# +MONEY_GAIN per unit of net INCREASE in player.money (prize money, item sales).
+# Tiny per-unit, capped, so winning a trainer's prize money is a mild positive but
+# doesn't dominate. Only increases are rewarded — spending money at the mart is
+# not penalized here (buying potions is legitimate), so we floor the delta at 0.
+MONEY_GAIN = 0.001
+MONEY_GAIN_CAP = 0.5   # max money reward per turn (= 500 money at full weight)
+
+# +POKEDEX_SEEN per newly-seen species, +POKEDEX_CAUGHT per newly-caught species
+# this turn. Derived from the DELTA of player.pokedex_seen / pokedex_caught counts
+# (monotonic non-decreasing counters in the view), so "first occurrence" is
+# exactly a +1 to the counter — no cross-turn species set required, the counter
+# already encodes first-seen/first-caught. Caught implies a fresh seen too, so the
+# two can both fire on a capture turn; that's intended (seeing AND owning a new
+# species is more progress than just seeing one). Both are small.
+POKEDEX_SEEN = 0.5
+POKEDEX_CAUGHT = 1.0
+
+# +NEW_TRAINER the FIRST time this episode a battle starts against a given trainer
+# (keyed on battle.trainer_name). Rewards ENGAGING a new trainer, not the outcome
+# — it fires on the transition into the battle regardless of whether the fight is
+# later won or lost/run. Needs cross-turn memory (was this trainer fought before?)
+# so it lives in RewardTracker, not the pure function.
+NEW_TRAINER = 2.0
+
+# +NEW_NPC_TALK the FIRST time this episode a dialogue STARTS with a given NPC,
+# keyed on (area_id, npc_id) using view.dialogue.npc_id (exposed additively in
+# getView). Best-effort: if a dialogue view lacks an npc_id we fall back to
+# keying on (area_id, player_position) — the tile the player is facing/standing
+# on — which is stable for a fixed NPC but WILL misfire for a wandering NPC (its
+# position changes) or two NPCs reachable from the same tile. Tiny weight so the
+# occasional mis-key costs almost nothing. Fires once per NPC per episode; also
+# needs cross-turn memory, so it lives in RewardTracker.
+NEW_NPC_TALK = 0.2
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +237,94 @@ def _is_illegal(action, result_msg, prev_view, result_view):
     return False
 
 
+def _party(view):
+    """The party list from a view, or [] if absent (e.g. a stop payload)."""
+    party = _get(view, "player", "party")
+    return party if isinstance(party, list) else []
+
+
+def _party_levels(view):
+    """List of party member levels (ints), positional, missing -> 0."""
+    out = []
+    for p in _party(view):
+        lv = (p or {}).get("level")
+        out.append(int(lv) if isinstance(lv, (int, float)) else 0)
+    return out
+
+
+def _parse_exp(exp_str):
+    """Current exp from a party member's `exp` field, which the engine renders as
+    "<cur>/<next> (next lv)" or "MAX" at level 100. Returns the integer <cur>, or
+    None if it can't be parsed (so callers can skip rather than count a bogus 0)."""
+    if not isinstance(exp_str, str):
+        return None
+    head = exp_str.strip().split("/", 1)[0].strip()
+    if not head or not head.lstrip("-").isdigit():
+        return None
+    return int(head)
+
+
+def _party_exps(view):
+    """Positional list of current-exp ints per party member; unpardseable -> None
+    so we can distinguish 'no exp info' from '0 exp'."""
+    return [_parse_exp((p or {}).get("exp")) for p in _party(view)]
+
+
+def _level_up_reward(prev_view, result_view):
+    """Total levels gained across party slots present in BOTH views (matched by
+    position). Returns (reward, total_levels_gained). Slots added in result (a
+    catch, a 6th member) are ignored so they don't read as level-ups."""
+    prev_lv = _party_levels(prev_view)
+    new_lv = _party_levels(result_view)
+    gained = 0
+    for i in range(min(len(prev_lv), len(new_lv))):
+        d = new_lv[i] - prev_lv[i]
+        if d > 0:
+            gained += d
+    return LEVEL_UP * gained, gained
+
+
+def _exp_gain_reward(prev_view, result_view):
+    """Capped reward for total exp gained across party slots present in both views.
+    A level-up resets the per-member exp counter (cur drops toward 0), which shows
+    as a NEGATIVE raw delta; we floor each member's delta at 0 so a level boundary
+    never subtracts here (LEVEL_UP covers that turn). Returns (reward, raw_exp)."""
+    prev_e = _party_exps(prev_view)
+    new_e = _party_exps(result_view)
+    raw = 0
+    for i in range(min(len(prev_e), len(new_e))):
+        a, b = prev_e[i], new_e[i]
+        if a is None or b is None:
+            continue
+        d = b - a
+        if d > 0:
+            raw += d
+    return min(EXP_GAIN * raw, EXP_GAIN_CAP), raw
+
+
+def _money_gain_reward(prev_view, result_view):
+    """Capped reward for a net INCREASE in player.money (spends floored at 0).
+    Returns (reward, net_increase)."""
+    prev_m = _get(prev_view, "player", "money")
+    new_m = _get(result_view, "player", "money")
+    if not isinstance(prev_m, (int, float)) or not isinstance(new_m, (int, float)):
+        return 0.0, 0
+    inc = max(0, int(new_m) - int(prev_m))
+    return min(MONEY_GAIN * inc, MONEY_GAIN_CAP), inc
+
+
+def _pokedex_reward(prev_view, result_view):
+    """Reward for growth in the pokédex seen/caught counters (each +1 = one new
+    species' first occurrence). Returns (reward, seen_delta, caught_delta)."""
+    prev_seen = _get(prev_view, "player", "pokedex_seen", default=0) or 0
+    new_seen = _get(result_view, "player", "pokedex_seen", default=0) or 0
+    prev_caught = _get(prev_view, "player", "pokedex_caught", default=0) or 0
+    new_caught = _get(result_view, "player", "pokedex_caught", default=0) or 0
+    seen_d = max(0, int(new_seen) - int(prev_seen))
+    caught_d = max(0, int(new_caught) - int(prev_caught))
+    return POKEDEX_SEEN * seen_d + POKEDEX_CAUGHT * caught_d, seen_d, caught_d
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -249,20 +410,147 @@ def compute_reward(prev_view, action, result_view, result_msg):
     if revisit:
         reward -= REVISIT
 
+    # ── level-ups (party level diff, positional) ─────────────────────────────
+    lvl_r, lvl_n = _level_up_reward(prev_view, result_view)
+    breakdown["level_up"] = lvl_r
+    breakdown["levels_gained"] = lvl_n
+    reward += lvl_r
+
+    # ── exp gained (capped per turn) ─────────────────────────────────────────
+    exp_r, exp_raw = _exp_gain_reward(prev_view, result_view)
+    breakdown["exp_gain"] = exp_r
+    breakdown["exp_raw"] = exp_raw
+    reward += exp_r
+
+    # ── money gained (net increase, capped) ──────────────────────────────────
+    money_r, money_inc = _money_gain_reward(prev_view, result_view)
+    breakdown["money_gain"] = money_r
+    breakdown["money_inc"] = money_inc
+    reward += money_r
+
+    # ── pokédex: newly seen / newly caught species ───────────────────────────
+    dex_r, seen_d, caught_d = _pokedex_reward(prev_view, result_view)
+    breakdown["pokedex"] = dex_r
+    breakdown["pokedex_seen_new"] = seen_d
+    breakdown["pokedex_caught_new"] = caught_d
+    reward += dex_r
+
     breakdown["total"] = reward
     return reward, breakdown
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-episode novelty wrapper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _battle_started(prev_view, result_view):
+    """True on the TRANSITION into a battle this turn (prev not in battle, result
+    in battle). Keying on the transition means a multi-turn fight only credits its
+    first turn, not every turn we're in it."""
+    prev_battle = _get(prev_view, "battle")
+    new_battle = _get(result_view, "battle")
+    return not prev_battle and bool(new_battle)
+
+
+def _dialogue_started(prev_view, result_view):
+    """True on the TRANSITION into a dialogue (prev not talking, result talking)."""
+    return not _get(prev_view, "dialogue_active") and bool(
+        _get(result_view, "dialogue_active")
+    )
+
+
+def _npc_key(result_view):
+    """Best-effort identity for the NPC a just-started dialogue is with.
+
+    Prefers (area_id, npc_id) using view.dialogue.npc_id (exposed additively in
+    getView). Falls back to (area_id, x, y) on the player's position when npc_id
+    is absent — stable for a fixed NPC, but see NEW_NPC_TALK's caveats: a
+    wandering NPC or two NPCs reachable from one tile can mis-key."""
+    area = _get(result_view, "area", "id")
+    npc_id = _get(result_view, "dialogue", "npc_id")
+    if npc_id is not None:
+        return ("npc", area, npc_id)
+    pos = _map_position(result_view)
+    return ("pos", area, pos)
+
+
+class RewardTracker:
+    """Wraps `compute_reward` with per-EPISODE novelty memory.
+
+    The deterministic terms in `compute_reward` are pure (prev/result only). The
+    novelty terms — first battle vs. a trainer, first dialogue with an NPC —
+    inherently need to remember what's been encountered THIS episode, so they live
+    here. Create ONE tracker per episode; call `.step(...)` each turn in place of
+    `compute_reward`. It returns the same `(reward, breakdown)` shape, with the
+    novelty contributions folded into both the scalar and the breakdown.
+
+    The pure function stays importable and testable on its own; nothing about the
+    deterministic reward depends on this class.
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.fought_trainers = set()   # trainer_name values already engaged
+        self.talked_npcs = set()       # _npc_key() values already talked to
+
+    def step(self, prev_view, action, result_view, result_msg):
+        reward, breakdown = compute_reward(prev_view, action, result_view, result_msg)
+
+        # ── first battle vs. a given trainer (reward engaging, not outcome) ───
+        new_trainer = 0.0
+        trainer_name = _get(result_view, "battle", "trainer_name")
+        if (
+            _battle_started(prev_view, result_view)
+            and trainer_name
+            and trainer_name not in self.fought_trainers
+        ):
+            self.fought_trainers.add(trainer_name)
+            new_trainer = NEW_TRAINER
+        breakdown["new_trainer"] = new_trainer
+        breakdown["new_trainer_name"] = trainer_name if new_trainer else None
+        reward += new_trainer
+
+        # ── first dialogue with a given NPC ──────────────────────────────────
+        new_npc = 0.0
+        npc_key = None
+        if _dialogue_started(prev_view, result_view):
+            npc_key = _npc_key(result_view)
+            if npc_key not in self.talked_npcs:
+                self.talked_npcs.add(npc_key)
+                new_npc = NEW_NPC_TALK
+        breakdown["new_npc_talk"] = new_npc
+        breakdown["new_npc_key"] = list(npc_key) if new_npc and npc_key else None
+        reward += new_npc
+
+        breakdown["total"] = reward
+        return reward, breakdown
 
 
 if __name__ == "__main__":
     # Tiny self-check demonstrating each component fires. Run: python3 scripts/reward.py
     import json
 
-    def V(area, badges, ascii_map, pos, msg=""):
-        return {
+    def V(area, badges, ascii_map, pos, msg="", party=None, money=0,
+          seen=0, caught=0, battle=None, dialogue=None):
+        v = {
             "area": {"id": area}, "message": msg,
-            "player": {"badges": badges, "position": pos},
+            "player": {"badges": badges, "position": pos, "money": money,
+                       "pokedex_seen": seen, "pokedex_caught": caught,
+                       "party": party if party is not None else []},
             "map": {"ascii": ascii_map, "position": pos},
         }
+        if battle is not None:
+            v["battle"] = battle
+        if dialogue is not None:
+            v["dialogue_active"] = True
+            v["dialogue"] = dialogue
+        return v
+
+    def mon(level, cur_exp, next_exp=100000):
+        return {"species": "squirtle", "level": level,
+                "exp": f"{cur_exp}/{next_exp} (next lv)"}
 
     # 3x3 viewports centered on '@'. Player at (5,5) sees only its own cell;
     # after moving north to (5,4) the viewport shifts and reveals fresh tiles.
@@ -286,5 +574,72 @@ if __name__ == "__main__":
     r, bd = compute_reward(V("pewter_city", 0, fog, {"x": 3, "y": 3}),
                            {"type": "talk"}, e, "You got the BOULDER BADGE!")
     print("badge:", json.dumps(bd)); assert bd["badge"] == BADGE
+
+    # ── v1.1 deterministic terms ─────────────────────────────────────────────
+    # Exp gain (no level change): cur exp 100 -> 180 = +80 exp * 0.002 = 0.16.
+    p0 = V("route_1", 0, fog, {"x": 2, "y": 2}, party=[mon(5, 100)])
+    p1 = V("route_1", 0, fog, {"x": 2, "y": 2}, party=[mon(5, 180)])
+    r, bd = compute_reward(p0, {"type": "battle_move"}, p1, "")
+    print("exp:", json.dumps(bd)); assert bd["exp_raw"] == 80 and abs(bd["exp_gain"] - 0.16) < 1e-9
+
+    # Exp cap: a huge exp jump clamps to EXP_GAIN_CAP.
+    p1big = V("route_1", 0, fog, {"x": 2, "y": 2}, party=[mon(5, 999999)])
+    r, bd = compute_reward(p0, {"type": "battle_move"}, p1big, "")
+    assert bd["exp_gain"] == EXP_GAIN_CAP, bd
+
+    # Level up: level 5 -> 6 (exp counter reset to a small value) = +LEVEL_UP,
+    # and the negative raw exp delta is floored (no negative exp reward).
+    p2 = V("route_1", 0, fog, {"x": 2, "y": 2}, party=[mon(6, 10)])
+    r, bd = compute_reward(p0, {"type": "battle_move"}, p2, "")
+    print("level:", json.dumps(bd))
+    assert bd["level_up"] == LEVEL_UP and bd["levels_gained"] == 1 and bd["exp_gain"] == 0.0
+
+    # Money gain: +300 money * 0.001 = 0.3. Spending is NOT penalized.
+    m0 = V("pewter_city", 0, fog, {"x": 1, "y": 1}, money=1000)
+    m1 = V("pewter_city", 0, fog, {"x": 1, "y": 1}, money=1300)
+    r, bd = compute_reward(m0, {"type": "talk"}, m1, "")
+    print("money:", json.dumps(bd)); assert abs(bd["money_gain"] - 0.3) < 1e-9 and bd["money_inc"] == 300
+    mspend = V("pewter_city", 0, fog, {"x": 1, "y": 1}, money=700)
+    r, bd = compute_reward(m0, {"type": "mart_buy"}, mspend, "")
+    assert bd["money_gain"] == 0.0, bd
+
+    # Pokédex: +1 seen and +1 caught (a capture turn credits both).
+    d0 = V("route_1", 0, fog, {"x": 2, "y": 2}, seen=1, caught=1)
+    d1 = V("route_1", 0, fog, {"x": 2, "y": 2}, seen=2, caught=2)
+    r, bd = compute_reward(d0, {"type": "throw_ball"}, d1, "")
+    print("pokedex:", json.dumps(bd))
+    assert bd["pokedex_seen_new"] == 1 and bd["pokedex_caught_new"] == 1
+    assert abs(bd["pokedex"] - (POKEDEX_SEEN + POKEDEX_CAUGHT)) < 1e-9
+
+    # ── v1.1 novelty terms (RewardTracker, cross-turn memory) ────────────────
+    tr = RewardTracker()
+    over = V("route_1", 0, fog, {"x": 4, "y": 4})
+    in_battle = V("route_1", 0, fog, {"x": 4, "y": 4},
+                  battle={"is_trainer": True, "trainer_name": "Youngster Joey"})
+    # First engagement fires NEW_TRAINER...
+    r, bd = tr.step(over, {"type": "move"}, in_battle, "")
+    print("new_trainer:", json.dumps(bd)); assert bd["new_trainer"] == NEW_TRAINER
+    # ...the same trainer next battle does not (already fought this episode).
+    r, bd = tr.step(over, {"type": "move"}, in_battle, "")
+    assert bd["new_trainer"] == 0.0, bd
+    # A staying-in-battle transition (prev already in battle) never fires it.
+    r, bd = tr.step(in_battle, {"type": "battle_move"}, in_battle, "")
+    assert bd["new_trainer"] == 0.0, bd
+
+    # First dialogue with an NPC (keyed on area+npc_id) fires NEW_NPC_TALK once.
+    talk = V("pallet_town", 0, fog, {"x": 5, "y": 5}, dialogue={"npc_id": "oak"})
+    r, bd = tr.step(over, {"type": "talk"}, talk, "")
+    print("new_npc:", json.dumps(bd)); assert bd["new_npc_talk"] == NEW_NPC_TALK
+    r, bd = tr.step(over, {"type": "talk"}, talk, "")   # same NPC again -> nothing
+    assert bd["new_npc_talk"] == 0.0, bd
+    # Fallback keying when npc_id is absent (position-based).
+    talk2 = V("viridian_city", 0, fog, {"x": 8, "y": 3}, dialogue={"text": "Hi"})
+    r, bd = tr.step(over, {"type": "talk"}, talk2, "")
+    assert bd["new_npc_talk"] == NEW_NPC_TALK, bd
+
+    # Sanity: every new weight is small relative to BADGE.
+    for w in (LEVEL_UP, EXP_GAIN_CAP, MONEY_GAIN_CAP, POKEDEX_SEEN,
+              POKEDEX_CAUGHT, NEW_TRAINER, NEW_NPC_TALK):
+        assert w < BADGE, w
 
     print("reward.py self-check passed.")
