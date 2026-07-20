@@ -3525,8 +3525,10 @@ const MAP_VIEW_W = 15;   // viewport width  (odd → player centered)
 const MAP_VIEW_H = 11;   // viewport height (odd → player centered)
 
 // Record the tiles the player can currently observe into state.explored.
-// Observes the player's own tile plus the 8 surrounding tiles (Chebyshev r=1),
-// using the same tile source (getAreaTile) that getSurroundings/isWalkable use.
+// Observes the FULL on-screen window (the same MAP_VIEW_W x MAP_VIEW_H viewport
+// that renderExploredMap draws), matching what a Game Boy player actually sees —
+// every tile within halfW/halfH of the player, not just the adjacent 8.
+// Uses the same tile source (getAreaTile) that getSurroundings/isWalkable use.
 function recordExploration(state) {
   if (state.screen !== 'overworld') return;
   const area = AREAS[state.areaId];
@@ -3535,8 +3537,10 @@ function recordExploration(state) {
   if (!state.explored[state.areaId]) state.explored[state.areaId] = {};
   const seen = state.explored[state.areaId];
   const px = state.player.x, py = state.player.y;
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
+  const halfW = Math.floor(MAP_VIEW_W / 2);
+  const halfH = Math.floor(MAP_VIEW_H / 2);
+  for (let dy = -halfH; dy <= halfH; dy++) {
+    for (let dx = -halfW; dx <= halfW; dx++) {
       const tx = px + dx, ty = py + dy;
       if (tx < 0 || ty < 0 || tx >= area.width || ty >= area.height) continue;
       seen[`${tx},${ty}`] = getAreaTile(area, tx, ty);
