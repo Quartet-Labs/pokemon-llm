@@ -496,7 +496,9 @@ def read_local_map(emu) -> dict:
     ascii_map = "\n".join("".join(r) for r in rows)
 
     return {"ascii": ascii_map, "legend": dict(_MAP_LEGEND),
-            "position": position, "exits": exits}
+            "position": position, "exits": exits,
+            "_debug_anchor": {"sx": sx, "sy": sy, "acol": acol, "arow": arow,
+                              "px": px, "py": py}}
 
 
 def read_state(emu) -> dict:
