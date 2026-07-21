@@ -8,7 +8,9 @@ ROM_URL="${POKEMON_ROM_URL:-https://archive.org/download/pokemon-blue-version-us
 
 if [ ! -f "$ROM" ]; then
   echo "[boot] downloading ROM…"
-  curl -sSL -o "$ROM" "$ROM_URL"
+  curl -sSL --retry 3 --retry-delay 2 \
+    -A "Mozilla/5.0 (compatible; emulator-boot/1.0)" \
+    -o "$ROM" "$ROM_URL"
 fi
 
 # Verify it's the real 1MB Blue ROM before trusting it.
