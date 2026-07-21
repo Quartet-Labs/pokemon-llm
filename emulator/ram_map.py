@@ -418,42 +418,45 @@ def read_local_map(emu) -> dict:
     grass_tile = emu.read(GRASS_TILE)
     counters = {emu.read(COUNTER_TILES + i) for i in range(3)} - {0}
 
-    # Base layer from the tilemap.
-    grid = []
-    for r in range(TILEMAP_H):
-        row = []
-        for c in range(TILEMAP_W):
-            t = tiles[r * TILEMAP_W + c]
-            if t == 0x10:               # solid black padding = outside the room
-                row.append(_GLYPH_OFFMAP)
-            elif grass_tile != 0xFF and t == grass_tile:
-                row.append(_GLYPH_GRASS)   # walkable, but flag encounters
-            elif t in counters:
-                row.append(_GLYPH_COUNTER)
-            elif t in walkable:
-                row.append(_GLYPH_PATH)
-            else:
-                row.append(_GLYPH_WALL)
-        grid.append(row)
+    def tile_at(c, r):
+        return tiles[r * TILEMAP_W + c]
+
+    # Gen-1's world — player position, movement, warp coords — is a 16x16 BLOCK
+    # grid (each block = 2x2 of the 8x8 tiles). Render ONE glyph per block so the
+    # map shares that coordinate system instead of being 2x oversized (a 1-block
+    # TV was showing as a 2x2 wall clump). Blocks are tile-aligned to even offsets.
+    BW, BH = TILEMAP_W // 2, TILEMAP_H // 2   # 10 x 9 blocks
+    def classify_block(bc, br):
+        ts = [tile_at(bc * 2 + dx, br * 2 + dy) for dx in (0, 1) for dy in (0, 1)]
+        if all(t == 0x10 for t in ts):        # solid black padding = off-map
+            return _GLYPH_OFFMAP
+        if grass_tile != 0xFF and any(t == grass_tile for t in ts):
+            return _GLYPH_GRASS
+        if any(t in counters for t in ts):
+            return _GLYPH_COUNTER
+        if all(t in walkable for t in ts):
+            return _GLYPH_PATH
+        return _GLYPH_WALL
+
+    grid = [[classify_block(bc, br) for bc in range(BW)] for br in range(BH)]
 
     def put(col, row, glyph):
-        if 0 <= row < TILEMAP_H and 0 <= col < TILEMAP_W:
+        if 0 <= row < BH and 0 <= col < BW:
             grid[row][col] = glyph
 
-    # Anchor overlays to the player's ACTUAL on-screen tile (read from the sprite
-    # screen position) so '@'/'>'/'N' land on the same tiles as the base tilemap.
-    # X snaps to the grid; Y sits 4px above it. Fall back to the centered guess if
-    # the read is out of range (e.g. mid-warp fade).
+    # Player's block cell on screen: sprite screen pixel -> tile -> block.
     sy, sx = emu.read(PLAYER_SCREEN_Y), emu.read(PLAYER_SCREEN_X)
     acol = sx // 8
     arow = (sy + 4) // 8
     if not (0 <= acol < TILEMAP_W and 0 <= arow < TILEMAP_H):
         acol, arow = PLAYER_SCREEN_COL, PLAYER_SCREEN_ROW
+    pbc, pbr = acol // 2, arow // 2
 
-    def to_screen(mx, my):
-        return (acol + (mx - px), arow + (my - py))
+    # Player/warp coords are already in blocks, so overlays are a plain block delta.
+    def to_block(mx, my):
+        return (pbc + (mx - px), pbr + (my - py))
 
-    # Overlay warps/exits (map coords -> screen) and record where each leads.
+    # Overlay warps/exits and record where each leads.
     # WARP_ENTRY layout (pokered): +0 y, +1 x, +2 destWarp, +3 destMap.
     exits = []
     n_warps = emu.read(NUM_WARPS)
@@ -462,7 +465,7 @@ def read_local_map(emu) -> dict:
             base = WARP_ENTRIES + i * WARP_ENTRY_SIZE
             wy, wx = emu.read(base), emu.read(base + 1)
             dest_map = emu.read(base + 3)
-            col, row = to_screen(wx, wy)
+            col, row = to_block(wx, wy)
             put(col, row, _GLYPH_WARP)
             exits.append({"at": {"x": wx, "y": wy},
                           "to_map_id": dest_map, "to": _map_name(dest_map)})
@@ -474,20 +477,18 @@ def read_local_map(emu) -> dict:
             continue
         d2 = SPRITE_DATA2 + s * SPRITE_STRIDE
         smy, smx = emu.read(d2 + 0x04), emu.read(d2 + 0x05)
-        # Sprite map coords are offset by 4 (the 4-tile border pokered adds); the
-        # player's own MapX/MapY carry the same +4, so differencing cancels it.
         pmy, pmx = emu.read(SPRITE_DATA2 + 0x04), emu.read(SPRITE_DATA2 + 0x05)
-        col, row = to_screen(px + (smx - pmx), py + (smy - pmy))
+        col, row = to_block(px + (smx - pmx), py + (smy - pmy))
         put(col, row, _GLYPH_NPC)
 
     # Player last, so it wins any overlap.
-    put(acol, arow, _GLYPH_PLAYER)
+    put(pbc, pbr, _GLYPH_PLAYER)
 
     # Trim fully-off-map border rows/cols so the room isn't buried in blanks.
     def row_blank(row):
         return all(ch == _GLYPH_OFFMAP for ch in row)
 
-    top, bot = 0, TILEMAP_H - 1
+    top, bot = 0, len(grid) - 1
     while top < bot and row_blank(grid[top]):
         top += 1
     while bot > top and row_blank(grid[bot]):
@@ -498,7 +499,7 @@ def read_local_map(emu) -> dict:
     return {"ascii": ascii_map, "legend": dict(_MAP_LEGEND),
             "position": position, "exits": exits,
             "_debug_anchor": {"sx": sx, "sy": sy, "acol": acol, "arow": arow,
-                              "px": px, "py": py}}
+                              "pbc": pbc, "pbr": pbr, "px": px, "py": py}}
 
 
 def read_state(emu) -> dict:
