@@ -8,14 +8,18 @@ no session param. Endpoints mirror the existing JS game server closely enough
 that scripts/ollama-runner.py can be pointed here with
 `--base http://127.0.0.1:3100`:
 
-  GET  /state?session=X      RAM-derived game state (+ available_actions)
-  POST /action?session=X     apply a high-level action dict, step, return state
+  GET  /state?session=X      RAM-derived game state (+ available_actions, goal)
+  POST /action?session=X     apply a high-level action dict, step, return state;
+                             an optional top-level "goal" string updates the
+                             session's tracked goal
   GET  /logs?session=X       rolling per-session action history (oldest-first)
   POST /reset?session=X      reload the overworld savestate
   GET  /screen.png?session=X current Game Boy frame as PNG
   GET  /session?session=X    a session's snapshot
-  POST /session {label?}     create a new session (up to 4), return id/token
-  GET  /sessions             list all sessions [{sessionId,label}]
+  POST /session {label?,goal?}  create a new session (up to 4), return id/token
+  DELETE /session?session=X  remove a session (frees a slot); 404 if unknown,
+                             400 for the default session
+  GET  /sessions             list all sessions [{sessionId,label,goal}]
   POST /benchmark            create a session and return it
 
 Run:  .venv/bin/python -m emulator.server
@@ -36,6 +40,17 @@ app = FastAPI(title="pokemon-llm emulator backend")
 
 MAX_SESSIONS = 4
 DEFAULT_SESSION_ID = "default"
+# Max characters kept for a session's free-text agent goal.
+MAX_GOAL_LEN = 200
+
+
+def _clean_goal(raw) -> str | None:
+    """Normalize an incoming goal value. Returns the trimmed/capped string, or
+    None if `raw` is not a usable string (so callers can leave the goal
+    unchanged). An empty/whitespace string clears the goal (returns "")."""
+    if not isinstance(raw, str):
+        return None
+    return raw.strip()[:MAX_GOAL_LEN]
 
 
 def _action_message(result: dict, state: dict) -> str:
@@ -66,10 +81,13 @@ class Session:
     each session gets a dedicated lock — locks are per-session so driving one
     session never blocks another (no global serialization)."""
 
-    def __init__(self, session_id: str, label: str, token: str):
+    def __init__(self, session_id: str, label: str, token: str, goal: str = ""):
         self.id = session_id
         self.label = label
         self.token = token
+        # Free-text "what am I trying to do right now" the agent can set/update.
+        # Echoed back in every state view so the model sees its own last goal.
+        self.goal = goal or ""
         self.emu = Emu(headless=True)
         self.lock = threading.Lock()
         # Rolling per-session action history. Each entry:
@@ -84,6 +102,8 @@ class Session:
         state = ram_map.read_state(self.emu)
         state["screen_png_b64"] = self.emu.screen_png_b64()
         state["available_actions"] = actions.AVAILABLE_ACTIONS
+        # Echo the agent's current goal back so it can track/update it each turn.
+        state["goal"] = self.goal
         return state
 
     def record_action(self, action: dict, result: dict, state: dict) -> dict:
@@ -95,12 +115,13 @@ class Session:
             "action": action,
             "result": result,
             "message": _action_message(result, state),
+            "goal": self.goal,
         }
         self.log.append(entry)
         return entry
 
     def summary(self) -> dict:
-        return {"sessionId": self.id, "label": self.label}
+        return {"sessionId": self.id, "label": self.label, "goal": self.goal}
 
 
 # Session registry. `_sessions_lock` guards the dict itself (create/list); each
@@ -110,8 +131,8 @@ _sessions: dict[str, Session] = {}
 _sessions_lock = threading.Lock()
 
 
-def _make_session(session_id: str, label: str) -> Session:
-    sess = Session(session_id, label, token=secrets.token_hex(8))
+def _make_session(session_id: str, label: str, goal: str = "") -> Session:
+    sess = Session(session_id, label, token=secrets.token_hex(8), goal=goal)
     with sess.lock:
         sess.emu.reset()
     _sessions[session_id] = sess
@@ -223,6 +244,15 @@ async def post_action(request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "body must be a JSON action dict"}, status_code=400)
+
+    # Optional top-level "goal": accepted alongside a single action dict or a
+    # {"actions":[...]} wrapper (a bare list body carries no room for it). Update
+    # the session's goal before stepping so the returned state echoes the new one.
+    if isinstance(body, dict):
+        goal = _clean_goal(body.get("goal"))
+        if goal is not None:
+            with sess.lock:
+                sess.goal = goal
 
     action_list, single, perr = _parse_action_body(body)
     if perr:
@@ -336,6 +366,7 @@ async def post_session(request: Request):
     except Exception:
         body = {}
     label = (body or {}).get("label")
+    goal = _clean_goal((body or {}).get("goal")) or ""
     with _sessions_lock:
         if len(_sessions) >= MAX_SESSIONS:
             return JSONResponse(
@@ -346,14 +377,44 @@ async def post_session(request: Request):
         sid = _alloc_id(set(_sessions))
         if not label:
             label = f"player {sid[1:]}" if sid.startswith("p") else sid
-        sess = _make_session(sid, label)
-    return {"sessionId": sess.id, "token": sess.token, "label": sess.label}
+        sess = _make_session(sid, label, goal=goal)
+    return {"sessionId": sess.id, "token": sess.token, "label": sess.label,
+            "goal": sess.goal}
 
 
 @app.get("/sessions")
 def get_sessions():
     with _sessions_lock:
         return [s.summary() for s in _sessions.values()]
+
+
+@app.delete("/session")
+def delete_session(request: Request):
+    """Remove a session from the registry, freeing its couch slot without a
+    redeploy. 404 if the session is unknown; 400 if it's the default session
+    (which must always exist). A viewer polling a removed session just sees the
+    slot go empty on its next /sessions discovery pass."""
+    sid = request.query_params.get("session") or DEFAULT_SESSION_ID
+    if sid == DEFAULT_SESSION_ID:
+        return JSONResponse(
+            {"error": "cannot delete the default session"}, status_code=400
+        )
+    with _sessions_lock:
+        sess = _sessions.pop(sid, None)
+    if sess is None:
+        return JSONResponse(
+            {"error": f"unknown session {sid!r}"}, status_code=404
+        )
+    # Stop the PyBoy instance so the removed session frees its emulator too.
+    # Guarded by the session's own lock so we don't yank it mid-step.
+    with sess.lock:
+        stop = getattr(sess.emu, "stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:
+                pass
+    return {"deleted": sid}
 
 
 @app.post("/benchmark")
@@ -406,6 +467,10 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
  .label{font-size:13px;margin:0 0 6px;display:flex;align-items:center;gap:6px}
  .ptag{color:#000;background:var(--pc,#8bd);font-weight:bold;padding:1px 7px;border-radius:3px;letter-spacing:1px;font-size:11px}
  .plabel{color:var(--pc,#8bd);font-weight:bold;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+ .rm{margin-left:auto;color:#a55;background:#1a1010;border:1px solid #3a1a1a;border-radius:3px;font-size:11px;padding:0 6px;cursor:pointer;line-height:1.6}
+ .rm:hover{color:#e77;border-color:#5a2a2a}
+ .goal{color:#c9b06a;font-size:11px;font-style:italic;margin:0 0 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:150px}
+ .goal.empty{color:#555;font-style:normal}
  .k{color:#7a7a7a} .v{color:#e8e8e8}
  .batt{color:#e57}
  /* Detail panel */
@@ -457,25 +522,40 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
    c.innerHTML='waiting…';
    c.addEventListener('click',()=>selectSlot(i));
    grid.appendChild(c);
-   cells.push({el:c, slot:i, sid:null, label:null, img:null, bodyEl:null, labelEl:null, state:null});
+   cells.push({el:c, slot:i, sid:null, label:null, img:null, bodyEl:null, labelEl:null, goalEl:null, state:null});
  }
  let selected=-1;   // index into cells, or -1 = none
  function mount(cell,sid,label){
    cell.sid=sid; cell.label=label;
    cell.el.className='cell'+(cell.slot===selected?' selected':'');
+   // default session can't be deleted server-side; only offer remove elsewhere.
+   const rmBtn=(sid!=='default')?'<span class="rm" title="remove session">✕</span>':'';
    cell.el.innerHTML=
      '<img class="scr">'+
-     '<div class="info"><div class="label"><span class="ptag">P'+(cell.slot+1)+'</span><span class="plabel"></span></div><pre class="body"></pre></div>';
+     '<div class="info"><div class="label"><span class="ptag">P'+(cell.slot+1)+'</span><span class="plabel"></span>'+rmBtn+'</div>'+
+     '<div class="goal empty"></div><pre class="body"></pre></div>';
    cell.img=cell.el.querySelector('img');
    cell.labelEl=cell.el.querySelector('.plabel');
+   cell.goalEl=cell.el.querySelector('.goal');
    cell.bodyEl=cell.el.querySelector('.body');
    cell.labelEl.textContent=(label||sid);
+   const rm=cell.el.querySelector('.rm');
+   if(rm) rm.addEventListener('click',(ev)=>{ev.stopPropagation();removeSession(cell.sid);});
  }
  function unmount(cell){
-   cell.sid=null; cell.label=null; cell.img=null; cell.state=null;
+   cell.sid=null; cell.label=null; cell.img=null; cell.goalEl=null; cell.state=null;
    cell.el.className='cell empty';
    cell.el.innerHTML='waiting…';
    if(selected===cell.slot) updateDetail();
+ }
+ async function removeSession(sid){
+   if(!sid || sid==='default') return;
+   try{
+     await fetch('/session?session='+encodeURIComponent(sid),{method:'DELETE'});
+   }catch(e){}
+   // The next discover() pass will unmount the now-gone slot; force one now so
+   // the slot goes empty immediately.
+   discover();
  }
  function selectSlot(i){
    if(!cells[i].sid) return;   // don't select an empty slot
@@ -505,6 +585,12 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
        const s=await (await fetch('/state?session='+encodeURIComponent(c.sid))).json();
        c.state=s;
        const p=s.player||{};
+       if(c.goalEl){
+         const g=(s.goal||'').trim();
+         c.goalEl.textContent=g?('▸ '+g):'no goal set';
+         c.goalEl.className='goal'+(g?'':' empty');
+         c.goalEl.title=g||'';
+       }
        c.bodyEl.innerHTML=
          '<span class="k">map   </span><span class="v">'+(s.area&&s.area.id)+'</span>\\n'+
          '<span class="k">pos   </span><span class="v">x='+(p.position&&p.position.x)+' y='+(p.position&&p.position.y)+'</span>\\n'+
@@ -535,8 +621,11 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
    const p=s.player||{};
    const pos=p.position||{};
    const party=(p.party||[]);
+   const esc=t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+   const goalTxt=(s.goal||'').trim();
    document.getElementById('d-state').innerHTML=
      '<div><span class="k">session </span><span class="v">'+c.sid+'</span></div>'+
+     '<div><span class="k">goal    </span><span class="v" style="color:#c9b06a">'+(goalTxt?esc(goalTxt):'—')+'</span></div>'+
      '<div><span class="k">map     </span><span class="v">'+(s.area&&s.area.id)+'</span></div>'+
      '<div><span class="k">pos     </span><span class="v">x='+pos.x+' y='+pos.y+'</span></div>'+
      '<div><span class="k">badges  </span><span class="v">'+p.badges+'</span></div>'+
@@ -549,7 +638,6 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
    const mapEl=document.getElementById('d-map');
    const ascii=(s.map&&s.map.ascii)||'';
    const dlg=(s.dialogue&&s.dialogue.text)||'';
-   const esc=t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
    if(ascii||dlg){
      mapEl.innerHTML=esc(ascii)+(dlg?'<span class="dlg">'+esc(dlg)+'</span>':'');
    }else{

@@ -88,6 +88,13 @@ TOOLS = [{
                          "description": "For type=throw_ball (unsupported)."},
                 "party_index": {"type": "integer",
                                 "description": "Party slot 0-5, for type=switch (unsupported)."},
+                "goal": {"type": "string",
+                         "description": "Optional. A SHORT (<=200 char) free-text "
+                                        "note of what you're currently trying to do "
+                                        "(e.g. 'leave the house', 'reach Pewter "
+                                        "City', 'beat Brock'). It's echoed back in "
+                                        "the state each turn; set it when your "
+                                        "objective changes, otherwise omit it."},
             },
             "required": ["type"],
         },
@@ -130,6 +137,13 @@ TOOLS = [{
                         "required": ["type"],
                     },
                 },
+                "goal": {"type": "string",
+                         "description": "Optional. A SHORT (<=200 char) free-text "
+                                        "note of what you're currently trying to do "
+                                        "(e.g. 'leave the house', 'reach Pewter "
+                                        "City', 'beat Brock'). Echoed back in the "
+                                        "state each turn; set it when your objective "
+                                        "changes, otherwise omit it."},
             },
             "required": ["actions"],
         },
@@ -194,7 +208,15 @@ failed.
 - Vary your exploration; don't oscillate between two tiles. Your x/y position \
 tells you where you are — use it to avoid retracing.
 - battle_move / use_item / throw_ball / switch are not supported yet; if you try \
-them they'll be rejected. Stick to move/a/talk/b/start/wait."""
+them they'll be rejected. Stick to move/a/talk/b/start/wait.
+
+Goal tracking:
+- You may set an optional short `goal` on your tool call: a few words describing \
+what you're currently trying to do (e.g. "leave the house", "reach Pewter City", \
+"beat Brock"). Set it when you start something new or your objective changes.
+- Your current goal is echoed back to you in the state each turn (the `goal` \
+field). If it still fits what you're doing, just omit `goal` and it carries \
+forward; only send a new `goal` when it actually changes."""
 
 
 # ── http helpers ─────────────────────────────────────────────────────────────
@@ -222,7 +244,7 @@ def compact_state(view):
     exist so it works on a /state view, a /action view, and a benchmark view.
     """
     keep = {k: view.get(k) for k in ("screen", "area", "in_battle", "battle",
-                                     "available_actions")
+                                     "available_actions", "goal")
             if k in view}
     p = view.get("player") or {}
     keep["player"] = {
@@ -268,35 +290,45 @@ def _feedback(action, result):
 
 # ── brains ───────────────────────────────────────────────────────────────────
 def _actions_from_args(args):
-    """Turn tool-call arguments into a cleaned list of actions.
+    """Turn tool-call arguments into (cleaned actions list, goal-or-None).
 
-    Handles both tool shapes: submit_action ({type,...}) and submit_actions
-    ({actions:[...]}). Also tolerant of a bare list. Returns a list (possibly
-    empty)."""
+    Handles both tool shapes: submit_action ({type,...[,goal]}) and
+    submit_actions ({actions:[...][,goal]}). Also tolerant of a bare list. The
+    `goal` (if any) is a top-level free-text string on the tool call; returns it
+    separately so the caller can forward it and carry it across turns. Returns
+    ([], None) when nothing usable is found."""
     if isinstance(args, str):
         try:
             args = json.loads(args)
         except json.JSONDecodeError:
-            return []
+            return [], None
+    goal = None
     seq = None
     if isinstance(args, dict) and isinstance(args.get("actions"), list):
         seq = args["actions"]
+        goal = args.get("goal")
     elif isinstance(args, list):
         seq = args
     elif isinstance(args, dict) and args.get("type"):
         seq = [args]
+        goal = args.get("goal")
+    if isinstance(goal, str):
+        goal = goal.strip()[:200] or None
+    else:
+        goal = None
     if not seq:
-        return []
+        return [], goal
     cleaned = [_clean_action(a) for a in seq]
-    return [a for a in cleaned if a]
+    return [a for a in cleaned if a], goal
 
 
 def ollama_decide(ollama, model, system, user, timeout=300):
-    """Ask the local model for its move(s) via a native tool call. Returns a LIST
-    of action dicts (one for submit_action, many for submit_actions) or [].
-    Copied from scripts/ollama-runner.py: `/no_think` disables qwen3's think-chain
-    (native `think:false` can't combine with `tools`), num_ctx 4096 keeps the KV
-    cache in GPU."""
+    """Ask the local model for its move(s) via a native tool call. Returns
+    (actions_list, goal_or_None) — one action for submit_action, many for
+    submit_actions, plus any top-level free-text goal the model set. Copied from
+    scripts/ollama-runner.py: `/no_think` disables qwen3's think-chain (native
+    `think:false` can't combine with `tools`), num_ctx 4096 keeps the KV cache in
+    GPU."""
     body = {
         "model": model,
         "stream": False,
@@ -312,38 +344,38 @@ def ollama_decide(ollama, model, system, user, timeout=300):
     msg = resp.get("message", {}) or {}
     calls = msg.get("tool_calls") or []
     if calls:
-        acts = _actions_from_args(calls[0].get("function", {}).get("arguments"))
+        acts, goal = _actions_from_args(calls[0].get("function", {}).get("arguments"))
         if acts:
-            return acts
+            return acts, goal
     # Fallback: some models emit the action(s) as JSON text instead of a tool call.
     content = (msg.get("content") or "").strip()
     if content:
         m = re.search(r"\{.*\}|\[.*\]", content, re.DOTALL)
         if m:
             try:
-                acts = _actions_from_args(json.loads(m.group(0)))
+                acts, goal = _actions_from_args(json.loads(m.group(0)))
                 if acts:
-                    return acts
+                    return acts, goal
             except json.JSONDecodeError:
                 pass
-    return []
+    return [], None
 
 
-def claude_decide(model, system, user, timeout=60):
+def claude_decide(model, system, user, timeout=180):
     """Ask Claude via the `claude` CLI for its move(s) (haiku_loop pattern). No API
-    key needed; parses the first JSON object/array out of stdout. Returns a LIST
-    of action dicts or []."""
+    key needed; parses the first JSON object/array out of stdout. Returns
+    (actions_list, goal_or_None)."""
     out = subprocess.run(
         ["claude", "-p", "--model", model, "--append-system-prompt", system],
         input=user, capture_output=True, text=True, timeout=timeout,
     ).stdout
     m = re.search(r"\{.*\}|\[.*\]", out, re.DOTALL)
     if not m:
-        return []
+        return [], None
     try:
         args = json.loads(m.group(0))
     except json.JSONDecodeError:
-        return []
+        return [], None
     return _actions_from_args(args)
 
 
@@ -409,6 +441,7 @@ def main():
     reached = False
     consecutive_errors = 0
     turn = 0               # counts EXECUTED game steps (sub-actions), not decisions
+    current_goal = ""      # last free-text goal the model set; carried forward
 
     while turn < args.max_turns:
         # 1) observe
@@ -438,9 +471,9 @@ def main():
                 f"sequence) for this turn.")
         try:
             if args.claude:
-                acts = claude_decide(args.claude_model, SYSTEM, user)
+                acts, goal = claude_decide(args.claude_model, SYSTEM, user)
             else:
-                acts = ollama_decide(ollama, args.model, SYSTEM, user)
+                acts, goal = ollama_decide(ollama, args.model, SYSTEM, user)
         except Exception as e:
             print(f"[emu-runner] decide error t{turn}: {e}", flush=True)
             consecutive_errors += 1
@@ -458,7 +491,14 @@ def main():
         # 4) act — single action keeps the legacy body shape; a sequence posts
         # {"actions":[...]} and the server executes in order, aborting early on any
         # notable change. Either way the response carries a `steps` array.
-        body = acts[0] if len(acts) == 1 else {"actions": acts}
+        # Carry the model's goal forward: if it set a new one this turn, adopt it;
+        # otherwise re-send the last goal so the server keeps echoing it back.
+        if goal:
+            current_goal = goal
+            print(f"[emu-runner]   goal: {current_goal}", flush=True)
+        body = dict(acts[0]) if len(acts) == 1 else {"actions": acts}
+        if current_goal:
+            body["goal"] = current_goal
         try:
             result_view = http_post(f"{base}/action?session={sid}", body, token=token)
         except Exception as e:
