@@ -54,6 +54,11 @@ from __future__ import annotations
 
 import io
 
+try:  # package import (server/actions use `from emulator import ram_map`)
+    from emulator import names as _names
+except ImportError:  # direct `import ram_map` from inside emulator/
+    import names as _names
+
 MAP_ID = 0xD35E
 PLAYER_Y = 0xD361
 PLAYER_X = 0xD362
@@ -83,6 +88,37 @@ BATTLE_MON_HP = 0xD015      # 2 bytes big-endian
 BATTLE_MON_MOVES = 0xD01C   # 4 bytes, one move id each (0 = empty slot)
 BATTLE_MON_LEVEL = 0xD022
 BATTLE_MON_MAXHP = 0xD023   # 2 bytes big-endian
+
+# ── on-screen tilemap + text (pokered symbols/pokered.sym) ───────────────────
+# wTileMap: the 20x18 grid of background tile IDs currently on screen (what the
+# player literally sees). DMA'd to VRAM each frame, so it's always current.
+TILEMAP = 0xC3A0
+TILEMAP_W = 20
+TILEMAP_H = 18
+# Collision list for the current tileset: a 0xFF-terminated list (in the home
+# bank, directly readable) of the tile IDs that are walkable in this tileset.
+TILESET_COLLISION_PTR = 0xD530   # 2-byte LE pointer
+# Warp table: wNumberOfWarps + wWarpEntries (4 bytes each: y, x, destWarp, dest
+# map). These are the exits/doors/stairs — in *map* tile coordinates.
+NUM_WARPS = 0xD3AE
+WARP_ENTRIES = 0xD3AF
+WARP_ENTRY_SIZE = 4
+# Sprite state data 2: 16 bytes/sprite starting at 0xC200. Sprite 0 is the
+# player; 1..15 are NPCs/objects. +0x04 = map Y, +0x05 = map X, +0x00 (data1
+# PictureID at 0xC100 block) nonzero means the slot is active.
+SPRITE_DATA1 = 0xC100        # +0x00 PictureID (0 = inactive slot)
+SPRITE_DATA2 = 0xC200        # +0x04 MapY, +0x05 MapX
+SPRITE_STRIDE = 0x10
+NUM_SPRITE_SLOTS = 16
+# Player on-screen anchor: in Gen-1 the player sprite's standing tile sits at
+# wTileMap column 8, row 7 (camera-centered; clamped near map edges but the
+# player's own coords stay authoritative, so we always draw '@' here).
+PLAYER_SCREEN_COL = 8
+PLAYER_SCREEN_ROW = 7
+
+# Textbox state. wTextBoxID is nonzero while a textbox/menu is up; the printed
+# text lives in wTileMap itself as font tiles (0x80='A'.. see _tile_to_char).
+TEXTBOX_ID = 0xD125
 
 # ── walkable probe (collision) ───────────────────────────────────────────────
 # Directions the agent speaks -> PyBoy d-pad buttons. Mirrors
@@ -124,6 +160,7 @@ def read_party(emu) -> list[dict]:
         # Also available directly in the species list; prefer the struct.
         party.append({
             "species": species,
+            "name": _names.species_name(emu, species),
             "level": emu.read(base + OFF_LEVEL),
             "hp": _be16(emu, base + OFF_HP),
             "max_hp": _be16(emu, base + OFF_MAXHP),
@@ -133,15 +170,20 @@ def read_party(emu) -> list[dict]:
 
 def _read_battle_mon(emu, species_addr, hp_addr, level_addr, maxhp_addr,
                      moves_addr=None) -> dict:
+    species = emu.read(species_addr)
     mon = {
-        "species": emu.read(species_addr),
+        "species": species,
+        "name": _names.species_name(emu, species),
         "level": emu.read(level_addr),
         "hp": _be16(emu, hp_addr),
         "max_hp": _be16(emu, maxhp_addr),
     }
     if moves_addr is not None:
         # 4 move slots; 0 means "no move in this slot", drop those.
-        mon["moves"] = [m for m in emu.read_range(moves_addr, 4) if m != 0]
+        move_ids = [m for m in emu.read_range(moves_addr, 4) if m != 0]
+        mon["move_ids"] = move_ids
+        mon["moves"] = [_names.move_name(emu, m) or f"MOVE_{m}"
+                        for m in move_ids]
     return mon
 
 
@@ -208,6 +250,195 @@ def player_walkable(emu) -> dict:
     return result
 
 
+# ── on-screen tilemap font decode ────────────────────────────────────────────
+# Gen-1 loads its font so that tile ID 0x80 == 'A'. Uppercase 0x80-0x99, lower
+# 0xA0-0xB9, digits 0xF6-0xFF, plus punctuation. 0x7F is the in-box blank tile.
+# Border tiles (0x79-0x7E) frame textboxes/menus and decode to nothing.
+def _tile_to_char(tile: int) -> str:
+    if 0x80 <= tile <= 0x99:
+        return chr(ord("A") + tile - 0x80)
+    if 0xA0 <= tile <= 0xB9:
+        return chr(ord("a") + tile - 0xA0)
+    if 0xF6 <= tile <= 0xFF:
+        return chr(ord("0") + tile - 0xF6)
+    if tile in (0x7F, 0x00):        # in-box blank / empty
+        return " "
+    return {
+        0x9A: "(", 0x9B: ")", 0x9C: ":", 0x9D: ";", 0x9E: "[", 0x9F: "]",
+        0xBA: "é", 0xE1: "PK", 0xE2: "MN", 0xE3: "-", 0xE6: "?", 0xE7: "!",
+        0xE8: ".", 0xE9: "&", 0xF2: ".", 0xF4: ",", 0xEF: "♂", 0xF5: "♀",
+        0x75: "…",
+    }.get(tile, "")
+
+
+def _is_text_tile(tile: int) -> bool:
+    """A tile that carries readable text (a glyph), excluding blanks/borders."""
+    return (0x80 <= tile <= 0x99 or 0xA0 <= tile <= 0xB9
+            or 0xF6 <= tile <= 0xFF
+            or tile in (0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F, 0xBA, 0xE1, 0xE2,
+                        0xE3, 0xE6, 0xE7, 0xE8, 0xE9, 0xF2, 0xF4, 0xEF, 0xF5,
+                        0x75))
+
+
+def read_dialogue(emu) -> dict | None:
+    """Text shown in the current on-screen textbox/menu, decoded to ASCII.
+
+    Returns None when no textbox is up (wTextBoxID == 0 and no text glyphs on
+    screen). Reads the printed characters straight out of wTileMap: any row that
+    contains font glyphs is decoded left-to-right, blank runs collapse to single
+    spaces, and rows are joined with newlines. This captures NPC dialogue, sign
+    text, menu contents, and battle messages alike.
+    """
+    tiles = emu.read_range(TILEMAP, TILEMAP_W * TILEMAP_H)
+    grid = [tiles[r * TILEMAP_W:(r + 1) * TILEMAP_W] for r in range(TILEMAP_H)]
+
+    lines = []
+    for row in grid:
+        if not any(_is_text_tile(t) for t in row):
+            continue
+        # Blank out filler runs: some menu/graphic rows repeat one font tile
+        # (e.g. tile 0x80 drawn as a horizontal divider bar) which would decode
+        # to "AAAAAAA". A run of >=4 identical text tiles is never a real word.
+        cleaned = list(row)
+        i = 0
+        while i < len(cleaned):
+            j = i
+            while j < len(cleaned) and cleaned[j] == cleaned[i]:
+                j += 1
+            if _is_text_tile(cleaned[i]) and j - i >= 4:
+                for k in range(i, j):
+                    cleaned[k] = 0x7F  # blank
+            i = j
+        chars = "".join(_tile_to_char(t) for t in cleaned)
+        # Collapse interior blank runs, strip the border padding at the edges.
+        collapsed = " ".join(chars.split())
+        if collapsed:
+            lines.append(collapsed)
+
+    active = emu.read(TEXTBOX_ID) != 0
+    if not lines and not active:
+        return None
+    text = "\n".join(lines).strip()
+    if not text:
+        return None
+    return {"text": text}
+
+
+# ── local ASCII map ──────────────────────────────────────────────────────────
+_GLYPH_PLAYER = "@"
+_GLYPH_PATH = "."
+_GLYPH_WALL = "#"
+_GLYPH_WARP = ">"     # door / stairs / any exit warp
+_GLYPH_NPC = "N"
+_GLYPH_OFFMAP = " "   # outside the loaded room (black padding tiles)
+
+_MAP_LEGEND = {
+    _GLYPH_PLAYER: "you",
+    _GLYPH_PATH: "walkable",
+    _GLYPH_WALL: "wall/obstacle",
+    _GLYPH_WARP: "exit (door/stairs/warp)",
+    _GLYPH_NPC: "person/sprite",
+    _GLYPH_OFFMAP: "off-map",
+}
+
+
+def _walkable_tile_ids(emu) -> set[int]:
+    """The 0xFF-terminated walkable-tile list for the current tileset."""
+    ptr = emu.read16(TILESET_COLLISION_PTR)
+    ids = set()
+    addr = ptr
+    for _ in range(128):
+        v = emu.read(addr)
+        addr += 1
+        if v == 0xFF:
+            break
+        ids.add(v)
+    return ids
+
+
+def _map_to_screen(mx: int, my: int, px: int, py: int):
+    """Map tile (mx,my) -> (col,row) in the 20x18 on-screen tilemap, using the
+    player's centered anchor."""
+    return (PLAYER_SCREEN_COL + (mx - px), PLAYER_SCREEN_ROW + (my - py))
+
+
+def read_local_map(emu) -> dict:
+    """Render the visible area around the player as an ASCII grid.
+
+    Base layer: classify each on-screen tile (wTileMap) as walkable path vs
+    wall via the tileset collision list. Overlay, in order: warps/exits from the
+    map's warp table ('>'), NPC/object sprites ('N'), and the player ('@'). The
+    black padding around a small room decodes to off-map blanks so the room's
+    shape — and its exits — read clearly.
+
+    Not meaningful mid-battle (no overworld view), so returns an empty grid then.
+    """
+    px, py = emu.read(PLAYER_X), emu.read(PLAYER_Y)
+    position = {"x": px, "y": py}
+    if emu.read(IN_BATTLE) != 0:
+        return {"ascii": "", "legend": {}, "position": position}
+
+    tiles = emu.read_range(TILEMAP, TILEMAP_W * TILEMAP_H)
+    walkable = _walkable_tile_ids(emu)
+
+    # Base layer from the tilemap.
+    grid = []
+    for r in range(TILEMAP_H):
+        row = []
+        for c in range(TILEMAP_W):
+            t = tiles[r * TILEMAP_W + c]
+            if t == 0x10:               # solid black padding = outside the room
+                row.append(_GLYPH_OFFMAP)
+            elif t in walkable:
+                row.append(_GLYPH_PATH)
+            else:
+                row.append(_GLYPH_WALL)
+        grid.append(row)
+
+    def put(col, row, glyph):
+        if 0 <= row < TILEMAP_H and 0 <= col < TILEMAP_W:
+            grid[row][col] = glyph
+
+    # Overlay warps/exits (map coords -> screen).
+    n_warps = emu.read(NUM_WARPS)
+    if n_warps <= 32:
+        for i in range(n_warps):
+            base = WARP_ENTRIES + i * WARP_ENTRY_SIZE
+            wy, wx = emu.read(base), emu.read(base + 1)
+            col, row = _map_to_screen(wx, wy, px, py)
+            put(col, row, _GLYPH_WARP)
+
+    # Overlay NPC/object sprites (slots 1..15; slot 0 is the player).
+    for s in range(1, NUM_SPRITE_SLOTS):
+        pic = emu.read(SPRITE_DATA1 + s * SPRITE_STRIDE)  # PictureID, 0 = inactive
+        if pic == 0:
+            continue
+        d2 = SPRITE_DATA2 + s * SPRITE_STRIDE
+        smy, smx = emu.read(d2 + 0x04), emu.read(d2 + 0x05)
+        # Sprite map coords are offset by 4 (the 4-tile border pokered adds); the
+        # player's own MapX/MapY carry the same +4, so differencing cancels it.
+        pmy, pmx = emu.read(SPRITE_DATA2 + 0x04), emu.read(SPRITE_DATA2 + 0x05)
+        col, row = _map_to_screen(px + (smx - pmx), py + (smy - pmy), px, py)
+        put(col, row, _GLYPH_NPC)
+
+    # Player last, so it wins any overlap.
+    put(PLAYER_SCREEN_COL, PLAYER_SCREEN_ROW, _GLYPH_PLAYER)
+
+    # Trim fully-off-map border rows/cols so the room isn't buried in blanks.
+    def row_blank(row):
+        return all(ch == _GLYPH_OFFMAP for ch in row)
+
+    top, bot = 0, TILEMAP_H - 1
+    while top < bot and row_blank(grid[top]):
+        top += 1
+    while bot > top and row_blank(grid[bot]):
+        bot -= 1
+    rows = grid[top:bot + 1]
+    ascii_map = "\n".join("".join(r) for r in rows)
+
+    return {"ascii": ascii_map, "legend": dict(_MAP_LEGEND), "position": position}
+
+
 def read_state(emu) -> dict:
     """Return a game-state dict roughly matching the existing JS API shape."""
     in_battle = emu.read(IN_BATTLE)
@@ -228,4 +459,12 @@ def read_state(emu) -> dict:
     battle = read_battle(emu)
     if battle is not None:
         state["battle"] = battle
+
+    # Navigational + situational view: a local ASCII map (with exits marked) and,
+    # when a textbox is up, the decoded on-screen text.
+    view = {"map": read_local_map(emu)}
+    dialogue = read_dialogue(emu)
+    if dialogue is not None:
+        view["dialogue"] = dialogue
+    state["view"] = view
     return state
