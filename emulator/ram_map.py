@@ -460,11 +460,11 @@ def read_state(emu) -> dict:
     if battle is not None:
         state["battle"] = battle
 
-    # Navigational + situational view: a local ASCII map (with exits marked) and,
-    # when a textbox is up, the decoded on-screen text.
-    view = {"map": read_local_map(emu)}
+    # Navigational + situational fields, TOP-LEVEL on the state (consistent with
+    # the other fields and visible to the couch viewer): a local ASCII map (with
+    # exits marked) and, when a textbox is up, the decoded on-screen text.
+    state["map"] = read_local_map(emu)
     dialogue = read_dialogue(emu)
     if dialogue is not None:
-        view["dialogue"] = dialogue
-    state["view"] = view
+        state["dialogue"] = dialogue
     return state
