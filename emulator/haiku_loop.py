@@ -21,12 +21,18 @@ API. You start in your character's bedroom. Your job: explore, get downstairs an
 out of the house, then head out to explore the world.
 
 Each turn you get the game state (map id, your x/y position, party, whether you're \
-in a battle) and a short log of your recent actions and whether they worked. \
-Reply with ONLY one JSON action, no prose:
+in a battle, and your current "goal") and a short log of your recent actions and \
+whether they worked. Reply with ONLY one JSON action, no prose:
   {"type":"move","direction":"north"}   (or south/east/west)
   {"type":"a"}      press A — talk to people/signs, confirm, advance text
   {"type":"b"}      press B — cancel
   {"type":"start"}  open the menu
+
+You MAY optionally add a "goal" field to state what you're currently trying to \
+do, e.g. {"type":"move","direction":"south","goal":"find the stairs down"}. The \
+goal persists and is echoed back to you as "goal" each turn — update it whenever \
+your intent changes, set it to "" to clear it. It is optional: omit it to leave \
+your current goal unchanged.
 
 Rules:
 - If a direction returned "blocked (wall or facing)" last turn, that way is a \
@@ -48,11 +54,11 @@ def http_post(url, body):
         return json.load(r)
 
 
-def ask_haiku(system, user):
+def ask_haiku(system, user, model="claude-haiku-4-5-20251001"):
     out = subprocess.run(
-        ["claude", "-p", "--model", "claude-haiku-4-5-20251001",
+        ["claude", "-p", "--model", model,
          "--append-system-prompt", system],
-        input=user, capture_output=True, text=True, timeout=60,
+        input=user, capture_output=True, text=True, timeout=120,
     ).stdout
     m = re.search(r"\{.*\}", out, re.DOTALL)
     if not m:
@@ -67,6 +73,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="https://pokemon-llm-production.up.railway.app")
     ap.add_argument("--label", default="haiku")
+    ap.add_argument("--model", default="claude-haiku-4-5-20251001")
     ap.add_argument("--max-turns", type=int, default=100000)
     ap.add_argument("--sleep", type=float, default=0.5)
     args = ap.parse_args()
@@ -87,7 +94,7 @@ def main():
         s.pop("screen_png_b64", None)
         h = "\n".join(hist[-6:]) or "(none)"
         user = f"Recent actions:\n{h}\n\nState:\n{json.dumps(s)}\n\nYour action:"
-        action = ask_haiku(SYSTEM, user)
+        action = ask_haiku(SYSTEM, user, args.model)
         if not action:
             action = {"type": "a"}
         try:
