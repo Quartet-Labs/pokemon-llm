@@ -95,6 +95,13 @@ BATTLE_MON_MAXHP = 0xD023   # 2 bytes big-endian
 TILEMAP = 0xC3A0
 TILEMAP_W = 20
 TILEMAP_H = 18
+# Current map's tileset id (wCurMapTileset). INTERIOR=4 at the bedroom start.
+CUR_TILESET = 0xD367
+# Per-tileset "tall grass" tile id (wGrassTile) — the encounter tile. The engine
+# sets this from the tileset header, so grass reads correctly on any map without
+# a per-map guess; 0xFF means the tileset has no grass. VERIFY against pixels
+# before trusting it (a wrong address would paint '"' on non-grass tiles).
+GRASS_TILE = 0xD535
 # Collision list for the current tileset: a 0xFF-terminated list (in the home
 # bank, directly readable) of the tile IDs that are walkable in this tileset.
 TILESET_COLLISION_PTR = 0xD530   # 2-byte LE pointer
@@ -330,6 +337,7 @@ _GLYPH_PATH = "."
 _GLYPH_WALL = "#"
 _GLYPH_WARP = ">"     # door / stairs / any exit warp
 _GLYPH_NPC = "N"
+_GLYPH_GRASS = '"'    # tall grass (wild-encounter tile)
 _GLYPH_OFFMAP = " "   # outside the loaded room (black padding tiles)
 
 _MAP_LEGEND = {
@@ -338,6 +346,7 @@ _MAP_LEGEND = {
     _GLYPH_WALL: "wall/obstacle",
     _GLYPH_WARP: "exit (door/stairs/warp) — see 'exits' for where each leads",
     _GLYPH_NPC: "person/sprite",
+    _GLYPH_GRASS: "tall grass (wild encounters)",
     _GLYPH_OFFMAP: "off-map",
 }
 
@@ -395,6 +404,7 @@ def read_local_map(emu) -> dict:
 
     tiles = emu.read_range(TILEMAP, TILEMAP_W * TILEMAP_H)
     walkable = _walkable_tile_ids(emu)
+    grass_tile = emu.read(GRASS_TILE)
 
     # Base layer from the tilemap.
     grid = []
@@ -404,6 +414,8 @@ def read_local_map(emu) -> dict:
             t = tiles[r * TILEMAP_W + c]
             if t == 0x10:               # solid black padding = outside the room
                 row.append(_GLYPH_OFFMAP)
+            elif grass_tile != 0xFF and t == grass_tile:
+                row.append(_GLYPH_GRASS)   # walkable, but flag encounters
             elif t in walkable:
                 row.append(_GLYPH_PATH)
             else:
