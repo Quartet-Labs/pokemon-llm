@@ -172,6 +172,17 @@ def compact_state(view):
         # wall-bumping instead of learning it by trial and error.
         "walkable": p.get("walkable"),
     }
+    # Navigational + situational context: the local ASCII map (exits marked) and
+    # any on-screen dialogue/menu text. Emitted by ram_map.read_state under
+    # `view`; forward the sub-keys the model needs, keeping the payload compact.
+    v = view.get("view") or {}
+    nav = {}
+    if v.get("map"):
+        nav["map"] = v["map"]
+    if v.get("dialogue"):
+        nav["dialogue"] = v["dialogue"]
+    if nav:
+        keep["view"] = nav
     return keep
 
 
