@@ -161,10 +161,8 @@ def _resolve_or_404(request: Request):
 
 @app.on_event("startup")
 def _startup() -> None:
-    # The default session always exists and starts in the controllable overworld.
-    with _sessions_lock:
-        if DEFAULT_SESSION_ID not in _sessions:
-            _make_session(DEFAULT_SESSION_ID, "default")
+    # No default session — slots are filled only by named sessions from POST /session.
+    pass
 
 
 # ── state ────────────────────────────────────────────────────────────────────
@@ -395,10 +393,6 @@ def delete_session(request: Request):
     (which must always exist). A viewer polling a removed session just sees the
     slot go empty on its next /sessions discovery pass."""
     sid = request.query_params.get("session") or DEFAULT_SESSION_ID
-    if sid == DEFAULT_SESSION_ID:
-        return JSONResponse(
-            {"error": "cannot delete the default session"}, status_code=400
-        )
     with _sessions_lock:
         sess = _sessions.pop(sid, None)
     if sess is None:
@@ -528,8 +522,7 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
  function mount(cell,sid,label){
    cell.sid=sid; cell.label=label;
    cell.el.className='cell'+(cell.slot===selected?' selected':'');
-   // default session can't be deleted server-side; only offer remove elsewhere.
-   const rmBtn=(sid!=='default')?'<span class="rm" title="remove session">✕</span>':'';
+   const rmBtn='<span class="rm" title="remove session">✕</span>';
    cell.el.innerHTML=
      '<img class="scr">'+
      '<div class="info"><div class="label"><span class="ptag">P'+(cell.slot+1)+'</span><span class="plabel"></span>'+rmBtn+'</div>'+
@@ -549,7 +542,7 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
    if(selected===cell.slot) updateDetail();
  }
  async function removeSession(sid){
-   if(!sid || sid==='default') return;
+   if(!sid) return;
    try{
      await fetch('/session?session='+encodeURIComponent(sid),{method:'DELETE'});
    }catch(e){}
