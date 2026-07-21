@@ -20,12 +20,50 @@ from __future__ import annotations
 import threading
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from emulator import actions, ram_map
 from emulator.emu import Emu
 
 app = FastAPI(title="pokemon-llm emulator backend")
+
+# Live spectator page — upscaled Game Boy screen + the RAM-derived state, polled
+# a few times a second so a human can watch an agent play in the browser.
+VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
+<title>Pokémon Blue — emulator</title>
+<style>
+ body{background:#0d0d0d;color:#d8d8d8;font-family:'Courier New',monospace;margin:0;padding:16px;display:flex;gap:20px;flex-wrap:wrap}
+ h1{font-size:15px;color:#8bd;margin:0 0 10px}
+ #screen{image-rendering:pixelated;width:480px;height:432px;background:#111;border:2px solid #333;border-radius:6px}
+ #panel{min-width:240px}
+ .k{color:#7a7a7a} .v{color:#e8e8e8}
+ pre{white-space:pre-wrap;font-size:12px;line-height:1.5}
+</style></head><body>
+ <div><h1>POKÉMON BLUE — live emulator</h1><img id="screen" src="/screen.png"></div>
+ <div id="panel"><h1>STATE</h1><pre id="state">…</pre></div>
+<script>
+ const img=document.getElementById('screen'), st=document.getElementById('state');
+ async function tick(){
+   img.src='/screen.png?'+Date.now();
+   try{const s=await (await fetch('/state')).json(); delete s.screen_png_b64;
+     const p=s.player||{};
+     st.textContent=
+       'screen   '+s.screen+'\\n'+
+       'map      '+(s.area&&s.area.id)+'\\n'+
+       'pos      x='+(p.position&&p.position.x)+' y='+(p.position&&p.position.y)+'\\n'+
+       'badges   '+p.badges+'\\n'+
+       'money    $'+p.money+'\\n'+
+       'in_battle '+s.in_battle+'\\n'+
+       'party    '+JSON.stringify(p.party);
+   }catch(e){st.textContent='(state error)';}
+ }
+ setInterval(tick,350); tick();
+</script></body></html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
+def viewer():
+    return VIEWER_HTML
 
 # Single global emulator + a lock: PyBoy is not thread-safe and the ASGI server
 # may service requests concurrently.
