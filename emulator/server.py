@@ -171,6 +171,9 @@ async def post_benchmark(request: Request):
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=3100, log_level="info")
+    # Railway (and any PaaS) injects the port to bind via $PORT.
+    port = int(os.environ.get("PORT", "3100"))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
