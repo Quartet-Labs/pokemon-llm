@@ -74,11 +74,40 @@ def ask_haiku(system, user, model="claude-haiku-4-5-20251001", image_path=None):
         return None
 
 
+def ask_ollama(system, user, model, ollama_url):
+    """Ask a local Ollama model (e.g. qwen3:32b on the desktop GPU) for one JSON
+    action. "/no_think" keeps qwen3 from burning 60-1400s on a reasoning chain;
+    num_ctx 4096 keeps the KV cache inside the 24GB GPU."""
+    body = {
+        "model": model, "stream": False, "keep_alive": "30m",
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": "/no_think\n" + user}],
+        "options": {"temperature": 0.4, "num_ctx": 4096},
+    }
+    req = urllib.request.Request(
+        ollama_url.rstrip("/") + "/api/chat",
+        data=json.dumps(body).encode(), method="POST",
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        resp = json.load(r)
+    content = ((resp.get("message") or {}).get("content") or "")
+    m = re.search(r"\{.*\}", content, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="https://pokemon-llm-production.up.railway.app")
     ap.add_argument("--label", default="haiku")
     ap.add_argument("--model", default="claude-haiku-4-5-20251001")
+    ap.add_argument("--backend", choices=("claude", "ollama"), default="claude",
+                    help="claude = `claude` CLI; ollama = local model on the desktop GPU.")
+    ap.add_argument("--ollama-url", default="http://192.168.1.185:11434")
     ap.add_argument("--max-turns", type=int, default=100000)
     ap.add_argument("--sleep", type=float, default=0.5)
     ap.add_argument("--vision", action="store_true",
@@ -113,7 +142,10 @@ def main():
                     f"{json.dumps(s)}\n\nYour action:")
         else:
             user = f"Recent actions:\n{h}\n\nState:\n{json.dumps(s)}\n\nYour action:"
-        action = ask_haiku(SYSTEM, user, args.model, frame_path)
+        if args.backend == "ollama":
+            action = ask_ollama(SYSTEM, user, args.model, args.ollama_url)
+        else:
+            action = ask_haiku(SYSTEM, user, args.model, frame_path)
         if not action:
             action = {"type": "a"}
         try:
