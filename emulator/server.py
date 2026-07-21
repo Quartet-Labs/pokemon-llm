@@ -156,23 +156,123 @@ def get_state(request: Request):
         return sess.view()
 
 
+# Max actions accepted in one queued /action request.
+MAX_ACTION_SEQUENCE = 20
+
+
+def _has_dialogue(view: dict) -> bool:
+    """A textbox/dialogue is on screen (ram_map only sets `dialogue` when text
+    is actually up)."""
+    return bool(view.get("dialogue"))
+
+
+def _abort_reason(prev_view: dict, view: dict, result: dict) -> str | None:
+    """Decide whether a queued sequence should stop AFTER this step, based on the
+    state before (`prev_view`) and after (`view`) it and the macro `result`.
+
+    Returns a short reason string to stop, or None to keep going. We abort the
+    instant something notable happens so a multi-step run never blindly walks
+    past a battle, a room change, or a wall.
+    """
+    result = result or {}
+    # Battle entered or left.
+    if bool(prev_view.get("in_battle")) != bool(view.get("in_battle")):
+        return "entered_battle" if view.get("in_battle") else "left_battle"
+    # Map/area change (walked through a door, warp, or map edge).
+    prev_area = (prev_view.get("area") or {}).get("id")
+    area = (view.get("area") or {}).get("id")
+    if prev_area != area:
+        return "map_change"
+    # A textbox/dialogue appeared that wasn't up before.
+    if _has_dialogue(view) and not _has_dialogue(prev_view):
+        return "dialogue"
+    # A move that was blocked (wall/facing) — no point queuing more of the same.
+    if "moved" in result and not result.get("moved"):
+        return "blocked"
+    return None
+
+
+def _parse_action_body(body):
+    """Normalize a /action body into a list of action dicts.
+
+    Accepts, for back-compat and convenience:
+      * a single action dict:        {"type": "move", ...}
+      * a wrapped sequence:          {"actions": [<action>, ...]}
+      * a bare JSON list:            [<action>, ...]
+    Returns (actions_list, single_flag, error_str). `single_flag` marks a body
+    that arrived as ONE action dict, so the response keeps the exact legacy shape.
+    """
+    if isinstance(body, dict) and "actions" in body:
+        seq = body.get("actions")
+        if not isinstance(seq, list):
+            return None, False, "'actions' must be a list"
+        return seq, False, None
+    if isinstance(body, list):
+        return body, False, None
+    if isinstance(body, dict):
+        return [body], True, None
+    return None, False, "body must be a JSON action dict or {'actions': [...]}"
+
+
 @app.post("/action")
 async def post_action(request: Request):
     sess, err = _resolve_or_404(request)
     if err:
         return err
     try:
-        action = await request.json()
+        body = await request.json()
     except Exception:
         return JSONResponse({"error": "body must be a JSON action dict"}, status_code=400)
-    if not isinstance(action, dict) or not action.get("type"):
-        return JSONResponse({"error": "action.type is required"}, status_code=400)
+
+    action_list, single, perr = _parse_action_body(body)
+    if perr:
+        return JSONResponse({"error": perr}, status_code=400)
+    if not action_list:
+        return JSONResponse({"error": "no actions given"}, status_code=400)
+    if len(action_list) > MAX_ACTION_SEQUENCE:
+        return JSONResponse(
+            {"error": f"too many actions ({len(action_list)} > {MAX_ACTION_SEQUENCE})"},
+            status_code=400,
+        )
+    for a in action_list:
+        if not isinstance(a, dict) or not a.get("type"):
+            return JSONResponse({"error": "each action needs a 'type'"}, status_code=400)
+
+    steps = []
+    stopped_early = False
+    stopped_reason = None
     with sess.lock:
-        result = actions.apply_action(sess.emu, action)
+        # Snapshot the pre-sequence state once; each step compares against the
+        # state right before it so we detect the transition each action causes.
+        # Per-step `state` is the RAM view WITHOUT the screenshot (read_state, not
+        # Session.view) — it carries every field the reward/trajectory layer needs
+        # (area, player, battle, map, dialogue) but stays cheap to embed per step.
+        prev_state = ram_map.read_state(sess.emu)
+        last_idx = len(action_list) - 1
+        for i, action in enumerate(action_list):
+            result = actions.apply_action(sess.emu, action)
+            state = ram_map.read_state(sess.emu)
+            sess.record_action(action, result, state)
+            steps.append({"action": action, "result": result, "state": state})
+            reason = _abort_reason(prev_state, state, result)
+            if reason is not None:
+                stopped_early = i != last_idx
+                stopped_reason = reason
+                break
+            prev_state = state
+
+    # Final returned view is the full state (with screenshot + available_actions),
+    # same shape callers get today.
+    with sess.lock:
         view = sess.view()
-        sess.record_action(action, result, view)
-    view["action"] = action
-    view["result"] = result
+    view["action"] = steps[-1]["action"]
+    view["result"] = steps[-1]["result"]
+    view["steps"] = steps
+    if stopped_reason is not None:
+        # Report the reason even when it fired on the last step (informative);
+        # `stopped_early` is only true if we aborted BEFORE finishing the list.
+        view["stopped_reason"] = stopped_reason
+    view["stopped_early"] = stopped_early
     return view
 
 
@@ -325,6 +425,8 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
  .le-act{color:#7ec8e3;font-weight:bold}
  .le-msg{color:#999}
  .loghdr{font-size:12px;color:var(--dpc,#8bd);margin:0 0 6px}
+ .dmap{font-size:12px;line-height:1.1;color:#9fe0b0;background:#0a0a10;border:1px solid #22262e;border-radius:3px;padding:6px 8px;margin:0 0 12px;white-space:pre;overflow:auto;max-height:220px}
+ .dmap .dlg{display:block;color:#e8d98b;margin-top:6px;white-space:pre-wrap}
 </style></head><body>
  <h1>POKÉMON BLUE — couch mode (up to 4)</h1>
  <div id="grid"></div>
@@ -333,6 +435,8 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
    <div class="cols">
      <div class="dstate" id="d-state"></div>
      <div>
+       <div class="loghdr">MAP</div>
+       <pre class="dmap" id="d-map"></pre>
        <div class="loghdr">RECENT ACTIONS</div>
        <div class="dlog" id="d-log"></div>
      </div>
@@ -441,6 +545,16 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
      '<div class="party">'+(party.length
         ? party.map(m=>'<div class="pmon">'+m.name+' L'+m.level+' — '+m.hp+'</div>').join('')
         : '<span class="k">no party</span>')+'</div>';
+   // ASCII map + dialogue (now top-level on the state: s.map / s.dialogue).
+   const mapEl=document.getElementById('d-map');
+   const ascii=(s.map&&s.map.ascii)||'';
+   const dlg=(s.dialogue&&s.dialogue.text)||'';
+   const esc=t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+   if(ascii||dlg){
+     mapEl.innerHTML=esc(ascii)+(dlg?'<span class="dlg">'+esc(dlg)+'</span>':'');
+   }else{
+     mapEl.textContent=s.in_battle?'(in battle)':'—';
+   }
    try{
      const data=await (await fetch('/logs?session='+encodeURIComponent(c.sid)+'&limit=25')).json();
      const log=data.log||[];

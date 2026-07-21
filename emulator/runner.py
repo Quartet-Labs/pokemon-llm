@@ -92,10 +92,60 @@ TOOLS = [{
             "required": ["type"],
         },
     },
+}, {
+    "type": "function",
+    "function": {
+        "name": "submit_actions",
+        "description": "Queue a SEQUENCE of actions, executed in order server-side. "
+                       "Use this to cross open ground in one shot (e.g. several "
+                       "moves in a row). The run STOPS EARLY the instant something "
+                       "notable happens: a battle starts/ends, the map/area "
+                       "changes, a textbox appears, or a move is blocked by a wall. "
+                       "Each action has the same fields as submit_action. Cap 20.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "description": "1-20 actions, executed in order until something "
+                                   "notable happens.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["move", "a", "talk", "b", "start",
+                                         "select", "wait", "battle_move",
+                                         "use_item", "throw_ball", "switch"],
+                            },
+                            "direction": {
+                                "type": "string",
+                                "enum": ["north", "south", "east", "west"],
+                            },
+                            "move_index": {"type": "integer"},
+                            "item": {"type": "string"},
+                            "ball": {"type": "string"},
+                            "party_index": {"type": "integer"},
+                        },
+                        "required": ["type"],
+                    },
+                },
+            },
+            "required": ["actions"],
+        },
+    },
 }]
 
 # Keys we forward to the game API (drop everything else the model may echo).
 ACTION_KEYS = {"type", "direction", "move_index", "item", "ball", "party_index"}
+
+
+def _clean_action(a):
+    """Filter one model-emitted action dict down to the API keys, dropping
+    null/unknown fields. Returns the cleaned dict or None if it has no type."""
+    if not isinstance(a, dict) or not a.get("type"):
+        return None
+    return {k: v for k, v in a.items() if k in ACTION_KEYS and v is not None}
 
 
 # ── prompt ───────────────────────────────────────────────────────────────────
@@ -112,8 +162,8 @@ of the house, then head out into the world and make progress.
 Each turn you receive the game state (map/area id, your x/y position, party, \
 whether you're in a battle, and the list of available_actions) plus a short log \
 of your recent actions and whether each one WORKED (moved) or was BLOCKED (wall). \
-You MUST respond by calling the submit_action tool exactly once. Do not write \
-prose.
+You MUST respond by calling EITHER submit_action (one action) OR submit_actions \
+(a queued sequence) exactly once. Do not write prose.
 
 Actions:
   submit_action(type="move", direction="north")   walk one tile (or south/east/west)
@@ -122,6 +172,18 @@ Actions:
   submit_action(type="b")       press B — cancel / back out
   submit_action(type="start")   open the menu
   submit_action(type="wait")    pass a beat
+  submit_actions(actions=[...])  queue up to 20 actions run in order server-side
+
+Queuing moves:
+- When you can see a clear straight run of open ground (use the ASCII map and \
+walkable info), queue several moves at once with submit_actions to cross it in a \
+single turn instead of one tile at a time.
+- The queue STOPS EARLY the instant something notable happens: a battle \
+starts/ends, the map/area changes, a textbox appears, or a move hits a wall. You \
+then see the resulting state and decide again — so a long queue is safe; it will \
+not blindly walk you into trouble.
+- If you're unsure what's ahead (near an edge, a door, or an NPC), submit ONE \
+action and reassess.
 
 Rules:
 - Directions are north, south, east, west — NEVER up/down/left/right.
@@ -173,14 +235,13 @@ def compact_state(view):
         "walkable": p.get("walkable"),
     }
     # Navigational + situational context: the local ASCII map (exits marked) and
-    # any on-screen dialogue/menu text. Emitted by ram_map.read_state under
-    # `view`; forward the sub-keys the model needs, keeping the payload compact.
-    v = view.get("view") or {}
+    # any on-screen dialogue/menu text. Emitted by ram_map.read_state as TOP-LEVEL
+    # `map`/`dialogue`; forward them, keeping the payload compact.
     nav = {}
-    if v.get("map"):
-        nav["map"] = v["map"]
-    if v.get("dialogue"):
-        nav["dialogue"] = v["dialogue"]
+    if view.get("map"):
+        nav["map"] = view["map"]
+    if view.get("dialogue"):
+        nav["dialogue"] = view["dialogue"]
     if nav:
         keep["view"] = nav
     return keep
@@ -206,12 +267,36 @@ def _feedback(action, result):
 
 
 # ── brains ───────────────────────────────────────────────────────────────────
+def _actions_from_args(args):
+    """Turn tool-call arguments into a cleaned list of actions.
+
+    Handles both tool shapes: submit_action ({type,...}) and submit_actions
+    ({actions:[...]}). Also tolerant of a bare list. Returns a list (possibly
+    empty)."""
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            return []
+    seq = None
+    if isinstance(args, dict) and isinstance(args.get("actions"), list):
+        seq = args["actions"]
+    elif isinstance(args, list):
+        seq = args
+    elif isinstance(args, dict) and args.get("type"):
+        seq = [args]
+    if not seq:
+        return []
+    cleaned = [_clean_action(a) for a in seq]
+    return [a for a in cleaned if a]
+
+
 def ollama_decide(ollama, model, system, user, timeout=300):
-    """Ask the local model for one action via a native tool call. Returns the
-    action dict (filtered to ACTION_KEYS) or None. Copied from
-    scripts/ollama-runner.py: `/no_think` disables qwen3's think-chain (native
-    `think:false` can't combine with `tools`), num_ctx 4096 keeps the KV cache in
-    GPU."""
+    """Ask the local model for its move(s) via a native tool call. Returns a LIST
+    of action dicts (one for submit_action, many for submit_actions) or [].
+    Copied from scripts/ollama-runner.py: `/no_think` disables qwen3's think-chain
+    (native `think:false` can't combine with `tools`), num_ctx 4096 keeps the KV
+    cache in GPU."""
     body = {
         "model": model,
         "stream": False,
@@ -227,46 +312,39 @@ def ollama_decide(ollama, model, system, user, timeout=300):
     msg = resp.get("message", {}) or {}
     calls = msg.get("tool_calls") or []
     if calls:
-        args = calls[0].get("function", {}).get("arguments")
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                args = None
-        if isinstance(args, dict) and args.get("type"):
-            return {k: v for k, v in args.items() if k in ACTION_KEYS and v is not None}
-    # Fallback: some models emit the action as JSON text instead of a tool call.
+        acts = _actions_from_args(calls[0].get("function", {}).get("arguments"))
+        if acts:
+            return acts
+    # Fallback: some models emit the action(s) as JSON text instead of a tool call.
     content = (msg.get("content") or "").strip()
     if content:
-        m = re.search(r"\{.*\}", content, re.DOTALL)
+        m = re.search(r"\{.*\}|\[.*\]", content, re.DOTALL)
         if m:
             try:
-                args = json.loads(m.group(0))
-                if isinstance(args, dict) and args.get("type"):
-                    return {k: v for k, v in args.items()
-                            if k in ACTION_KEYS and v is not None}
+                acts = _actions_from_args(json.loads(m.group(0)))
+                if acts:
+                    return acts
             except json.JSONDecodeError:
                 pass
-    return None
+    return []
 
 
 def claude_decide(model, system, user, timeout=60):
-    """Ask Claude via the `claude` CLI for one action (haiku_loop pattern). No API
-    key needed; parses the first JSON object out of stdout."""
+    """Ask Claude via the `claude` CLI for its move(s) (haiku_loop pattern). No API
+    key needed; parses the first JSON object/array out of stdout. Returns a LIST
+    of action dicts or []."""
     out = subprocess.run(
         ["claude", "-p", "--model", model, "--append-system-prompt", system],
         input=user, capture_output=True, text=True, timeout=timeout,
     ).stdout
-    m = re.search(r"\{.*\}", out, re.DOTALL)
+    m = re.search(r"\{.*\}|\[.*\]", out, re.DOTALL)
     if not m:
-        return None
+        return []
     try:
         args = json.loads(m.group(0))
     except json.JSONDecodeError:
-        return None
-    if isinstance(args, dict) and args.get("type"):
-        return {k: v for k, v in args.items() if k in ACTION_KEYS and v is not None}
-    return None
+        return []
+    return _actions_from_args(args)
 
 
 def poke_amos(msg):
@@ -330,10 +408,9 @@ def main():
     history = []           # [(action, feedback_str), ...]
     reached = False
     consecutive_errors = 0
-    turn = 0
+    turn = 0               # counts EXECUTED game steps (sub-actions), not decisions
 
     while turn < args.max_turns:
-        turn += 1
         # 1) observe
         try:
             view = http_get(f"{base}/state?session={sid}")
@@ -352,17 +429,18 @@ def main():
             print(f"[emu-runner] GOAL: {badges} badge(s) at turn {turn}", flush=True)
             break
 
-        # 3) decide
+        # 3) decide — the model may return ONE action or a queued SEQUENCE.
         hist_txt = "\n".join(f"  {i+1}. {h[1]}" for i, h in enumerate(history[-8:])) \
             or "  (none yet)"
         user = (f"Recent actions:\n{hist_txt}\n\n"
                 f"Current state:\n{json.dumps(compact_state(view))}\n\n"
-                f"Call submit_action with your one action for this turn.")
+                f"Call submit_action (one action) or submit_actions (a queued "
+                f"sequence) for this turn.")
         try:
             if args.claude:
-                action = claude_decide(args.claude_model, SYSTEM, user)
+                acts = claude_decide(args.claude_model, SYSTEM, user)
             else:
-                action = ollama_decide(ollama, args.model, SYSTEM, user)
+                acts = ollama_decide(ollama, args.model, SYSTEM, user)
         except Exception as e:
             print(f"[emu-runner] decide error t{turn}: {e}", flush=True)
             consecutive_errors += 1
@@ -371,15 +449,18 @@ def main():
             time.sleep(3)
             continue
 
-        if not action:
+        if not acts:
             # No usable action from the model — log and re-request, don't fake one.
             print(f"[emu-runner] no action t{turn}", flush=True)
             time.sleep(args.sleep)
             continue
 
-        # 4) act — the /action response IS the next full view (+action/+result).
+        # 4) act — single action keeps the legacy body shape; a sequence posts
+        # {"actions":[...]} and the server executes in order, aborting early on any
+        # notable change. Either way the response carries a `steps` array.
+        body = acts[0] if len(acts) == 1 else {"actions": acts}
         try:
-            result_view = http_post(f"{base}/action?session={sid}", action, token=token)
+            result_view = http_post(f"{base}/action?session={sid}", body, token=token)
         except Exception as e:
             print(f"[emu-runner] action error t{turn}: {e}", flush=True)
             consecutive_errors += 1
@@ -389,25 +470,43 @@ def main():
             continue
         consecutive_errors = 0
 
-        macro = result_view.get("result") or {}
-        fb = _feedback(action, macro)
-        # reward.py keys illegal-moves off a message string; give it the macro's
-        # human-readable reason so "blocked (wall or facing)" is scored -ILLEGAL.
-        result_msg = _feedback(action, macro).split(": ", 1)[-1]
+        # 5) reward + trajectory, PER EXECUTED SUB-STEP. Walk the server's `steps`
+        # array; each entry carries the action, macro result, and the post-step
+        # RAM state. Reward is computed step-by-step (state before -> action ->
+        # state after), so a queued run of N steps yields N trajectory rows, not
+        # one blob. `prev_state` starts at the view the model saw this turn.
+        steps = result_view.get("steps") or [
+            {"action": body, "result": result_view.get("result") or {},
+             "state": {k: v for k, v in result_view.items()
+                       if k not in ("screen_png_b64", "steps")}}
+        ]
+        prev_state = {k: v for k, v in view.items() if k != "screen_png_b64"}
+        for step in steps:
+            if turn >= args.max_turns:
+                break
+            turn += 1
+            s_action = step.get("action") or {}
+            s_result = step.get("result") or {}
+            # Post-step full state the server captured for THIS sub-action.
+            s_state = step.get("state") or {}
+            fb = _feedback(s_action, s_result)
+            # reward.py keys illegal-moves off a message string; hand it the
+            # macro's human-readable reason (e.g. "blocked (wall or facing)").
+            result_msg = fb.split(": ", 1)[-1]
+            if traj:
+                r, bd = reward_tracker.step(prev_state, s_action, s_state, result_msg)
+                traj.log_turn(turn, state=prev_state, action=s_action, reward=r,
+                              reward_breakdown=bd, done=False)
+            history.append((s_action, fb))
+            pos = ((s_state.get("player") or {}).get("position")) or {}
+            print(f"[emu-runner] t{turn} {json.dumps(s_action)} -> {fb} "
+                  f"pos=({pos.get('x')},{pos.get('y')})", flush=True)
+            prev_state = s_state
 
-        # 5) reward + trajectory (state = the full view the model saw THIS turn,
-        # minus the redundant base64 screenshot — ~3KB/turn of dead weight that
-        # bloats the JSONL without adding replay value; every game field stays).
-        if traj:
-            r, bd = reward_tracker.step(view, action, result_view, result_msg)
-            log_state = {k: v for k, v in view.items() if k != "screen_png_b64"}
-            traj.log_turn(turn, state=log_state, action=action, reward=r,
-                          reward_breakdown=bd, done=False)
-
-        history.append((action, fb))
-        pos = ((result_view.get("player") or {}).get("position")) or {}
-        print(f"[emu-runner] t{turn} {json.dumps(action)} -> {fb} "
-              f"pos=({pos.get('x')},{pos.get('y')})", flush=True)
+        if result_view.get("stopped_reason"):
+            early = " (early)" if result_view.get("stopped_early") else ""
+            print(f"[emu-runner]   sequence stopped{early}: "
+                  f"{result_view['stopped_reason']}", flush=True)
         time.sleep(args.sleep)
 
     # ── wrap up ──────────────────────────────────────────────────────────────
