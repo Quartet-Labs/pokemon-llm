@@ -159,7 +159,7 @@ def compact_state(view):
     emulator's useful fields plus `available_actions`. Defensive about which keys
     exist so it works on a /state view, a /action view, and a benchmark view.
     """
-    keep = {k: view.get(k) for k in ("screen", "area", "in_battle",
+    keep = {k: view.get(k) for k in ("screen", "area", "in_battle", "battle",
                                      "available_actions")
             if k in view}
     p = view.get("player") or {}
@@ -168,6 +168,9 @@ def compact_state(view):
         "badges": p.get("badges"),
         "money": p.get("money"),
         "party": p.get("party"),
+        # Which adjacent tiles are actually open — lets the model avoid
+        # wall-bumping instead of learning it by trial and error.
+        "walkable": p.get("walkable"),
     }
     return keep
 
