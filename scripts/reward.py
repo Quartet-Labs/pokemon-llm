@@ -26,6 +26,27 @@ v1.1 adds progression + novelty terms. Two kinds:
 
 All new weights are SMALL relative to BADGE (+50): progression should nudge the
 policy toward growth without ever competing with the terminal objective.
+
+EMULATOR-STATE COMPATIBILITY (added for emulator/runner.py):
+This module was written against the OLD JS-engine view shape but works unchanged
+against the PyBoy emulator shape (ram_map.read_state) because every field access
+goes through defensive `_get()` / `.get()` with sane defaults. Concretely, on the
+emulator shape:
+  * `player.badges` is already an int COUNT (emulator popcounts the bitfield in
+    ram_map), so the badge-delta term reads it directly — no change needed.
+  * `player.position` exists but there is no `map.ascii` fog-of-war yet, so
+    `_observed_tiles()` returns an empty set and NEW_TILE/REVISIT reward is 0.
+    Illegal-move detection still works via the position-unchanged fallback in
+    `_is_illegal()` (which reads position from `player.position`).
+  * No party `exp` string, no `pokedex_seen/caught`, no `battle` dict, no
+    `dialogue*` -> exp/pokedex/new-trainer/new-npc terms all degrade to 0.
+  * The only behavioral edit for the emulator was adding "blocked" and
+    "not implemented" to ILLEGAL_MSG_MARKERS below (the emulator's blocked-move
+    and partial-verb messages), so those register as -ILLEGAL even if the
+    position check ever misses.
+So the live emulator reward is essentially STEP + ILLEGAL + NEW_AREA + BADGE
+today; the richer terms light up automatically as the emulator state grows those
+fields. No emulator-specific shim is needed.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -147,6 +168,8 @@ ILLEGAL_MSG_MARKERS = (
     "blocking the way",       # "A tree is blocking the way! Use CUT..."
     "can't go out there",     # Oak blocking the lab exit pre-starter
     "there's no",             # generic "there's no ... that way" style rejects
+    "blocked",                # emulator: _move returns "blocked (wall or facing)"
+    "not implemented",        # emulator: partial/unmapped verb (battle_move, etc.)
 )
 
 MOVE_ACTIONS = ("move",)
