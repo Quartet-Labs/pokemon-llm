@@ -10,6 +10,7 @@ that scripts/ollama-runner.py can be pointed here with
 
   GET  /state?session=X      RAM-derived game state (+ available_actions)
   POST /action?session=X     apply a high-level action dict, step, return state
+  GET  /logs?session=X       rolling per-session action history (oldest-first)
   POST /reset?session=X      reload the overworld savestate
   GET  /screen.png?session=X current Game Boy frame as PNG
   GET  /session?session=X    a session's snapshot
@@ -21,6 +22,7 @@ Run:  .venv/bin/python -m emulator.server
 """
 from __future__ import annotations
 
+import collections
 import secrets
 import threading
 
@@ -36,6 +38,29 @@ MAX_SESSIONS = 4
 DEFAULT_SESSION_ID = "default"
 
 
+def _action_message(result: dict, state: dict) -> str:
+    """Boil an action result + post-action state down to one human-readable
+    line for the viewer's log (e.g. 'moved to (10, 4)', 'blocked (wall)',
+    'pressed a', 'battle')."""
+    result = result or {}
+    if not result.get("ok"):
+        return result.get("error") or "failed"
+    if "moved" in result:
+        to = result.get("to") or {}
+        if result.get("moved"):
+            return f"moved to ({to.get('x')}, {to.get('y')})"
+        return result.get("reason") or "blocked"
+    if result.get("pressed"):
+        note = f"pressed {result['pressed']}"
+        if state.get("in_battle"):
+            note += " (in battle)"
+        return note
+    if result.get("waited"):
+        return "waited"
+    # Fallback: compact the result dict.
+    return ", ".join(f"{k}={v}" for k, v in result.items() if k != "ok") or "ok"
+
+
 class Session:
     """One independent emulator plus its own lock. PyBoy is not thread-safe, so
     each session gets a dedicated lock — locks are per-session so driving one
@@ -47,12 +72,32 @@ class Session:
         self.token = token
         self.emu = Emu(headless=True)
         self.lock = threading.Lock()
+        # Rolling per-session action history. Each entry:
+        #   {n, action, result, message}
+        # Oldest-first (append to the right). Guarded by self.lock, same as the
+        # emulator, so a log entry is always recorded atomically with the step
+        # that produced it.
+        self.log: collections.deque = collections.deque(maxlen=50)
+        self._action_n = 0
 
     def view(self) -> dict:
         state = ram_map.read_state(self.emu)
         state["screen_png_b64"] = self.emu.screen_png_b64()
         state["available_actions"] = actions.AVAILABLE_ACTIONS
         return state
+
+    def record_action(self, action: dict, result: dict, state: dict) -> dict:
+        """Append one action to the rolling log. Call under self.lock. `state`
+        is the post-action view, used to derive a short human-readable note."""
+        self._action_n += 1
+        entry = {
+            "n": self._action_n,
+            "action": action,
+            "result": result,
+            "message": _action_message(result, state),
+        }
+        self.log.append(entry)
+        return entry
 
     def summary(self) -> dict:
         return {"sessionId": self.id, "label": self.label}
@@ -125,9 +170,31 @@ async def post_action(request: Request):
     with sess.lock:
         result = actions.apply_action(sess.emu, action)
         view = sess.view()
+        sess.record_action(action, result, view)
     view["action"] = action
     view["result"] = result
     return view
+
+
+@app.get("/logs")
+def get_logs(request: Request):
+    """Per-session rolling action history. `log` is ordered most-recent-LAST
+    (append order), each entry {n, action, result, message}. Optional
+    ?limit=N returns only the newest N entries (still oldest-first)."""
+    sess, err = _resolve_or_404(request)
+    if err:
+        return err
+    limit_raw = request.query_params.get("limit")
+    with sess.lock:
+        entries = list(sess.log)
+    if limit_raw:
+        try:
+            n = int(limit_raw)
+            if n >= 0:
+                entries = entries[-n:]
+        except ValueError:
+            pass
+    return {"sessionId": sess.id, "log": entries}
 
 
 @app.post("/reset")
@@ -230,54 +297,97 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
  body{background:#0d0d0d;color:#d8d8d8;font-family:'Courier New',monospace;margin:0;padding:14px}
  h1{font-size:15px;color:#8bd;margin:0 0 12px}
  #grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:1040px}
- .cell{background:#141414;border:2px solid #2a2a2a;border-radius:8px;padding:10px;display:flex;gap:12px;min-height:216px}
- .cell.empty{align-items:center;justify-content:center;color:#555;font-size:14px;border-style:dashed}
+ /* Per-slot tint drives the cell border/header via --pc (P1..P4 palette). */
+ .cell{background:#141414;border:2px solid var(--pc,#2a2a2a);border-radius:8px;padding:10px;display:flex;gap:12px;min-height:216px;cursor:pointer;transition:box-shadow .15s}
+ .cell.selected{box-shadow:0 0 12px var(--pc,#8bd)}
+ .cell.empty{align-items:center;justify-content:center;color:#555;font-size:14px;border-style:dashed;border-color:#2a2a2a;cursor:default}
  .scr{image-rendering:pixelated;width:320px;height:288px;background:#111;border:1px solid #333;border-radius:4px;flex:none}
  .info{min-width:150px;font-size:12px;line-height:1.6}
- .label{color:#8bd;font-size:13px;margin:0 0 6px;font-weight:bold}
+ .label{font-size:13px;margin:0 0 6px;display:flex;align-items:center;gap:6px}
+ .ptag{color:#000;background:var(--pc,#8bd);font-weight:bold;padding:1px 7px;border-radius:3px;letter-spacing:1px;font-size:11px}
+ .plabel{color:var(--pc,#8bd);font-weight:bold;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
  .k{color:#7a7a7a} .v{color:#e8e8e8}
  .batt{color:#e57}
+ /* Detail panel */
+ #detail{margin-top:16px;max-width:1040px;background:#111;border:1px solid #2a2a2a;border-left:4px solid var(--dpc,#2a2a2a);border-radius:6px;padding:12px;display:none}
+ #detail.on{display:block}
+ #detail h2{font-size:13px;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+ #detail .cols{display:grid;grid-template-columns:220px 1fr;gap:18px}
+ .dstate div{font-size:12px;line-height:1.7}
+ .party{margin-top:6px}
+ .pmon{font-size:11px;color:#7ec8e3}
+ .dlog{max-height:260px;overflow-y:auto;border:1px solid #22262e;border-radius:3px;background:#0a0a10}
+ .dlog::-webkit-scrollbar{width:5px}.dlog::-webkit-scrollbar-thumb{background:#333}
+ .le{display:grid;grid-template-columns:34px 1fr;gap:6px;padding:3px 7px;border-bottom:1px solid #141414;font-size:11px;line-height:1.4}
+ .le:last-child{border-bottom:none}
+ .le.now{background:#0a0f18}
+ .le-n{color:#555;text-align:right}
+ .le-act{color:#7ec8e3;font-weight:bold}
+ .le-msg{color:#999}
+ .loghdr{font-size:12px;color:var(--dpc,#8bd);margin:0 0 6px}
 </style></head><body>
  <h1>POKÉMON BLUE — couch mode (up to 4)</h1>
  <div id="grid"></div>
+ <div id="detail">
+   <h2><span class="ptag" id="d-tag">P1</span><span id="d-title" style="color:var(--dpc,#8bd)"></span></h2>
+   <div class="cols">
+     <div class="dstate" id="d-state"></div>
+     <div>
+       <div class="loghdr">RECENT ACTIONS</div>
+       <div class="dlog" id="d-log"></div>
+     </div>
+   </div>
+ </div>
 <script>
  const N=4;
+ // P1..P4 palette carried over from the old JS-engine viewer (public/index.html).
+ const PCOLORS={1:'#e74c3c',2:'#3498db',3:'#2ecc71',4:'#f1c40f'};
  const grid=document.getElementById('grid');
- // Build 4 fixed cells once; fill/clear them as sessions come and go.
+ // Build 4 fixed cells once; fill/clear them as sessions come and go. Slot i
+ // (0-based) is player P(i+1) and keeps its palette color for its lifetime.
  const cells=[];
  for(let i=0;i<N;i++){
    const c=document.createElement('div');
    c.className='cell empty';
+   c.style.setProperty('--pc',PCOLORS[i+1]);
    c.innerHTML='waiting…';
+   c.addEventListener('click',()=>selectSlot(i));
    grid.appendChild(c);
-   cells.push({el:c, sid:null, img:null, bodyEl:null, labelEl:null});
+   cells.push({el:c, slot:i, sid:null, label:null, img:null, bodyEl:null, labelEl:null, state:null});
  }
+ let selected=-1;   // index into cells, or -1 = none
  function mount(cell,sid,label){
-   cell.sid=sid;
-   cell.el.className='cell';
+   cell.sid=sid; cell.label=label;
+   cell.el.className='cell'+(cell.slot===selected?' selected':'');
    cell.el.innerHTML=
      '<img class="scr">'+
-     '<div class="info"><div class="label"></div><pre class="body"></pre></div>';
+     '<div class="info"><div class="label"><span class="ptag">P'+(cell.slot+1)+'</span><span class="plabel"></span></div><pre class="body"></pre></div>';
    cell.img=cell.el.querySelector('img');
-   cell.labelEl=cell.el.querySelector('.label');
+   cell.labelEl=cell.el.querySelector('.plabel');
    cell.bodyEl=cell.el.querySelector('.body');
-   cell.labelEl.textContent=label||sid;
+   cell.labelEl.textContent=(label||sid);
  }
  function unmount(cell){
-   cell.sid=null; cell.img=null;
+   cell.sid=null; cell.label=null; cell.img=null; cell.state=null;
    cell.el.className='cell empty';
    cell.el.innerHTML='waiting…';
+   if(selected===cell.slot) updateDetail();
+ }
+ function selectSlot(i){
+   if(!cells[i].sid) return;   // don't select an empty slot
+   selected=i;
+   cells.forEach(c=>c.el.classList.toggle('selected',c.slot===selected&&!!c.sid));
+   updateDetail();
  }
  async function discover(){
    try{
      const list=await (await fetch('/sessions')).json();
      const active=list.slice(0,N);
      const ids=active.map(s=>s.sessionId);
-     // Drop cells whose session vanished.
      cells.forEach(c=>{ if(c.sid && !ids.includes(c.sid)) unmount(c); });
-     // Assign each active session to a cell (existing slot or first empty).
      active.forEach(s=>{
-       if(cells.some(c=>c.sid===s.sessionId)) return;
+       const existing=cells.find(c=>c.sid===s.sessionId);
+       if(existing){ existing.label=s.label; if(existing.labelEl) existing.labelEl.textContent=(s.label||s.sessionId); return; }
        const slot=cells.find(c=>c.sid===null);
        if(slot) mount(slot,s.sessionId,s.label);
      });
@@ -289,6 +399,7 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
      c.img.src='/screen.png?session='+encodeURIComponent(c.sid)+'&t='+Date.now();
      try{
        const s=await (await fetch('/state?session='+encodeURIComponent(c.sid))).json();
+       c.state=s;
        const p=s.player||{};
        c.bodyEl.innerHTML=
          '<span class="k">map   </span><span class="v">'+(s.area&&s.area.id)+'</span>\\n'+
@@ -298,6 +409,49 @@ VIEWER_HTML = """<!doctype html><html><head><meta charset="utf-8">
          '<span class="'+(s.in_battle?'batt':'k')+'">battle</span> <span class="v">'+(s.in_battle?'YES':'no')+'</span>';
      }catch(e){}
    }
+   if(selected>=0 && cells[selected].sid) updateDetail();
+ }
+ function fmtAction(a){
+   if(!a) return '—';
+   const t=a.type||'?';
+   if(t==='move') return 'move '+(a.direction||'');
+   return t;
+ }
+ async function updateDetail(){
+   const panel=document.getElementById('detail');
+   const c=(selected>=0)?cells[selected]:null;
+   if(!c || !c.sid){ panel.classList.remove('on'); return; }
+   const col=PCOLORS[c.slot+1];
+   panel.classList.add('on');
+   panel.style.setProperty('--dpc',col);
+   document.getElementById('d-tag').textContent='P'+(c.slot+1);
+   document.getElementById('d-tag').style.background=col;
+   document.getElementById('d-title').textContent=(c.label||c.sid);
+   const s=c.state||{};
+   const p=s.player||{};
+   const pos=p.position||{};
+   const party=(p.party||[]);
+   document.getElementById('d-state').innerHTML=
+     '<div><span class="k">session </span><span class="v">'+c.sid+'</span></div>'+
+     '<div><span class="k">map     </span><span class="v">'+(s.area&&s.area.id)+'</span></div>'+
+     '<div><span class="k">pos     </span><span class="v">x='+pos.x+' y='+pos.y+'</span></div>'+
+     '<div><span class="k">badges  </span><span class="v">'+p.badges+'</span></div>'+
+     '<div><span class="k">money   </span><span class="v">$'+p.money+'</span></div>'+
+     '<div><span class="'+(s.in_battle?'batt':'k')+'">battle  </span><span class="v">'+(s.in_battle?'YES':'no')+'</span></div>'+
+     '<div class="party">'+(party.length
+        ? party.map(m=>'<div class="pmon">'+m.name+' L'+m.level+' — '+m.hp+'</div>').join('')
+        : '<span class="k">no party</span>')+'</div>';
+   try{
+     const data=await (await fetch('/logs?session='+encodeURIComponent(c.sid)+'&limit=25')).json();
+     const log=data.log||[];
+     const body=document.getElementById('d-log');
+     if(!log.length){ body.innerHTML='<div class="le"><span class="le-n"></span><span class="le-msg">No actions yet.</span></div>'; return; }
+     // server returns oldest-first; show newest at the top of the list
+     body.innerHTML=log.slice().reverse().map((e,i)=>
+       '<div class="le'+(i===0?' now':'')+'"><span class="le-n">'+e.n+'</span>'+
+       '<span><span class="le-act">'+fmtAction(e.action)+'</span> '+
+       '<span class="le-msg">'+(e.message||'')+'</span></span></div>').join('');
+   }catch(e){}
  }
  discover(); tick();
  setInterval(discover,2000);
