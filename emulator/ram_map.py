@@ -336,10 +336,25 @@ _MAP_LEGEND = {
     _GLYPH_PLAYER: "you",
     _GLYPH_PATH: "walkable",
     _GLYPH_WALL: "wall/obstacle",
-    _GLYPH_WARP: "exit (door/stairs/warp)",
+    _GLYPH_WARP: "exit (door/stairs/warp) — see 'exits' for where each leads",
     _GLYPH_NPC: "person/sprite",
     _GLYPH_OFFMAP: "off-map",
 }
+
+# Destination-map names for the badge-1 arc. The RAM warp table records each
+# exit's destination map id (something a screenshot cannot show) — naming it
+# turns a bare '>' into "this door leads to Route 1". Unknown ids fall back to
+# "map <id>" rather than inventing a name.
+_MAP_NAMES = {
+    0: "Pallet Town", 1: "Viridian City", 2: "Pewter City", 3: "Cerulean City",
+    12: "Route 1", 13: "Route 2", 14: "Route 3",
+    37: "your house (1F)", 38: "your house (2F)", 39: "rival's house",
+    40: "Oak's Lab", 51: "Viridian Forest", 54: "Pewter Gym (Brock)",
+}
+
+
+def _map_name(map_id: int) -> str:
+    return _MAP_NAMES.get(map_id, f"map {map_id}")
 
 
 def _walkable_tile_ids(emu) -> set[int]:
@@ -376,7 +391,7 @@ def read_local_map(emu) -> dict:
     px, py = emu.read(PLAYER_X), emu.read(PLAYER_Y)
     position = {"x": px, "y": py}
     if emu.read(IN_BATTLE) != 0:
-        return {"ascii": "", "legend": {}, "position": position}
+        return {"ascii": "", "legend": {}, "position": position, "exits": []}
 
     tiles = emu.read_range(TILEMAP, TILEMAP_W * TILEMAP_H)
     walkable = _walkable_tile_ids(emu)
@@ -399,14 +414,19 @@ def read_local_map(emu) -> dict:
         if 0 <= row < TILEMAP_H and 0 <= col < TILEMAP_W:
             grid[row][col] = glyph
 
-    # Overlay warps/exits (map coords -> screen).
+    # Overlay warps/exits (map coords -> screen) and record where each leads.
+    # WARP_ENTRY layout (pokered): +0 y, +1 x, +2 destWarp, +3 destMap.
+    exits = []
     n_warps = emu.read(NUM_WARPS)
     if n_warps <= 32:
         for i in range(n_warps):
             base = WARP_ENTRIES + i * WARP_ENTRY_SIZE
             wy, wx = emu.read(base), emu.read(base + 1)
+            dest_map = emu.read(base + 3)
             col, row = _map_to_screen(wx, wy, px, py)
             put(col, row, _GLYPH_WARP)
+            exits.append({"at": {"x": wx, "y": wy},
+                          "to_map_id": dest_map, "to": _map_name(dest_map)})
 
     # Overlay NPC/object sprites (slots 1..15; slot 0 is the player).
     for s in range(1, NUM_SPRITE_SLOTS):
@@ -436,7 +456,8 @@ def read_local_map(emu) -> dict:
     rows = grid[top:bot + 1]
     ascii_map = "\n".join("".join(r) for r in rows)
 
-    return {"ascii": ascii_map, "legend": dict(_MAP_LEGEND), "position": position}
+    return {"ascii": ascii_map, "legend": dict(_MAP_LEGEND),
+            "position": position, "exits": exits}
 
 
 def read_state(emu) -> dict:
