@@ -10,9 +10,11 @@ Usage:
   python3 -m emulator.haiku_loop --base https://pokemon-llm-production.up.railway.app
 """
 import argparse
+import base64
 import json
 import re
 import subprocess
+import tempfile
 import time
 import urllib.request
 
@@ -54,11 +56,14 @@ def http_post(url, body):
         return json.load(r)
 
 
-def ask_haiku(system, user, model="claude-haiku-4-5-20251001"):
+def ask_haiku(system, user, model="claude-haiku-4-5-20251001", image_path=None):
+    cmd = ["claude", "-p", "--model", model, "--append-system-prompt", system]
+    if image_path:
+        # Vision: let the agent open the frame with its Read tool (keyless, on
+        # subscription auth — same way an interactive Claude views an image).
+        cmd += ["--allowedTools", "Read"]
     out = subprocess.run(
-        ["claude", "-p", "--model", model,
-         "--append-system-prompt", system],
-        input=user, capture_output=True, text=True, timeout=120,
+        cmd, input=user, capture_output=True, text=True, timeout=180,
     ).stdout
     m = re.search(r"\{.*\}", out, re.DOTALL)
     if not m:
@@ -76,12 +81,17 @@ def main():
     ap.add_argument("--model", default="claude-haiku-4-5-20251001")
     ap.add_argument("--max-turns", type=int, default=100000)
     ap.add_argument("--sleep", type=float, default=0.5)
+    ap.add_argument("--vision", action="store_true",
+                    help="Feed the actual screen PNG to the model each turn "
+                         "(the agent Reads it) instead of text state only.")
     args = ap.parse_args()
     base = args.base.rstrip("/")
 
     sess = http_post(f"{base}/session", {"label": args.label})
     sid = sess["sessionId"]
     print(f"[haiku] playing on session {sid} at {base}/", flush=True)
+
+    frame_path = f"{tempfile.gettempdir()}/pkmn-frame-{sid}.png" if args.vision else None
 
     hist = []
     for turn in range(args.max_turns):
@@ -91,10 +101,19 @@ def main():
             print(f"[haiku] state error: {e}", flush=True)
             time.sleep(3)
             continue
-        s.pop("screen_png_b64", None)
+        png_b64 = s.pop("screen_png_b64", None)
         h = "\n".join(hist[-6:]) or "(none)"
-        user = f"Recent actions:\n{h}\n\nState:\n{json.dumps(s)}\n\nYour action:"
-        action = ask_haiku(SYSTEM, user, args.model)
+        if frame_path and png_b64:
+            with open(frame_path, "wb") as fh:
+                fh.write(base64.b64decode(png_b64))
+            user = (f"A screenshot of the current screen is saved at {frame_path}. "
+                    f"Open it with your Read tool and LOOK before deciding — it "
+                    f"shows exit types, NPCs, furniture and menus the text can't.\n\n"
+                    f"Recent actions:\n{h}\n\nState (coords/party/battle):\n"
+                    f"{json.dumps(s)}\n\nYour action:")
+        else:
+            user = f"Recent actions:\n{h}\n\nState:\n{json.dumps(s)}\n\nYour action:"
+        action = ask_haiku(SYSTEM, user, args.model, frame_path)
         if not action:
             action = {"type": "a"}
         try:
