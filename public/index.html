@@ -932,12 +932,11 @@ async function fetchSlot(n) {
 }
 
 function bindFromList(summaries) {
-  // 'default' owns slot 1; the rest fill by most recent activity.
-  const rest = summaries.filter(s => s.sessionId !== 'default')
-                        .sort((a,b) => (b.lastActionAt||0) - (a.lastActionAt||0));
-  const def = summaries.find(s => s.sessionId === 'default');
-  if (def) bindSession(def);
-  for (const s of rest) bindSession(s);
+  // skip the 'default' session — it's a server artifact, not a real player.
+  // named sessions fill slots by most-recently-active.
+  const named = summaries.filter(s => s.sessionId !== 'default')
+                         .sort((a,b) => (b.lastActionAt||0) - (a.lastActionAt||0));
+  for (const s of named) bindSession(s);
 }
 
 function connect() {
