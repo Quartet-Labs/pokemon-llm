@@ -354,7 +354,8 @@ _MAP_LEGEND = {
     _GLYPH_PLAYER: "you",
     _GLYPH_PATH: "walkable",
     _GLYPH_WALL: "wall/obstacle",
-    _GLYPH_WARP: "exit (door/stairs/warp) — see 'exits' for where each leads",
+    _GLYPH_WARP: "exit — walk onto it (bottom-edge doors: keep walking south out) "
+                 "to use; see 'exits' for where each leads",
     _GLYPH_NPC: "person/sprite",
     _GLYPH_GRASS: "tall grass (wild encounters)",
     _GLYPH_COUNTER: "counter/furniture (talk across, can't walk on)",
@@ -440,6 +441,12 @@ def read_local_map(emu) -> dict:
 
     grid = [[classify_block(bc, br) for bc in range(BW)] for br in range(BH)]
 
+    # A dialogue/menu box covers the bottom ~6 tile rows (3 block rows) with text
+    # tiles that would otherwise read as a wall band. Blank them while it's up.
+    if emu.read(TEXTBOX_ID) != 0:
+        for br in range(BH - 3, BH):
+            grid[br] = [_GLYPH_OFFMAP] * BW
+
     def put(col, row, glyph):
         if 0 <= row < BH and 0 <= col < BW:
             grid[row][col] = glyph
@@ -497,9 +504,7 @@ def read_local_map(emu) -> dict:
     ascii_map = "\n".join("".join(r) for r in rows)
 
     return {"ascii": ascii_map, "legend": dict(_MAP_LEGEND),
-            "position": position, "exits": exits,
-            "_debug_anchor": {"sx": sx, "sy": sy, "acol": acol, "arow": arow,
-                              "pbc": pbc, "pbr": pbr, "px": px, "py": py}}
+            "position": position, "exits": exits}
 
 
 def read_state(emu) -> dict:
