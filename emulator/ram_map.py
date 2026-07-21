@@ -117,11 +117,20 @@ SPRITE_DATA1 = 0xC100        # +0x00 PictureID (0 = inactive slot)
 SPRITE_DATA2 = 0xC200        # +0x04 MapY, +0x05 MapX
 SPRITE_STRIDE = 0x10
 NUM_SPRITE_SLOTS = 16
-# Player on-screen anchor: in Gen-1 the player sprite's standing tile sits at
-# wTileMap column 8, row 7 (camera-centered; clamped near map edges but the
-# player's own coords stay authoritative, so we always draw '@' here).
+# Player on-screen anchor. The overworld camera keeps the player centered via
+# border-block padding, but a fixed (col,row) guess desyncs the '@'/'>'/'N'
+# overlays from the base tilemap. Instead read the player sprite's actual screen
+# position each frame (wSpriteStateData1 sprite 0: +0x04 Y px "4px above grid",
+# +0x06 X px "snaps to grid") and derive the standing tile — self-correcting.
+PLAYER_SCREEN_Y = 0xC104
+PLAYER_SCREEN_X = 0xC106
+# Fallbacks if the sprite read looks bad (mid-transition/off-screen).
 PLAYER_SCREEN_COL = 8
-PLAYER_SCREEN_ROW = 7
+PLAYER_SCREEN_ROW = 8
+
+# Tileset "talking-over" tiles (shop counters / tables you interact across):
+# up to 3 tile ids in the tileset header (0 = unused slot).
+COUNTER_TILES = 0xD532
 
 # Textbox state. wTextBoxID is nonzero while a textbox/menu is up; the printed
 # text lives in wTileMap itself as font tiles (0x80='A'.. see _tile_to_char).
@@ -338,6 +347,7 @@ _GLYPH_WALL = "#"
 _GLYPH_WARP = ">"     # door / stairs / any exit warp
 _GLYPH_NPC = "N"
 _GLYPH_GRASS = '"'    # tall grass (wild-encounter tile)
+_GLYPH_COUNTER = "c"  # shop counter / talk-over furniture
 _GLYPH_OFFMAP = " "   # outside the loaded room (black padding tiles)
 
 _MAP_LEGEND = {
@@ -347,6 +357,7 @@ _MAP_LEGEND = {
     _GLYPH_WARP: "exit (door/stairs/warp) — see 'exits' for where each leads",
     _GLYPH_NPC: "person/sprite",
     _GLYPH_GRASS: "tall grass (wild encounters)",
+    _GLYPH_COUNTER: "counter/furniture (talk across, can't walk on)",
     _GLYPH_OFFMAP: "off-map",
 }
 
@@ -405,6 +416,7 @@ def read_local_map(emu) -> dict:
     tiles = emu.read_range(TILEMAP, TILEMAP_W * TILEMAP_H)
     walkable = _walkable_tile_ids(emu)
     grass_tile = emu.read(GRASS_TILE)
+    counters = {emu.read(COUNTER_TILES + i) for i in range(3)} - {0}
 
     # Base layer from the tilemap.
     grid = []
@@ -416,6 +428,8 @@ def read_local_map(emu) -> dict:
                 row.append(_GLYPH_OFFMAP)
             elif grass_tile != 0xFF and t == grass_tile:
                 row.append(_GLYPH_GRASS)   # walkable, but flag encounters
+            elif t in counters:
+                row.append(_GLYPH_COUNTER)
             elif t in walkable:
                 row.append(_GLYPH_PATH)
             else:
@@ -426,6 +440,19 @@ def read_local_map(emu) -> dict:
         if 0 <= row < TILEMAP_H and 0 <= col < TILEMAP_W:
             grid[row][col] = glyph
 
+    # Anchor overlays to the player's ACTUAL on-screen tile (read from the sprite
+    # screen position) so '@'/'>'/'N' land on the same tiles as the base tilemap.
+    # X snaps to the grid; Y sits 4px above it. Fall back to the centered guess if
+    # the read is out of range (e.g. mid-warp fade).
+    sy, sx = emu.read(PLAYER_SCREEN_Y), emu.read(PLAYER_SCREEN_X)
+    acol = sx // 8
+    arow = (sy + 4) // 8
+    if not (0 <= acol < TILEMAP_W and 0 <= arow < TILEMAP_H):
+        acol, arow = PLAYER_SCREEN_COL, PLAYER_SCREEN_ROW
+
+    def to_screen(mx, my):
+        return (acol + (mx - px), arow + (my - py))
+
     # Overlay warps/exits (map coords -> screen) and record where each leads.
     # WARP_ENTRY layout (pokered): +0 y, +1 x, +2 destWarp, +3 destMap.
     exits = []
@@ -435,7 +462,7 @@ def read_local_map(emu) -> dict:
             base = WARP_ENTRIES + i * WARP_ENTRY_SIZE
             wy, wx = emu.read(base), emu.read(base + 1)
             dest_map = emu.read(base + 3)
-            col, row = _map_to_screen(wx, wy, px, py)
+            col, row = to_screen(wx, wy)
             put(col, row, _GLYPH_WARP)
             exits.append({"at": {"x": wx, "y": wy},
                           "to_map_id": dest_map, "to": _map_name(dest_map)})
@@ -450,11 +477,11 @@ def read_local_map(emu) -> dict:
         # Sprite map coords are offset by 4 (the 4-tile border pokered adds); the
         # player's own MapX/MapY carry the same +4, so differencing cancels it.
         pmy, pmx = emu.read(SPRITE_DATA2 + 0x04), emu.read(SPRITE_DATA2 + 0x05)
-        col, row = _map_to_screen(px + (smx - pmx), py + (smy - pmy), px, py)
+        col, row = to_screen(px + (smx - pmx), py + (smy - pmy))
         put(col, row, _GLYPH_NPC)
 
     # Player last, so it wins any overlap.
-    put(PLAYER_SCREEN_COL, PLAYER_SCREEN_ROW, _GLYPH_PLAYER)
+    put(acol, arow, _GLYPH_PLAYER)
 
     # Trim fully-off-map border rows/cols so the room isn't buried in blanks.
     def row_blank(row):
