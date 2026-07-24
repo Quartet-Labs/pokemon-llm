@@ -16,3 +16,6 @@ roms/
 
 # PyBoy savestate (regenerate via `python -m emulator.make_state`)
 emulator/overworld.state
+
+# Claude Code agent scratch (worktrees, local config)
+.claude/
