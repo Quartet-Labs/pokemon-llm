@@ -1,0 +1,11 @@
+.git
+node_modules
+.venv
+roms
+public
+game
+scripts
+docs
+*.md
+.claude
+emulator/__pycache__

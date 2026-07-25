@@ -17,6 +17,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -64,6 +65,10 @@ TOOLS = [{
 # Keys we forward to the game API for each action type (drop the rest).
 ACTION_KEYS = {"type", "direction", "species", "move_index", "item",
                "target_index", "ball", "party_index"}
+
+# How many turn-triplets (user + assistant + tool) to keep in the sliding
+# context window. Older turns are pruned to keep the KV cache under num_ctx.
+CONTEXT_TURNS = 20
 
 SYSTEM = """You are playing a Gen-1 Pokemon game. Each turn you are given the game \
 state and you MUST respond by calling the submit_action tool exactly once. Do not \
@@ -117,43 +122,67 @@ def compact_state(view):
         "money": p.get("money"),
         "bag": p.get("bag"),
         "party": p.get("party"),
+        "walkable": p.get("walkable"),
     }
+    keep["map"] = {k: v for k, v in (view.get("map") or {}).items() if k != "ascii"} or None
     if "battle" in view:
         keep["battle"] = view["battle"]
-    return keep
+    return {k: v for k, v in keep.items() if v is not None}
 
 
-def ollama_decide(ollama, model, system, user):
+def _strip_think(content):
+    """Remove <think>...</think> blocks so reasoning chains don't inflate history."""
+    return re.sub(r"<think>.*?</think>", "", content or "", flags=re.DOTALL).strip()
+
+
+def _trim_conversation(conv, system_msg):
+    """Keep system message + last CONTEXT_TURNS turn-triplets (user+assistant+tool).
+    Each turn appends 3 messages; prune oldest triplets when we exceed the window."""
+    # Messages after the system message are turn triplets of size 3.
+    turn_messages = conv[1:]
+    if len(turn_messages) > CONTEXT_TURNS * 3:
+        turn_messages = turn_messages[-(CONTEXT_TURNS * 3):]
+    return [system_msg] + turn_messages
+
+
+def ollama_decide(ollama, model, conv):
     """Ask the local model for one action via a native tool call.
 
-    Returns the action dict (from tool-call args) or None if the model produced
-    no usable tool call. Prefers native tool_calls; falls back to parsing a JSON
-    object out of message content only if the model returned no tool_calls.
+    Takes the full persistent conversation list `conv` (system + prior turns).
+    Appends the assistant reply to `conv` in place (thinking stripped).
+    Returns the action dict or None.
+
+    Thinking is enabled — qwen3 will reason before each tool call. The
+    <think>…</think> block is stripped before appending to history so it
+    doesn't inflate the context window across turns.
+
+    num_ctx is raised to 8192 to accommodate the persistent conversation.
+    The 32B model's KV cache at this context (~2 GB) still fits in 24 GB
+    alongside its weights (~20 GB); turns are ~5-10 s each.
     """
-    # qwen3 and other hybrid-reasoning models emit long think-chains before the
-    # tool call by default (60-1400s/turn, wildly variable). "/no_think" disables
-    # that per-message and still returns a clean tool call in a few seconds. (The
-    # native `think: false` param can't be combined with `tools` here — it returns
-    # an empty response — so we steer via the prompt instead.)
     body = {
         "model": model,
         "stream": False,
         "keep_alive": "30m",
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": "/no_think\n" + user},
-        ],
+        "messages": conv,
         "tools": TOOLS,
-        # num_ctx 4096 keeps a 32B model's KV cache small enough to fit fully in a
-        # 24GB GPU alongside the desktop — without it qwen3:32b spills and runs at
-        # ~40s/turn instead of ~5s. Game prompts are well under 4k tokens.
-        "options": {"temperature": 0.4, "num_ctx": 4096},
+        "options": {"temperature": 0.4, "num_ctx": 8192},
     }
     resp = http_post(f"{ollama}/api/chat", body)
     msg = resp.get("message", {}) or {}
-    calls = msg.get("tool_calls") or []
-    if calls:
-        args = calls[0].get("function", {}).get("arguments")
+
+    # Build a history-safe assistant message: strip thinking chains from content
+    # so older turns don't balloon the context, but keep the tool_calls intact.
+    content_clean = _strip_think(msg.get("content") or "")
+    assistant_entry = {"role": "assistant", "content": content_clean}
+    tool_calls = msg.get("tool_calls") or []
+    if tool_calls:
+        assistant_entry["tool_calls"] = tool_calls
+    conv.append(assistant_entry)
+
+    # Parse the action from the tool call.
+    if tool_calls:
+        args = tool_calls[0].get("function", {}).get("arguments")
         if isinstance(args, str):
             try:
                 args = json.loads(args)
@@ -161,11 +190,10 @@ def ollama_decide(ollama, model, system, user):
                 args = None
         if isinstance(args, dict) and args.get("type"):
             return {k: v for k, v in args.items() if k in ACTION_KEYS and v is not None}
+
     # Fallback: some models emit the action as JSON text instead of a tool call.
-    content = (msg.get("content") or "").strip()
-    if content:
-        import re
-        m = re.search(r"\{.*\}", content, re.DOTALL)
+    if content_clean:
+        m = re.search(r"\{.*\}", content_clean, re.DOTALL)
         if m:
             try:
                 args = json.loads(m.group(0))
@@ -234,7 +262,11 @@ def main():
     print(f"[ollama-runner] session={sid} seed={seed} model={args.model}", flush=True)
     print(f"[ollama-runner] watch: {base}/", flush=True)
 
-    history = []
+    # Persistent conversation: grows each turn with user→assistant→tool triplets.
+    # Sliding window (_trim_conversation) keeps it under CONTEXT_TURNS * 3 messages.
+    system_msg = {"role": "system", "content": SYSTEM}
+    conv = [system_msg]
+
     reached = False
     turn = 0
     consecutive_errors = 0
@@ -257,17 +289,19 @@ def main():
             record({"event": "goal_reached", "turn": turn, "badges": badges})
             break
 
-        hist_txt = "\n".join(
-            f"  {i+1}. did {json.dumps(h[0])} -> {h[1]}" for i, h in enumerate(history[-10:])
-        ) or "  (none yet)"
-        user = (f"Recent actions:\n{hist_txt}\n\n"
-                f"Current state:\n{json.dumps(compact_state(view))}\n\n"
-                f"Call submit_action with your one action for this turn.")
+        # Append the current state as the next user message, then trim the window.
+        user_content = (f"Turn {turn}. Current state:\n{json.dumps(compact_state(view))}\n\n"
+                        f"Call submit_action with your one action for this turn.")
+        conv.append({"role": "user", "content": user_content})
+        conv = _trim_conversation(conv, system_msg)
 
         try:
-            action = ollama_decide(ollama, args.model, SYSTEM, user)
+            action = ollama_decide(ollama, args.model, conv)
         except Exception as e:
             record({"event": "ollama_error", "turn": turn, "error": str(e)})
+            # Pop the user message we just added so next retry doesn't double it.
+            if conv and conv[-1]["role"] in ("user", "assistant"):
+                conv.pop()
             time.sleep(3)
             consecutive_errors += 1
             if consecutive_errors > 20:
@@ -275,8 +309,10 @@ def main():
             continue
 
         if not action:
-            # No usable tool call. Don't play for the agent — log and re-request.
+            # No usable tool call. Log and skip — don't send None to the server.
             record({"event": "no_tool_call", "turn": turn})
+            # Append a tool message noting the failure so the model knows.
+            conv.append({"role": "tool", "content": "No valid tool call received. Try again next turn."})
             time.sleep(args.sleep)
             continue
 
@@ -284,6 +320,7 @@ def main():
             result = http_post(f"{base}/action?session={sid}", action, token=token)
         except Exception as e:
             record({"event": "action_error", "turn": turn, "action": action, "error": str(e)})
+            conv.append({"role": "tool", "content": f"Action failed: {e}"})
             time.sleep(1)
             consecutive_errors += 1
             if consecutive_errors > 20:
@@ -291,17 +328,20 @@ def main():
             continue
 
         consecutive_errors = 0
+
+        # Append tool result so the model sees what happened.
+        result_msg = result.get("message") or (result.get("state") or {}).get("message") or ""
+        tool_content = result_msg if result_msg else json.dumps({
+            k: result.get(k) for k in ("ok", "moved", "reason", "pressed", "waited", "error")
+            if result.get(k) is not None
+        })
+        conv.append({"role": "tool", "content": tool_content or "ok"})
+
         if result.get("halted") or result.get("outcome") not in (None, "ongoing"):
             record({"event": "server_stop", "turn": turn, "result": result})
             reached_badge = str(result.get("outcome", "")).startswith("badge")
             if reached_badge:
                 reached = True
-            # Terminal reward: the /action payload here is a stop/summary object,
-            # not a full view. `view` (from /state) is the last real observation;
-            # score the terminal transition against the stop message so a
-            # badge-earning final turn still records its BADGE reward. We hand
-            # compute_reward a synthetic result_view that carries the (possibly
-            # bumped) badge count and the terminal area so the delta is correct.
             if traj:
                 stop_msg = result.get("message") or ""
                 stop_view = {
@@ -311,24 +351,19 @@ def main():
                         "badges": badges + (1 if reached_badge else 0),
                         "position": (view.get("player") or {}).get("position"),
                     },
-                    # No map on a stop payload -> no new-tile signal, which is
-                    # correct for a terminal transition.
                 }
                 r, bd = reward_tracker.step(view, action, stop_view, stop_msg)
                 traj.log_turn(turn, state=view, action=action, reward=r,
                               reward_breakdown=bd, done=True)
             break
 
-        # Normal turn: `result` IS the next full view (server returns getView()).
-        msg = result.get("message") or (result.get("state") or {}).get("message") or ""
+        # Normal turn.
         if traj:
-            r, bd = reward_tracker.step(view, action, result, msg)
-            # `state` is the FULL view the model saw this turn (view from /state),
-            # so the row is replayable as an SFT prompt.
+            r, bd = reward_tracker.step(view, action, result, result_msg)
             traj.log_turn(turn, state=view, action=action, reward=r,
                           reward_breakdown=bd, done=False)
-        history.append((action, msg[:120]))
-        record({"event": "turn", "turn": turn, "badges": badges, "action": action, "msg": msg[:160]})
+        record({"event": "turn", "turn": turn, "badges": badges, "action": action,
+                "msg": result_msg[:160]})
         time.sleep(args.sleep)
 
     if traj:
