@@ -153,6 +153,10 @@ TOOLS = [{
 # Keys we forward to the game API (drop everything else the model may echo).
 ACTION_KEYS = {"type", "direction", "move_index", "item", "ball", "party_index"}
 
+# How many recent actions the per-turn prompt shows. build_sft.py reads this off
+# the module so an offline rebuild windows the history exactly like the live run.
+HISTORY_WINDOW = 8
+
 
 def _clean_action(a):
     """Filter one model-emitted action dict down to the API keys, dropping
@@ -267,6 +271,24 @@ def compact_state(view):
     if nav:
         keep["view"] = nav
     return keep
+
+
+def build_user_prompt(view, history):
+    """The per-turn user message. history is [(action_dict, feedback_str), ...];
+    only the feedback line is rendered, over the last HISTORY_WINDOW turns.
+
+    Lives here, and is called by main() below, so that offline consumers
+    (scripts/build_sft.py building SFT prompts) can produce byte-identical text
+    by CALLING it rather than transcribing it. Do not inline this back into the
+    loop — a copy in build_sft would silently drift the training distribution
+    away from what the model actually sees at inference."""
+    window = history[-HISTORY_WINDOW:]
+    hist_txt = "\n".join(f"  {i+1}. {h[1]}" for i, h in enumerate(window)) \
+        or "  (none yet)"
+    return (f"Recent actions:\n{hist_txt}\n\n"
+            f"Current state:\n{json.dumps(compact_state(view))}\n\n"
+            f"Call submit_action (one action) or submit_actions (a queued "
+            f"sequence) for this turn.")
 
 
 def _feedback(action, result):
@@ -463,12 +485,7 @@ def main():
             break
 
         # 3) decide — the model may return ONE action or a queued SEQUENCE.
-        hist_txt = "\n".join(f"  {i+1}. {h[1]}" for i, h in enumerate(history[-8:])) \
-            or "  (none yet)"
-        user = (f"Recent actions:\n{hist_txt}\n\n"
-                f"Current state:\n{json.dumps(compact_state(view))}\n\n"
-                f"Call submit_action (one action) or submit_actions (a queued "
-                f"sequence) for this turn.")
+        user = build_user_prompt(view, history)
         try:
             if args.claude:
                 acts, goal = claude_decide(args.claude_model, SYSTEM, user)
@@ -535,8 +552,11 @@ def main():
             result_msg = fb.split(": ", 1)[-1]
             if traj:
                 r, bd = reward_tracker.step(prev_state, s_action, s_state, result_msg)
+                # `feedback` is what lands in history[] and therefore in the next
+                # turn's "Recent actions" block — build_sft.py needs it to
+                # reconstruct prompts byte-identically.
                 traj.log_turn(turn, state=prev_state, action=s_action, reward=r,
-                              reward_breakdown=bd, done=False)
+                              reward_breakdown=bd, done=False, feedback=fb)
             history.append((s_action, fb))
             pos = ((s_state.get("player") or {}).get("position")) or {}
             print(f"[emu-runner] t{turn} {json.dumps(s_action)} -> {fb} "
