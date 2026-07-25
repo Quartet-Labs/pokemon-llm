@@ -46,7 +46,8 @@ copy of the prompt template to drift. Do not inline it back into the loop.
 PYTHONPATH=. python3 emulator/server.py            # PORT=3100 by default
 
 # 2. record a scripted real-game run
-python3 scripts/harvest-emulator.py --base http://127.0.0.1:3100
+python3 scripts/harvest-emulator.py --base http://127.0.0.1:3100 \
+    --script scripts/routes/opening.json
 #    -> data/trajectories/<sessionId>.jsonl
 
 # 3. build training rows
@@ -59,6 +60,112 @@ through the *same* `steps` walk, `_feedback`, `RewardTracker` and
 `TrajectoryLogger` the live runner uses, so its rows are indistinguishable from a
 real model run's. Hand-authored routes rotted on the JS engine because the engine
 kept changing; a route against a fixed ROM and a fixed savestate cannot.
+
+With no `--script` the harvest runs an 8-row smoke route around the bedroom.
+That is a wiring check, not data. `scripts/routes/opening.json` is the real one.
+
+## Routes
+
+A route is a JSON list of steps. Raw actions still work, but a route of any
+length cannot be written as raw actions, because the emulator reports a 10x9
+**viewport**, not a map: a destination eight tiles away is not visible when the
+route is authored. So three step kinds name an intent and resolve it live.
+
+| Step | Does |
+|---|---|
+| `{"type": "a"}` | one action, as before |
+| `[{...}, {...}]` | one queued `submit_actions` batch, as before |
+| `{"goto": {"x": 6, "y": 2}}` | walk there, re-planning every leg |
+| `{"exit_map": 37}` / `{"exit": "oak"}` | walk to the exit leading to that map |
+| `{"press": A, "until": C, "max": N}` | repeat A until the world satisfies C |
+| `{"_": "..."}` | comment (JSON has none) |
+
+`until` conditions are ANDed, and an unknown key raises rather than passing —
+a condition that can never be true otherwise looks exactly like one that is
+always true. The vocabulary is `area`, `screen`, `in_battle`, `has_party`,
+`battle_ready`, `dialogue`, `pos` (`COND_KEYS` in `harvest-emulator.py`).
+
+`press`/`until` exists because **cutscene lengths are not constants**. Oak's
+speech plus the walk to his lab measured 37 A-presses on one run; any text-speed
+or routing difference moves it. A route that hard-codes the count desynchronises
+silently and every waypoint after it is wrong.
+`{"press": {"type":"a"}, "until": {"area": 40}}` cannot.
+
+`press` also takes a *list*, run one action per batch — that is how the starter
+is picked up: `[move east, a]` repeated until `has_party`. During the cutscene
+the move is a no-op and the A advances text; once Red is free the move turns him
+to face the ball table and the A takes the ball. One step, no counting.
+
+Cycling beats sequencing wherever "the cutscene is over" has no observable. The
+walk out of the lab is `[a, move south]` until `in_battle`: the A carries the
+nickname prompt and the rival's speech, the south does nothing until Red is
+free and then walks him into the rival's challenge.
+
+> **Do not gate on `{"dialogue": false}` to mean "the scene ended."** It is true
+> for a frame *between* two text boxes. Used as the gate for leaving Oak's lab
+> it fired mid-nickname-screen; the walk-out was then spent against a menu and
+> the run mashed A at the ball table for its remaining 60 cycles instead of ever
+> reaching the battle. Gate on a world fact — `area`, `has_party`, `in_battle`.
+
+### Navigation (`scripts/navigate.py`)
+
+`goto`/`exit` plan against whatever the server currently reports: BFS the
+visible window for the goal; if it is not visible, walk to the visible cell that
+gets closest and look again. Two things the window gets wrong, both found by
+running it:
+
+- **Blank is not "off map."** The far rows of the window decode as black padding
+  while the room continues underneath — standing at (3,3) in Red's house, y=5
+  and y=6 render blank and are walkable. Treating blank as wall deadlocks one
+  tile short of the front door, so blank is *unknown* and the emulator rules on
+  it.
+- **The sprite overlay misses NPCs.** Oak and the rival stand on cells the map
+  renders as plain floor, so BFS routes straight through a body. Every refused
+  move is fed back into a blocked-cell set, which is what stops the planner
+  re-deriving the same illegal step — before that it burned ten identical
+  wall-bumps against Oak's lab door. The harvest also gives up on a waypoint
+  after two legs that move Red nowhere, and says so.
+
+Stalling on a waypoint is often the *correct* outcome and the route says so
+where it is expected: Oak intercepts before the Route 1 mouth, and the rival
+blocks the lab door to start his battle. Both are triggers, not failures.
+
+### Known blocker: `battle_move` cannot reach the move list
+
+`scripts/routes/opening.json` walks the whole opening and reaches the rival
+battle, but produces **no battle rows**, because `emulator/actions.py`
+`_battle_move` fails every call once a battle is under way. Found while
+harvesting; reproduces on a clean run.
+
+`_battle_move` assumes it starts on the battle main menu and nothing ever
+restores that assumption. Anything that mashes A — a model clearing the battle
+intro text, or the harvest's own `until battle_ready` step — lands on FIGHT and
+opens the move list. `_menu_select` then drives the move list's cursor while
+believing it is on FIGHT/PKMN/ITEM/RUN, oscillates between two slots
+(`cursor_path: [1,2,1,2,...]`, `max_item: 3`) and gives up. Every later call
+repeats it, so **the agent can never deliberately attack again for the rest of
+the battle** — the failure is permanent, not transient.
+
+It is worse than it looks from the HP bar. Damage does still land, because the A
+press intended to select FIGHT falls through onto whichever move the cursor
+happens to be on — so the battle progresses while **`move_index` is silently
+ignored**. A green-looking battle is not evidence this works.
+
+Fixing it needs a reliable "which menu is open" discriminator. `wMaxMenuItem` is
+not one: it reads 3 for the battle main menu *and* for the move list of a
+four-move battler, and it still read 3 immediately after a successful-looking
+FIGHT selection. A back-out-with-B-first patch was tried and reverted — it made
+damage land more often without ever making `move_index` honoured, which is a
+more dangerous failure than the loud one.
+
+### Yield
+
+Blocked and rejected rows are dropped from training (they are the emulator's
+wall-bump signal) but kept in the history window, so a route's usable row count
+is lower than its recorded turn count. The deliberate "face the counter" moves
+in the starter pickup are recorded as BLOCKED and dropped along with real
+wall-bumps — the feedback string cannot tell them apart. Read the harvest's
+final `wrote N rows (M blocked/rejected)` line for the split.
 
 Trajectories written before `feedback` logging existed are **rejected** rather
 than silently used — without those strings the "Recent actions" block of every
