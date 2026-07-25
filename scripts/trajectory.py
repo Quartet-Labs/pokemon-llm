@@ -56,13 +56,21 @@ class TrajectoryLogger:
         self._fh.write(json.dumps(obj) + "\n")
         self._fh.flush()
 
-    def log_turn(self, turn, state, action, reward, reward_breakdown, done):
+    def log_turn(self, turn, state, action, reward, reward_breakdown, done,
+                 feedback=None):
         """Write one per-turn training row.
 
         `state` MUST be the full view dict the model saw this turn (the SFT
         prompt), not a compacted copy — the trajectory has to be replayable.
+
+        `feedback` is the one-line result string the runner appends to its
+        `history` window (e.g. "north: moved to (5,6)"). It is REQUIRED for a row
+        to be replayable as an SFT prompt: the runner renders its "Recent
+        actions" block from those strings, so without it the prompt a *later*
+        turn saw cannot be reconstructed. Optional in the signature only for
+        back-compat with trajectories written before it existed.
         """
-        self._write({
+        row = {
             "kind": "turn",
             "turn": turn,
             "state": state,
@@ -70,7 +78,10 @@ class TrajectoryLogger:
             "reward": reward,
             "reward_breakdown": reward_breakdown,
             "done": bool(done),
-        })
+        }
+        if feedback is not None:
+            row["feedback"] = feedback
+        self._write(row)
         # Update running totals for the summary.
         self._total_reward += float(reward)
         self._turns += 1

@@ -1,10 +1,70 @@
-# SFT data pipeline — oracle playthroughs → training rows
+# SFT data pipeline — playthroughs → training rows
 
-Turns deterministic "oracle" playthroughs into supervised imitation data:
+Turns deterministic playthroughs into supervised imitation data:
 `(prompt, target-action)` pairs in the **exact shape the live model sees**, so a
 small model can be QLoRA fine-tuned to play competently before any RL.
 
-## Two stages
+## Two sources, because there are two runners
+
+`build_sft.py --source` picks the stack. This is not a convenience flag — the two
+runners share no SYSTEM prompt, tool schema, action enum, or history render, so
+building with the wrong one trains the model on a grammar it will never be asked
+to speak.
+
+| | `--source emulator` (default) | `--source oracle` |
+|---|---|---|
+| Stack | PyBoy / real Pokémon Blue — **live** | Boxed JS engine — legacy |
+| Prompt from | `emulator/runner.py` | `scripts/ollama-runner.py` |
+| Harvest with | `scripts/harvest-emulator.py` | `scripts/harvest-oracle.js` |
+| History window | 8, feedback line only | 10, `did <action> -> <msg>` |
+| Blocked steps | dropped as rows, **kept in history** | dropped entirely |
+
+The emulator path is P6 of `docs/emulator-rewrite-plan.md`. The oracle path stays
+because the plan boxes the JS engine rather than deleting it — but note its
+committed `data/trajectories/sft.jsonl` is stale: `ollama-runner.py` has changed
+since it was generated, so those rows no longer match that runner's prompt.
+
+### Why blocked steps stay in history (emulator only)
+
+`emulator/runner.py` appends **every** executed sub-step to `history[]`, blocked
+ones included — `"south: BLOCKED (wall or facing)"` is deliberate anti-wall-bump
+signal the model sees at inference. The row itself is still dropped from training
+(imitating a wall-bump teaches wall-bumping), but it must remain in the *next*
+prompt's "Recent actions" block or the training prompt silently disagrees with
+the live one.
+
+### No transcribed prompts
+
+`emulator/runner.py` exposes `build_user_prompt(view, history)` and calls it from
+its own main loop; `build_sft.py` **calls that same function**. There is no second
+copy of the prompt template to drift. Do not inline it back into the loop.
+
+## Emulator quickstart
+
+```
+# 1. serve the emulator (Pi)
+PYTHONPATH=. python3 emulator/server.py            # PORT=3100 by default
+
+# 2. record a scripted real-game run
+python3 scripts/harvest-emulator.py --base http://127.0.0.1:3100
+#    -> data/trajectories/<sessionId>.jsonl
+
+# 3. build training rows
+python3 scripts/build_sft.py --source emulator \
+    --in data/trajectories/<sessionId>.jsonl --out data/trajectories/sft.jsonl
+```
+
+`harvest-emulator.py` swaps only the brain: it drives a scripted action list
+through the *same* `steps` walk, `_feedback`, `RewardTracker` and
+`TrajectoryLogger` the live runner uses, so its rows are indistinguishable from a
+real model run's. Hand-authored routes rotted on the JS engine because the engine
+kept changing; a route against a fixed ROM and a fixed savestate cannot.
+
+Trajectories written before `feedback` logging existed are **rejected** rather
+than silently used — without those strings the "Recent actions" block of every
+prompt after the first cannot be reconstructed.
+
+## Two stages (oracle path)
 
 ### 1. `scripts/harvest-oracle.js` (Node)
 
