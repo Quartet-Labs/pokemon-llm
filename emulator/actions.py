@@ -526,17 +526,34 @@ def _battle_move(emu, move_index: int) -> dict:
     pp1 = _battle_pp(emu)
     enemy_hp1 = ram_map._be16(emu, ram_map.ENEMY_MON_HP)
     spent = [i for i in range(4) if pp1[i] < pp0[i]]
-    return {"ok": True, "move_index": move_index,
-            "move_id": (_battle_moves(emu) or [None] * 4)[move_index]
-                       if move_index < len(_battle_moves(emu)) else None,
-            "pp_before": pp0, "pp_after": pp1,
-            # The verification that matters: exactly the requested slot spent PP.
-            "move_index_honoured": spent == [move_index],
-            "pp_spent_slots": spent,
-            "enemy_hp_before": enemy_hp0, "enemy_hp_after": enemy_hp1,
-            "enemy_hp_changed": enemy_hp1 != enemy_hp0,
-            "still_in_battle": bool(_in_battle(emu)),
-            "fight_select": fight, "move_cursor_path": pick.get("cursor_path")}
+    # The verification that matters: exactly the requested slot spent PP.
+    #
+    # This decides `ok`, it does not merely annotate it. The original bug was
+    # not that battle_move failed — it was that it *reported success* while a
+    # stray A press fired whatever move the cursor happened to sit on, so a
+    # moving HP bar looked like proof and `move_index` was silently ignored.
+    # Returning ok=True alongside move_index_honoured=False rebuilds exactly
+    # that trap for any caller that checks `ok` and nothing else, which is
+    # every caller we have. Wrong move fired == failed call.
+    honoured = spent == [move_index]
+    known = _battle_moves(emu)
+    result = {"ok": honoured, "move_index": move_index,
+              "move_id": known[move_index] if move_index < len(known) else None,
+              "pp_before": pp0, "pp_after": pp1,
+              "move_index_honoured": honoured,
+              "pp_spent_slots": spent,
+              "enemy_hp_before": enemy_hp0, "enemy_hp_after": enemy_hp1,
+              "enemy_hp_changed": enemy_hp1 != enemy_hp0,
+              "still_in_battle": bool(_in_battle(emu)),
+              "fight_select": fight, "move_cursor_path": pick.get("cursor_path")}
+    if not honoured:
+        result["partial"] = True
+        result["reason"] = (
+            f"move {move_index} was selected but slot(s) {spent} spent PP"
+            if spent else
+            f"move {move_index} was selected but no slot spent PP — "
+            "the move did not fire")
+    return result
 
 
 def _run(emu) -> dict:

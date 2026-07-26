@@ -20,7 +20,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from emulator import actions, ram_map  # noqa: E402
+from emulator import actions, ram_map, runner  # noqa: E402
 
 
 class FakeEmu:
@@ -111,6 +111,38 @@ class FakeEmu:
                 self.text_left = self.result_text_presses
             elif button == "b":
                 self._set_menu("main")
+
+
+class StrayPressEmu(FakeEmu):
+    """A Game Boy reproducing the ORIGINAL bug: the A press falls through onto
+    a fixed move slot regardless of where the cursor was driven.
+
+    That is what the real emulator did before the 2026-07-25 fix, and it is the
+    shape of any future regression here — the cursor work is discarded, the
+    move still fires, HP still moves. `fires_slot=None` models the other
+    failure: the press lands on nothing and no move goes off at all.
+    """
+
+    def __init__(self, menu="moves", fires_slot=1, enemy_hp=20, **kw):
+        self.fires_slot = fires_slot
+        super().__init__(menu, **kw)
+        # Big-endian pair; a live enemy so the stray move has HP to take off.
+        self.mem[ram_map.ENEMY_MON_HP] = enemy_hp >> 8
+        self.mem[ram_map.ENEMY_MON_HP + 1] = enemy_hp & 0xFF
+
+    def press(self, button, hold=8, release=8):
+        if self.menu == "moves" and button == "a" and not self.text_left:
+            self.presses.append(button)
+            if self.fires_slot is not None:
+                self.fired = self.fires_slot
+                self.mem[ram_map.BATTLE_MON_PP + self.fires_slot] -= 1
+                # Damage lands on the wrong move — the HP bar is not evidence.
+                self.mem[ram_map.ENEMY_MON_HP + 1] = max(
+                    0, self.read(ram_map.ENEMY_MON_HP + 1) - 5)
+            self.mem[ram_map.TEXTBOX_ID] = 1
+            self.text_left = self.result_text_presses
+            return
+        super().press(button, hold=hold, release=release)
 
 
 class TestBattleMenuDiscriminator(unittest.TestCase):
@@ -206,6 +238,51 @@ class TestBattleMove(unittest.TestCase):
         res = actions._battle_move(emu, 1)          # GROWL: no damage
         self.assertFalse(res["enemy_hp_changed"])
         self.assertTrue(res["move_index_honoured"])
+
+    def test_wrong_move_firing_is_a_FAILED_call_not_an_annotated_success(self):
+        """REGRESSION, and the one that let the bug hide for a whole run.
+
+        `StrayPressEmu` reproduces the original defect exactly: the A press
+        meant for the move list falls through onto whichever move the cursor
+        sits on, so damage lands and HP moves while `move_index` is ignored.
+
+        The macro may not report that as success. It once returned ok=True with
+        move_index_honoured=False — and since no caller reads that second
+        field, an unhonoured move was indistinguishable from an honoured one.
+        The loud failure traded for a quiet one.
+        """
+        emu = StrayPressEmu("moves", fires_slot=1)
+        res = actions._battle_move(emu, 0)
+        self.assertFalse(res.get("ok"), res)
+        self.assertTrue(res.get("partial"), res)
+        self.assertFalse(res.get("move_index_honoured"), res)
+        self.assertEqual(res["pp_spent_slots"], [1])
+        self.assertIn("spent PP", res.get("reason", ""))
+        # The HP bar moved. That is precisely why it is not the success signal.
+        self.assertTrue(res["enemy_hp_changed"], res)
+
+    def test_a_move_that_never_fires_is_also_a_failure(self):
+        """No slot spends PP: the selection went nowhere. Distinct reason, same
+        verdict — the caller must not record it as a turn taken."""
+        emu = StrayPressEmu("moves", fires_slot=None)
+        res = actions._battle_move(emu, 0)
+        self.assertFalse(res.get("ok"), res)
+        self.assertEqual(res["pp_spent_slots"], [])
+        self.assertIn("did not fire", res.get("reason", ""))
+
+    def test_the_failure_reason_survives_into_the_training_text(self):
+        """The verdict is only worth computing if it reaches the model.
+
+        `_feedback` renders the recent-action log that goes into the SFT prompt.
+        It used to read only `error`, which the macros never set on a mid-action
+        failure, so every one of them trained as a featureless "rejected
+        (failed)". A wrong-slot move has to be legible as a wrong-slot move.
+        """
+        res = actions._battle_move(StrayPressEmu("moves", fires_slot=1), 0)
+        line = runner._feedback({"type": "battle_move", "move_index": 0}, res)
+        self.assertIn("rejected", line)
+        self.assertIn("spent PP", line)
+        self.assertNotIn("failed", line)
 
     def test_rejects_out_of_range_index(self):
         self.assertIn("error", actions._battle_move(FakeEmu("main"), 9))
