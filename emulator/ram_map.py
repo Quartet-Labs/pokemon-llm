@@ -203,22 +203,77 @@ def _read_battle_mon(emu, species_addr, hp_addr, level_addr, maxhp_addr,
     return mon
 
 
+# ── battle menu geometry (measured live, not read off pokered) ───────────────
+# Probed against a real rival battle on 2026-07-25. wMaxMenuItem does NOT
+# identify which battle menu is up — it read 1 on the main menu and 3 on the
+# move list of a CHARMANDER that knew two moves, so it encodes neither the menu
+# nor the item count. The screen position of the menu's first item does: the
+# main menu is drawn low and right, the FIGHT move list higher and left.
+TOP_MENU_ITEM_Y = 0xCC24
+TOP_MENU_ITEM_X = 0xCC25
+BATTLE_MAIN_TOP_Y = 14
+BATTLE_MAIN_COL_X = (9, 15)     # (left, right) columns of the 2x2 grid
+BATTLE_MOVES_TOP_Y = 12
+BATTLE_MOVES_TOP_X = 5
+# wTextBoxID while a battle MENU is up and polling the d-pad. Plain battle text
+# ("Enemy SQUIRTLE used TACKLE!") reads 1. This is the liveness half of the
+# discriminator and it is not optional: wTopMenuItemY/X are NOT cleared when a
+# menu closes, so during result text they still read (12, 5) and claim the move
+# list is open while the cursor ignores every press.
+BATTLE_MENU_TEXTBOX_ID = 11
+# Current PP of the active battler's four move slots (wBattleMonPP).
+BATTLE_MON_PP = 0xD02D
+
+
+def battle_menu(emu) -> str | None:
+    """Which battle menu is on screen and accepting input: "main", "moves", None.
+
+    None covers the whole battle intro, every animation, and result text — all
+    the states in which a battle command cannot be issued yet.
+
+    Identity comes from the menu's first-item screen position, liveness from
+    wTextBoxID. Both are required: position alone goes stale after the menu
+    closes, and wTextBoxID alone does not say which of the two menus it is.
+    """
+    if emu.read(IN_BATTLE) == 0:
+        return None
+    if emu.read(TEXTBOX_ID) != BATTLE_MENU_TEXTBOX_ID:
+        return None
+    y, x = emu.read(TOP_MENU_ITEM_Y), emu.read(TOP_MENU_ITEM_X)
+    if y == BATTLE_MOVES_TOP_Y and x == BATTLE_MOVES_TOP_X:
+        return "moves"
+    if y == BATTLE_MAIN_TOP_Y and x in BATTLE_MAIN_COL_X:
+        return "main"
+    return None
+
+
 def read_battle(emu) -> dict | None:
     """Enemy + your active battle mon, read from the pokered battle structs.
 
     Returns None when not in a battle (wIsInBattle == 0). Both structs share the
     identical `battle_struct` layout; HP fields are big-endian, matching the
     party struct. Move ids are the game's internal move indices (0 = empty slot).
+
+    `menu` and `ready` describe whether a command can actually be issued. They
+    matter because wIsInBattle and the ENEMY struct both populate during the
+    battle intro — measured at 15 A-presses before the main menu is drawn on the
+    rival fight — so anything that treats "enemy species is known" as "the battle
+    is ready" fires its first command into a cutscene.
     """
     if emu.read(IN_BATTLE) == 0:
         return None
+    active = _read_battle_mon(
+        emu, BATTLE_MON_SPECIES, BATTLE_MON_HP, BATTLE_MON_LEVEL,
+        BATTLE_MON_MAXHP, moves_addr=BATTLE_MON_MOVES)
+    menu = battle_menu(emu)
     return {
         "enemy": _read_battle_mon(
             emu, ENEMY_MON_SPECIES, ENEMY_MON_HP, ENEMY_MON_LEVEL,
             ENEMY_MON_MAXHP),
-        "active": _read_battle_mon(
-            emu, BATTLE_MON_SPECIES, BATTLE_MON_HP, BATTLE_MON_LEVEL,
-            BATTLE_MON_MAXHP, moves_addr=BATTLE_MON_MOVES),
+        "active": active,
+        "menu": menu,
+        "pp": emu.read_range(BATTLE_MON_PP, 4),
+        "ready": bool(active.get("species")) and menu is not None,
     }
 
 

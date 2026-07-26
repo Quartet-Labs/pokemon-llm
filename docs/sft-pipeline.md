@@ -130,33 +130,83 @@ Stalling on a waypoint is often the *correct* outcome and the route says so
 where it is expected: Oak intercepts before the Route 1 mouth, and the rival
 blocks the lab door to start his battle. Both are triggers, not failures.
 
-### Known blocker: `battle_move` cannot reach the move list
+### Battle menus: what the RAM actually does (fixed 2026-07-25)
 
-`scripts/routes/opening.json` walks the whole opening and reaches the rival
-battle, but produces **no battle rows**, because `emulator/actions.py`
-`_battle_move` fails every call once a battle is under way. Found while
-harvesting; reproduces on a clean run.
+`battle_move` used to fail every call once a battle was under way, so the opening
+route reached the rival fight and produced **no battle rows**. It now wins that
+fight in 6 moves and the route yields battle rows. The fix came out of a live RAM
+probe (`GET /debug/ram`); every assumption it started from was wrong.
 
-`_battle_move` assumes it starts on the battle main menu and nothing ever
-restores that assumption. Anything that mashes A — a model clearing the battle
-intro text, or the harvest's own `until battle_ready` step — lands on FIGHT and
-opens the move list. `_menu_select` then drives the move list's cursor while
-believing it is on FIGHT/PKMN/ITEM/RUN, oscillates between two slots
-(`cursor_path: [1,2,1,2,...]`, `max_item: 3`) and gives up. Every later call
-repeats it, so **the agent can never deliberately attack again for the rest of
-the battle** — the failure is permanent, not transient.
+| | battle main menu | FIGHT move list |
+|---|---|---|
+| `wTopMenuItemY` (0xCC24) | 14 | 12 |
+| `wTopMenuItemX` (0xCC25) | 9 (left) / 15 (right) | 5 |
+| `wMaxMenuItem` | **1** | **3** (even for a 2-move battler) |
+| `wCurrentMenuItem` | row (0–1) | **1-based** move slot |
+| `wTextBoxID` while up | 11 | 11 |
 
-It is worse than it looks from the HP bar. Damage does still land, because the A
-press intended to select FIGHT falls through onto whichever move the cursor
-happens to be on — so the battle progresses while **`move_index` is silently
-ignored**. A green-looking battle is not evidence this works.
+1. **The main menu is a 2x2 grid, not a 4-item list.** `wMaxMenuItem` is 1. The
+   row is `wCurrentMenuItem`, the column is `wTopMenuItemX`; a slot maps as
+   `row = slot // 2, right = slot % 2`. Driving `wCurrentMenuItem` to 3 to reach
+   RUN can never work — so `run` and in-battle `use_item` were outright broken,
+   and `switch` selected ITEM while asking for PKMN. All three are fixed here.
+2. **The move list cursor is 1-based.** Move slot 0 is cursor value 1. Asking for
+   0 chased a slot that does not exist, which is what produced the
+   `[1,2,1,2,...]` oscillation and made the failure permanent for the battle.
+3. **`wMaxMenuItem` is not a move count.** It read 3 for a CHARMANDER that knew
+   two moves. Bounds come from the move-id array (`wBattleMonMoves`).
+4. **The geometry registers go stale.** `wTopMenuItemY/X` are *not* cleared when
+   a menu closes, so during result text they still describe the move list.
+   `wTextBoxID` (11 = a battle menu is up and polling the d-pad, 1 = plain text)
+   is the liveness half. Identity and liveness are both required.
 
-Fixing it needs a reliable "which menu is open" discriminator. `wMaxMenuItem` is
-not one: it reads 3 for the battle main menu *and* for the move list of a
-four-move battler, and it still read 3 immediately after a successful-looking
-FIGHT selection. A back-out-with-B-first patch was tried and reverted — it made
-damage land more often without ever making `move_index` honoured, which is a
-more dangerous failure than the loud one.
+**Success is verified against PP, not HP.** A falling HP bar proves only that
+*some* move fired — a stray A press lands on whichever move the cursor sits on,
+which is exactly how `move_index` was ignored while everything looked fine. The
+chosen slot's PP dropping by one is the only proof. `battle_move` returns
+`move_index_honoured` and `pp_spent_slots`; a status move like GROWL passes with
+zero HP change and would fail any HP-based check.
+
+A back-out-with-B-first patch was tried on 7/24 and reverted: it made damage land
+more often without ever making `move_index` honoured — a quiet failure in place
+of a loud one.
+
+`battle_ready` was wrong too, and was the trigger for all of it. It tested the
+**enemy**'s species, which populates during the intro — measured **15 A-presses**
+before the menu is drawn on the rival fight. Every one of those presses went into
+the cutscene and the last opened FIGHT, which is how `battle_move` came to start
+on the wrong menu in the first place. It now requires our own mon to be out *and*
+a battle menu to be up (`battle.ready` in `/state`).
+
+Regression tests: `python3 scripts/test_battle_menu.py` — 13 tests over a fake
+emulator that models the measured behaviour above, including the stale-register
+and 1-based-cursor traps.
+
+### Debug endpoints
+
+Diagnosing this needed a live battle, and a battle does not survive a server
+restart — so the probe has to be reachable on an already-running server:
+
+```
+GET  /debug/ram?session=X&addrs=0xCC24&len=8   read WRAM + menu/battle registers
+POST /debug/press?session=X&button=down&n=1    one raw button (no `move` macro)
+POST /debug/savestate?session=X&name=NAME      snapshot to data/states/NAME.state
+POST /debug/loadstate?session=X&name=NAME      restore it
+```
+
+`press` exists because the agent vocabulary has no bare d-pad verb: `move` is a
+coordinate macro that presses up to six times and reads player x/y, which is
+meaningless inside a menu.
+
+Savestates are ROM-derived and gitignored. Regenerate the battle fixture with:
+
+```bash
+python3 -m emulator.server &
+curl -sX POST localhost:3100/session -H 'content-type: application/json' -d '{"label":"p"}'
+python3 scripts/harvest-emulator.py --session p1 --script scripts/routes/opening.json
+# then, while the rival battle's main menu is up:
+curl -sX POST 'localhost:3100/debug/savestate?session=p1&name=rival-battle-menu'
+```
 
 ### Yield
 

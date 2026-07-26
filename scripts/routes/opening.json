@@ -26,10 +26,10 @@
   {"press": [{"type": "a"}, {"type": "move", "direction": "south"}],
    "until": {"in_battle": true}, "max": 60},
 
-  {"_": "Battle intro. in_battle goes true well before the menu RAM is populated, so wait on battle_ready or battle_move lands on a menu that is not up yet."},
+  {"_": "Battle intro. in_battle goes true LONG before a command can be issued — measured 15 A-presses before the menu is drawn here — so wait on battle_ready, which requires our own mon to be OUT and a battle menu to be up. battle_ready used to test the ENEMY's species, which populates during the intro; that fired the walk-in presses into the cutscene and left the move list open, which is how battle_move came to start on the wrong menu."},
   {"press": {"type": "a"}, "until": {"battle_ready": true}, "max": 60},
 
-  {"_": "Rival battle: SCRATCH until it ends. KNOWN BROKEN — emulator/actions.py `battle_move` cannot reliably reach the move list, so every call here returns partial and these rows are dropped as rejected. Damage still lands, because the A press meant for FIGHT falls through onto whichever move the cursor happens to sit on, which also means move_index is ignored. The step stays so the route yields battle rows the moment that is fixed; until then treat this run as ending at the battle."},
+  {"_": "Rival battle: SCRATCH until it ends — 6 moves. move_index is verified against PP, not the HP bar: a stray A press moves the HP bar while ignoring move_index, so a shrinking bar is not evidence the requested move fired. See docs/sft-pipeline.md."},
   {"press": {"type": "battle_move", "move_index": 0},
    "until": {"in_battle": false}, "max": 20},
 

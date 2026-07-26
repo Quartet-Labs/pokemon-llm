@@ -130,10 +130,13 @@ COND_KEYS = {
     "in_battle": lambda v, want: bool(v.get("in_battle")) is bool(want),
     # the starter has actually landed in the party
     "has_party": lambda v, want: bool((v.get("player") or {}).get("party")) is bool(want),
-    # battle RAM populated — the menu is live and battle_move can be issued.
-    # The intro animation reports in_battle long before this is true.
+    # A battle command can actually be issued: OUR mon is out AND a battle menu
+    # is drawn. This used to test the ENEMY's species, which populates during the
+    # intro — measured 15 A-presses before the menu appears on the rival fight.
+    # Every one of those presses went into the cutscene, and the last of them
+    # opened FIGHT, which is how battle_move came to start on the wrong menu.
     "battle_ready": lambda v, want: bool(
-        ((v.get("battle") or {}).get("enemy") or {}).get("species")) is bool(want),
+        (v.get("battle") or {}).get("ready")) is bool(want),
     # a text box is up
     "dialogue": lambda v, want: bool((v.get("dialogue") or {}).get("text")) is bool(want),
     # exact tile
