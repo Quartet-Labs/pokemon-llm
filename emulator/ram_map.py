@@ -203,22 +203,134 @@ def _read_battle_mon(emu, species_addr, hp_addr, level_addr, maxhp_addr,
     return mon
 
 
+# ── battle menu geometry (measured live, not read off pokered) ───────────────
+# Probed against a real rival battle on 2026-07-25. wMaxMenuItem does NOT
+# identify which battle menu is up — it read 1 on the main menu and 3 on the
+# move list of a CHARMANDER that knew two moves, so it encodes neither the menu
+# nor the item count. The screen position of the menu's first item does: the
+# main menu is drawn low and right, the FIGHT move list higher and left.
+TOP_MENU_ITEM_Y = 0xCC24
+TOP_MENU_ITEM_X = 0xCC25
+BATTLE_MAIN_TOP_Y = 14
+BATTLE_MAIN_COL_X = (9, 15)     # (left, right) columns of the 2x2 grid
+BATTLE_MOVES_TOP_Y = 12
+BATTLE_MOVES_TOP_X = 5
+# wTextBoxID while a battle MENU is up and polling the d-pad. Plain battle text
+# ("Enemy SQUIRTLE used TACKLE!") reads 1. This is the liveness half of the
+# discriminator and it is not optional: wTopMenuItemY/X are NOT cleared when a
+# menu closes, so during result text they still read (12, 5) and claim the move
+# list is open while the cursor ignores every press.
+BATTLE_MENU_TEXTBOX_ID = 11
+# Current PP of the active battler's four move slots (wBattleMonPP).
+BATTLE_MON_PP = 0xD02D
+
+# ── menu cursor readback (measured live 2026-07-25, scripts/probe_menus.py) ──
+# wMenuCursorLocation is a 2-byte LE pointer to the wTileMap cell the arrow is
+# drawn in. That cell — not any index register — is the only unambiguous answer
+# to "what is selected", which is why every menu macro verifies against it.
+#
+# What the probes measured, per menu. wMaxMenuItem means something DIFFERENT in
+# each one, so nothing may treat it as a generic item count:
+#
+#   party  cursor 0-based, wMaxMenuItem = count-1, never scrolls  (correct)
+#   bag    cursor 0-based but it is a WINDOW position capped at 2; the real item
+#          index is wListScrollOffset + wCurrentMenuItem, and wMaxMenuItem reads
+#          2 for a 3-item bag and for an 8-item bag alike
+#   START  cursor 0-based, wMaxMenuItem = count (NOT count-1), and the entry list
+#          is built from progression flags — without the Pokédex it is
+#          POKéMON/ITEM/<NAME>/SAVE/OPTION/EXIT, with it everything shifts down
+#          one. No fixed index can name an entry in both states.
+W_MENU_CURSOR_LOCATION = 0xCC30
+W_CURRENT_MENU_ITEM = 0xCC26
+W_LIST_SCROLL_OFFSET = 0xCC36
+# Visible rows in a scrolling list menu (bag/PC): wMaxMenuItem pins to this - 1.
+LIST_WINDOW_ROWS = 3
+# Bag contents: wNumBagItems is the honest item count; wMaxMenuItem is not.
+NUM_BAG_ITEMS = 0xD31D
+BAG_ITEMS = 0xD31E          # (item id, quantity) pairs, 0xFF terminator
+
+
+def menu_cursor_cell(emu):
+    """(row, col) in wTileMap that the menu arrow is drawn at, or None."""
+    ptr = emu.read16(W_MENU_CURSOR_LOCATION)
+    off = ptr - TILEMAP
+    if not (0 <= off < TILEMAP_W * TILEMAP_H):
+        return None
+    return divmod(off, TILEMAP_W)
+
+
+def menu_cursor_label(emu) -> str:
+    """The text the menu arrow is currently pointing at, decoded from wTileMap.
+
+    Ground truth for menu selection. An index register only describes a menu the
+    code already believes it understands; this reads what the game actually drew.
+    """
+    cell = menu_cursor_cell(emu)
+    if cell is None:
+        return ""
+    row, col = cell
+    tiles = emu.read_range(TILEMAP + row * TILEMAP_W, TILEMAP_W)[col + 1:]
+    return " ".join("".join(_tile_to_char(t) for t in tiles).split())
+
+
+def normalize_label(label: str) -> str:
+    """Fold a decoded menu label for comparison.
+
+    The game writes POKéMON and POKéDEX with a real 'é'; 'é'.upper() is 'É', so
+    a naive startswith("POKEMON") never matches the entry the menu just drew.
+    """
+    return label.upper().replace("É", "E").replace("é", "E")
+
+
+def battle_menu(emu) -> str | None:
+    """Which battle menu is on screen and accepting input: "main", "moves", None.
+
+    None covers the whole battle intro, every animation, and result text — all
+    the states in which a battle command cannot be issued yet.
+
+    Identity comes from the menu's first-item screen position, liveness from
+    wTextBoxID. Both are required: position alone goes stale after the menu
+    closes, and wTextBoxID alone does not say which of the two menus it is.
+    """
+    if emu.read(IN_BATTLE) == 0:
+        return None
+    if emu.read(TEXTBOX_ID) != BATTLE_MENU_TEXTBOX_ID:
+        return None
+    y, x = emu.read(TOP_MENU_ITEM_Y), emu.read(TOP_MENU_ITEM_X)
+    if y == BATTLE_MOVES_TOP_Y and x == BATTLE_MOVES_TOP_X:
+        return "moves"
+    if y == BATTLE_MAIN_TOP_Y and x in BATTLE_MAIN_COL_X:
+        return "main"
+    return None
+
+
 def read_battle(emu) -> dict | None:
     """Enemy + your active battle mon, read from the pokered battle structs.
 
     Returns None when not in a battle (wIsInBattle == 0). Both structs share the
     identical `battle_struct` layout; HP fields are big-endian, matching the
     party struct. Move ids are the game's internal move indices (0 = empty slot).
+
+    `menu` and `ready` describe whether a command can actually be issued. They
+    matter because wIsInBattle and the ENEMY struct both populate during the
+    battle intro — measured at 15 A-presses before the main menu is drawn on the
+    rival fight — so anything that treats "enemy species is known" as "the battle
+    is ready" fires its first command into a cutscene.
     """
     if emu.read(IN_BATTLE) == 0:
         return None
+    active = _read_battle_mon(
+        emu, BATTLE_MON_SPECIES, BATTLE_MON_HP, BATTLE_MON_LEVEL,
+        BATTLE_MON_MAXHP, moves_addr=BATTLE_MON_MOVES)
+    menu = battle_menu(emu)
     return {
         "enemy": _read_battle_mon(
             emu, ENEMY_MON_SPECIES, ENEMY_MON_HP, ENEMY_MON_LEVEL,
             ENEMY_MON_MAXHP),
-        "active": _read_battle_mon(
-            emu, BATTLE_MON_SPECIES, BATTLE_MON_HP, BATTLE_MON_LEVEL,
-            BATTLE_MON_MAXHP, moves_addr=BATTLE_MON_MOVES),
+        "active": active,
+        "menu": menu,
+        "pp": emu.read_range(BATTLE_MON_PP, 4),
+        "ready": bool(active.get("species")) and menu is not None,
     }
 
 

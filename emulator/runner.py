@@ -297,7 +297,14 @@ def _feedback(action, result):
     result = result or {}
     label = action.get("direction") or action.get("type")
     if not result.get("ok"):
-        return f"{label}: rejected ({result.get('error', 'failed')})"
+        # `error` is set by argument validation; the macros that fail mid-action
+        # (a menu that never opened, a move that fired from the wrong slot) set
+        # `reason` instead. Reading only `error` rendered every one of those as
+        # a bare "failed", throwing away the diagnostic the macro went to some
+        # trouble to establish — and this string is what the model is trained
+        # on, so a vague one teaches nothing about why the action failed.
+        why = result.get("error") or result.get("reason") or "failed"
+        return f"{label}: rejected ({why})"
     if "moved" in result:
         to = result.get("to") or {}
         if result.get("moved"):

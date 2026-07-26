@@ -1,0 +1,40 @@
+[
+  {"_": "Red's bedroom -> stairs down to the ground floor."},
+  {"exit_map": 37},
+  {"type": "wait"},
+
+  {"_": "Ground floor -> front door. The door is a bottom-edge warp, so stepping onto the tile is not enough: one more south walks out of it."},
+  {"exit_map": 255},
+  {"type": "move", "direction": "south"},
+  {"type": "wait"},
+
+  {"_": "Pallet Town -> the Route 1 mouth at (10,1). Oak intercepts before the last step; that IS the trigger, so the goto is expected to stop short."},
+  {"goto": {"x": 10, "y": 1}},
+
+  {"_": "Oak's speech, then he walks you to his lab. Length is not a constant, so press until the map id says we arrived."},
+  {"press": {"type": "a"}, "until": {"area": 40}, "max": 60},
+  {"type": "wait"},
+
+  {"_": "Lab door -> the floor tile west of the ball table. The rival's cut-in fires partway; the goto stalls there and moves on, which is correct."},
+  {"goto": {"x": 5, "y": 3}},
+
+  {"_": "Face the table and take a ball. East is a counter, so the move never lands — it turns Red to face it, and A then reaches the ball. Repeating the pair also carries the whole Oak/rival cutscene, where the move is a no-op and the A is a text advance. Ends exactly when the starter is in the party."},
+  {"press": [{"type": "move", "direction": "east"}, {"type": "a"}],
+   "until": {"has_party": true}, "max": 60},
+
+  {"_": "Nickname prompt, the rival taking his starter, then out the door. Advancing text and walking south are cycled together rather than sequenced, because there is no observable that says 'the cutscene is over': while it runs, south is a no-op and A advances; once Red is free, A is harmless and south carries him to the door, where the rival intercepts and challenges. Do NOT gate this on {dialogue: false} — that is true for a frame BETWEEN two text boxes, so it fires mid-nickname-screen and the walk-out is thrown away against a menu."},
+  {"press": [{"type": "a"}, {"type": "move", "direction": "south"}],
+   "until": {"in_battle": true}, "max": 60},
+
+  {"_": "Battle intro. in_battle goes true LONG before a command can be issued — measured 15 A-presses before the menu is drawn here — so wait on battle_ready, which requires our own mon to be OUT and a battle menu to be up. battle_ready used to test the ENEMY's species, which populates during the intro; that fired the walk-in presses into the cutscene and left the move list open, which is how battle_move came to start on the wrong menu."},
+  {"press": {"type": "a"}, "until": {"battle_ready": true}, "max": 60},
+
+  {"_": "Rival battle: SCRATCH until it ends — 6 moves. move_index is verified against PP, not the HP bar: a stray A press moves the HP bar while ignoring move_index, so a shrinking bar is not evidence the requested move fired. See docs/sft-pipeline.md."},
+  {"press": {"type": "battle_move", "move_index": 0},
+   "until": {"in_battle": false}, "max": 20},
+
+  {"_": "Clear the trailing result text. A fixed count, not an until — see the note above about {dialogue: false} being true between boxes."},
+  {"type": "a"},
+  {"type": "a"},
+  {"type": "a"}
+]

@@ -16,6 +16,9 @@ roms/
 
 # PyBoy savestate (regenerate via `python -m emulator.make_state`)
 emulator/overworld.state
+# Named savestates from /debug/savestate — ROM-derived fixtures, regenerable.
+# See docs/sft-pipeline.md "Debug endpoints".
+data/states/
 
 # Claude Code agent scratch (worktrees, local config)
 .claude/

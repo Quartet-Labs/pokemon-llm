@@ -17,17 +17,23 @@ handler that maintains:
   - wMenuCursorLocation 0xCC30 tile the arrow is drawn at (2 bytes)
   - wListScrollOffset  0xCC36  first visible row for scrolling lists (bag/party)
 
-The overworld START menu, the battle main menu (FIGHT/PKMN/ITEM/RUN), the FIGHT
-move list, the bag item list and the party list are all driven by this same
-handler, so a single `_menu_select(emu, index)` primitive that reads the cursor
-and presses up/down to converge works for every one of them.
+Every Gen-1 menu funnels through one handler, but the registers do NOT mean the
+same thing in each — measured live, menu by menu, by scripts/probe_menus.py.
+`_menu_select` (0-based cursor, trust wMaxMenuItem) is correct for exactly one
+of them, the party list. Each of the others gets its own primitive:
 
-Battle main menu layout (pokered `wCurrentMenuItem` values in the 2x2 box):
-    FIGHT = 0   PKMN = 1
-    ITEM  = 2   RUN  = 3
-The box is a wrapping menu, so `_menu_select` uses the cursor read to converge
-regardless of the exact geometry and does not depend on the 2x2-vs-linear
-distinction.
+  party   `_menu_select`        cursor 0-based, wMaxMenuItem = count-1
+  bag     `_bag_select`         cursor is a WINDOW position capped at 2; the item
+                                index is wListScrollOffset + wCurrentMenuItem
+  START   `_start_menu_select`  entries are built from progression flags, so no
+                                fixed index names an entry; select by label
+  battle  `_battle_main_select`  2x2 grid: row = wCurrentMenuItem, col =
+                                wTopMenuItemX
+  moves   `_move_list_select`   cursor is ONE-BASED; bounds from the move array
+
+Battle main menu layout (measured, not read off pokered):
+    FIGHT (row 0, left)   PKMN (row 0, right)
+    ITEM  (row 1, left)   RUN  (row 1, right)
 """
 from __future__ import annotations
 
@@ -70,15 +76,47 @@ MOVE_MAX_TRIES = 6
 #   00:cc26 wCurrentMenuItem   00:cc28 wMaxMenuItem
 #   00:cc30 wMenuCursorLocation 00:cc36 wListScrollOffset
 #   00:cc2a wLastMenuItem
+#
+# wMaxMenuItem is NOT a portable item count and nothing here may treat it as one.
+# Measured: party 2 mons -> 1 (count-1), START 6 entries -> 6 (count), bag 3
+# items -> 2 and bag 8 items -> 2 (the window height, not the list at all).
 W_CURRENT_MENU_ITEM = 0xCC26
 W_MAX_MENU_ITEM = 0xCC28
 W_LAST_MENU_ITEM = 0xCC2A
 W_MENU_CURSOR_LOCATION = 0xCC30
 W_LIST_SCROLL_OFFSET = 0xCC36
+W_NUM_BAG_ITEMS = ram_map.NUM_BAG_ITEMS
+LIST_WINDOW_ROWS = ram_map.LIST_WINDOW_ROWS
 W_IS_IN_BATTLE = 0xD057  # 0 none / 1 wild / 2 trainer (== ram_map.IN_BATTLE)
 W_TEXT_BOX_ID = 0xD125
+# Battle menu geometry + the "which menu is up" discriminator live in ram_map
+# (they are state reads, not action semantics). Measured live 2026-07-25; see
+# ram_map.battle_menu. Two long-standing assumptions in this file died to it:
+#
+#   1. The battle MAIN menu is NOT a 4-item linear menu. wMaxMenuItem reads 1,
+#      not 3. It is a 2x2 grid driven by TWO registers: wCurrentMenuItem is the
+#      ROW (0/1) and wTopMenuItemX is the COLUMN (9 left / 15 right).
+#          FIGHT (row0,left)   PKMN (row0,right)
+#          ITEM  (row1,left)   RUN  (row1,right)
+#      So slot -> (row = slot // 2, right = slot % 2). Driving wCurrentMenuItem
+#      to 3 to reach RUN can never work: it is clamped at 1, so RUN and ITEM
+#      were unreachable and PKMN silently selected ITEM.
+#
+#   2. The FIGHT move list cursor is ONE-BASED. Move slot 0 (the first move) is
+#      wCurrentMenuItem == 1, slot 1 is 2, and so on; index 0 is unreachable and
+#      the cursor simply wraps around it. Asking for 0 is what produced the
+#      [1,2,1,2,...] oscillation that made battle_move fail permanently.
+#
+# wMaxMenuItem is NOT a usable move count either: it read 3 for a CHARMANDER
+# that knew exactly two moves. The real count comes from the move-id array.
+W_TOP_MENU_ITEM_Y = ram_map.TOP_MENU_ITEM_Y
+W_TOP_MENU_ITEM_X = ram_map.TOP_MENU_ITEM_X
+BATTLE_MAIN_COL_X = ram_map.BATTLE_MAIN_COL_X
+# Current PP of the four move slots. The only unforgeable proof that the move we
+# *asked* for is the move that fired: the chosen slot's PP drops by exactly 1.
+BATTLE_MON_PP = ram_map.BATTLE_MON_PP
 
-# Battle main-menu indices.
+# Battle main-menu slots, in (row, column) order — see the grid above.
 BATTLE_FIGHT = 0
 BATTLE_PKMN = 1
 BATTLE_ITEM = 2
@@ -89,6 +127,11 @@ _MENU_MAX_STEPS = 12
 # How many A-presses/ticks to clear a run of text boxes back to an actionable
 # state.
 _TEXT_ADVANCE_PRESSES = 8
+# How many A-presses to spend paging battle text before giving up on the menu
+# coming back. Generous: a turn can chain attack + effect + faint + level-up text.
+_BATTLE_MENU_WAIT_PRESSES = 24
+# How many times to re-press FIGHT when the move list does not open.
+_FIGHT_OPEN_ATTEMPTS = 3
 
 
 def _move(emu, direction: str) -> dict:
@@ -114,13 +157,16 @@ def _in_battle(emu) -> int:
 
 
 def _menu_select(emu, index: int, axis: str = "vertical") -> dict:
-    """Drive the current menu cursor to `index` and press A.
+    """Drive a plain 0-based menu cursor to `index` and press A.
 
-    Reads wCurrentMenuItem every step and presses toward the target, so it is
-    robust to the initial cursor position and to how many items the menu has.
-    Vertical menus (START, move list, bag, party) use up/down; the battle main
-    menu is a wrapping 2x2 that pokered also drives as a wrapping vertical menu,
-    so up/down works there too.
+    Correct for the PARTY list and nothing else. Measured on 2- and 6-mon
+    parties: the cursor is 0-based, wMaxMenuItem is a truthful count-1, the list
+    never scrolls, and asking for slot N puts mon N on the field (verified
+    against wBattleMonSpecies after the switch, not against appearances).
+
+    Do NOT point this at the bag (window-relative cursor, so it cannot reach
+    item 3+), the START menu (entries shift with progression flags), the battle
+    main menu (2x2 grid) or the move list (1-based). Each has its own primitive.
 
     Returns a dict with the cursor path taken. Does NOT itself advance result
     text — callers decide whether to.
@@ -163,6 +209,220 @@ def _menu_select(emu, index: int, axis: str = "vertical") -> dict:
             "max_item": max_item}
 
 
+def _menu_label(emu) -> str:
+    """Normalised text the menu arrow is currently drawn next to."""
+    return ram_map.normalize_label(ram_map.menu_cursor_label(emu))
+
+
+def _start_menu_select(emu, label: str) -> dict:
+    """Select a START-menu entry BY NAME, converging on the drawn label.
+
+    The START menu is assembled at open time from progression flags, so its
+    indices are not stable and no constant can name an entry. Measured on one
+    savestate, before and after setting the has-Pokédex flag:
+
+        no Pokédex   0 POKéMON  1 ITEM  2 <NAME>  3 SAVE  4 OPTION  5 EXIT
+        Pokédex      0 POKéDEX  1 POKéMON  2 ITEM  3 <NAME>  4 SAVE  5 OPTION  6 EXIT
+
+    The old hardcoded constants ("POKEMON is START index 1", "ITEM is index 2")
+    are the Pokédex row of that table. For the whole pre-Pokédex opening — which
+    is exactly the stretch the SFT harvest records — index 1 is ITEM and index 2
+    is the trainer card, so `switch` opened the bag and `use_item` opened the
+    trainer card, both reporting success. Same silent-wrong-selection failure as
+    the battle menus, from the same cause: trusting an index over the screen.
+    """
+    want = ram_map.normalize_label(label)
+    seen = []
+    for _ in range(_MENU_MAX_STEPS):
+        current = _menu_label(emu)
+        seen.append(current)
+        if current.startswith(want):
+            emu.press("a", hold=8, release=16)
+            emu.tick(12)
+            return {"ok": True, "selected": label,
+                    "cursor": emu.read(W_CURRENT_MENU_ITEM),
+                    "matched_label": current, "labels_seen": seen}
+        before = emu.read(W_CURRENT_MENU_ITEM)
+        emu.press("down", hold=6, release=10)
+        emu.tick(4)
+        if emu.read(W_CURRENT_MENU_ITEM) == before and _menu_label(emu) == current:
+            return {"ok": False, "partial": True,
+                    "reason": "START cursor not responding to d-pad",
+                    "labels_seen": seen}
+    return {"ok": False, "partial": True,
+            "reason": f"{label} not on the START menu",
+            "labels_seen": seen}
+
+
+def _bag_item_count(emu) -> int:
+    """Honest bag length, from wNumBagItems. wMaxMenuItem cannot supply this."""
+    return emu.read(W_NUM_BAG_ITEMS)
+
+
+def _bag_select(emu, index: int) -> dict:
+    """Drive the bag list to absolute item `index` and press A.
+
+    The bag is a SCROLLING list, and that breaks the plain cursor primitive:
+    wCurrentMenuItem is the row within the 3-tall visible window, not the item.
+    It pins at 2 once the window is full, and further presses move
+    wListScrollOffset instead. Measured with an 8-item bag: cursor went
+    0,1,2,2,2,2,2,2 while scroll went 0,0,0,1,2,3,4,5 — so `_menu_select` bails
+    at "index 3 exceeds wMaxMenuItem 2" and no item past the third is reachable.
+
+    The real position is `wListScrollOffset + wCurrentMenuItem`, which is what
+    this converges on, bounded by wNumBagItems. Index == count is CANCEL.
+    """
+    count = _bag_item_count(emu)
+    if index < 0 or index > count:
+        return {"ok": False, "partial": True,
+                "reason": f"bag slot {index} out of range (bag holds {count})",
+                "bag_count": count}
+
+    def position():
+        return emu.read(W_LIST_SCROLL_OFFSET) + emu.read(W_CURRENT_MENU_ITEM)
+
+    path = [position()]
+    # Bound the walk by the list length, not a fixed step cap: reaching the last
+    # item of a full bag takes one press per item.
+    for _ in range(count + LIST_WINDOW_ROWS + 2):
+        pos = position()
+        if pos == index:
+            break
+        emu.press("down" if pos < index else "up", hold=6, release=10)
+        emu.tick(4)
+        new = position()
+        path.append(new)
+        if new == pos:
+            return {"ok": False, "partial": True,
+                    "reason": f"bag cursor stuck at item {pos}, wanted {index}",
+                    "path": path, "bag_count": count}
+    final = position()
+    if final != index:
+        return {"ok": False, "partial": True,
+                "reason": f"could not reach bag slot {index} (stuck at {final})",
+                "path": path, "bag_count": count}
+    label = ram_map.menu_cursor_label(emu)
+    emu.press("a", hold=8, release=16)
+    return {"ok": True, "selected": index, "label": label, "path": path,
+            "bag_count": count,
+            "scroll": emu.read(W_LIST_SCROLL_OFFSET),
+            "window_row": emu.read(W_CURRENT_MENU_ITEM)}
+
+
+def _battle_menu(emu) -> str | None:
+    """Which battle menu is on screen: "main", "moves", or None.
+
+    This is the discriminator `_battle_move` used to lack, and its absence is
+    what made the failure permanent: with no way to tell the two menus apart,
+    every call re-ran main-menu logic against whatever was actually up.
+    """
+    return ram_map.battle_menu(emu)
+
+
+def _wait_for_battle_menu(emu, tries: int = _BATTLE_MENU_WAIT_PRESSES):
+    """Page through battle text until a battle menu is up; return which one.
+
+    Presses A one at a time and re-reads, instead of mashing a fixed count: the
+    result text between turns is variable-length (crits, stat drops, faints), and
+    over-pressing past the menu opens FIGHT, which is precisely the mis-start
+    this function exists to prevent. Returns None if no menu appears in `tries`.
+    """
+    for _ in range(tries):
+        menu = _battle_menu(emu)
+        if menu is not None:
+            return menu
+        if not _in_battle(emu):
+            return None
+        emu.press("a", hold=6, release=12)
+        emu.tick(12)
+    return _battle_menu(emu)
+
+
+def _battle_moves(emu) -> list[int]:
+    """The active battler's known move ids, empty slots dropped."""
+    return [m for m in emu.read_range(ram_map.BATTLE_MON_MOVES, 4) if m]
+
+
+def _battle_pp(emu) -> list[int]:
+    """Current PP for all four move slots (0 for empty slots)."""
+    return emu.read_range(BATTLE_MON_PP, 4)
+
+
+def _battle_main_select(emu, slot: int) -> dict:
+    """Select FIGHT/PKMN/ITEM/RUN on the battle main menu's 2x2 grid.
+
+    Drives the row with up/down (wCurrentMenuItem) and the column with
+    left/right (wTopMenuItemX), reading both back each step. `_menu_select`
+    cannot do this — it drives wCurrentMenuItem alone, which is clamped at 1, so
+    it can only ever reach the left column.
+    """
+    if _battle_menu(emu) != "main":
+        return {"ok": False, "partial": True,
+                "reason": "battle main menu is not up",
+                "menu": _battle_menu(emu)}
+    want_row, want_right = slot // 2, slot % 2
+    want_x = BATTLE_MAIN_COL_X[want_right]
+    for _ in range(_MENU_MAX_STEPS):
+        row = emu.read(W_CURRENT_MENU_ITEM)
+        if row == want_row:
+            break
+        emu.press("down" if row < want_row else "up", hold=6, release=10)
+        if emu.read(W_CURRENT_MENU_ITEM) == row:
+            return {"ok": False, "partial": True,
+                    "reason": f"row cursor stuck at {row}, wanted {want_row}"}
+    for _ in range(_MENU_MAX_STEPS):
+        x = emu.read(W_TOP_MENU_ITEM_X)
+        if x == want_x:
+            break
+        emu.press("right" if want_right else "left", hold=6, release=10)
+        if emu.read(W_TOP_MENU_ITEM_X) == x:
+            return {"ok": False, "partial": True,
+                    "reason": f"column cursor stuck at x={x}, wanted {want_x}"}
+    row, x = emu.read(W_CURRENT_MENU_ITEM), emu.read(W_TOP_MENU_ITEM_X)
+    if (row, x) != (want_row, want_x):
+        return {"ok": False, "partial": True,
+                "reason": f"could not reach slot {slot} "
+                          f"(row {row}, x {x}; wanted row {want_row}, x {want_x})"}
+    emu.press("a", hold=8, release=16)
+    return {"ok": True, "selected": slot, "row": row, "x": x}
+
+
+def _move_list_select(emu, move_index: int) -> dict:
+    """Drive the FIGHT move list to `move_index` (0-based) and press A.
+
+    The list's own cursor is 1-based, so the target is `move_index + 1`. Bounds
+    come from the move-id array, never from wMaxMenuItem.
+    """
+    known = _battle_moves(emu)
+    if move_index >= len(known):
+        return {"ok": False, "partial": True,
+                "reason": f"move slot {move_index} empty "
+                          f"(battler knows {len(known)})",
+                "known_moves": known}
+    want = move_index + 1
+    path = [emu.read(W_CURRENT_MENU_ITEM)]
+    for _ in range(_MENU_MAX_STEPS):
+        cur = emu.read(W_CURRENT_MENU_ITEM)
+        if cur == want:
+            break
+        emu.press("down" if cur < want else "up", hold=6, release=10)
+        new = emu.read(W_CURRENT_MENU_ITEM)
+        path.append(new)
+        if new == cur:
+            return {"ok": False, "partial": True,
+                    "reason": "move cursor not responding to d-pad",
+                    "cursor_path": path}
+    final = emu.read(W_CURRENT_MENU_ITEM)
+    if final != want:
+        return {"ok": False, "partial": True,
+                "reason": f"could not reach move {move_index} "
+                          f"(cursor {final}, wanted {want})",
+                "cursor_path": path}
+    emu.press("a", hold=8, release=16)
+    return {"ok": True, "move_index": move_index, "cursor": final,
+            "cursor_path": path}
+
+
 def _advance_text(emu, presses: int = _TEXT_ADVANCE_PRESSES) -> None:
     """Mash A to page through result/dialogue boxes back to an actionable state.
 
@@ -179,8 +439,11 @@ def _advance_text(emu, presses: int = _TEXT_ADVANCE_PRESSES) -> None:
 def _open_start_menu(emu) -> dict:
     """Open the overworld START menu, confirming it actually opened.
 
-    Detects "open" via the menu handler populating wMaxMenuItem (the START menu
-    exposes 6 as its max -> 7 entries). Not available mid-battle.
+    Detects "open" via the menu handler populating wMaxMenuItem. Note the value
+    is the entry COUNT here, not count-1 as elsewhere: measured 6 for the
+    six-entry pre-Pokédex menu and 7 for the seven-entry one. It is reported for
+    diagnostics only — nothing indexes off it, because the entries themselves
+    move (see `_start_menu_select`). Not available mid-battle.
     """
     if _in_battle(emu):
         return {"ok": False, "partial": True,
@@ -195,11 +458,19 @@ def _open_start_menu(emu) -> dict:
 # ── battle / menu macros ─────────────────────────────────────────────────────
 
 def _battle_move(emu, move_index: int) -> dict:
-    """From the battle main menu: FIGHT -> move `move_index` -> A.
+    """Fire the battler's move `move_index` (0-based), whatever menu we start on.
 
-    Reads the cursor at each step. Confirms the move fired by checking that we
-    are still in battle and reporting whether the enemy HP changed (miss/status
-    turns leave HP unchanged, so HP change is reported but not required for ok).
+    Does NOT assume it begins on the battle main menu. That assumption was the
+    bug: anything that mashes A during the battle intro — a model clearing text,
+    or a route's own `until battle_ready` step — already sits on the move list,
+    and nothing here restored the assumption, so the failure was permanent for
+    the rest of the battle rather than transient.
+
+    Success is verified against PP, not HP. A falling enemy HP bar proves only
+    that *some* move fired: a stray A press lands on whichever move the cursor
+    happens to sit on, which is exactly how `move_index` used to be ignored while
+    everything still looked like it was working. The chosen slot's PP dropping by
+    one is the only evidence that the requested move is the move that fired.
     """
     if not _in_battle(emu):
         return {"ok": False, "partial": True,
@@ -207,37 +478,82 @@ def _battle_move(emu, move_index: int) -> dict:
     if not isinstance(move_index, int) or not (0 <= move_index <= 3):
         return {"ok": False, "error": "move_index must be 0-3"}
 
+    # Normalize: get to the move list from wherever we actually are. A turn ends
+    # in a run of result text ("Enemy SQUIRTLE used TACKLE!"), so page through it
+    # one press at a time and re-look, rather than mashing a fixed count past the
+    # menu once it reappears.
+    menu = _wait_for_battle_menu(emu)
+    fight = None
+    # Select FIGHT, then poll for the move list rather than ticking a fixed
+    # count — it takes a variable number of frames to draw. The retry is not
+    # belt-and-braces: the A that opens FIGHT is occasionally swallowed when the
+    # main menu has only just been drawn, leaving us sitting on 'main' with no
+    # error to show for it (~1 turn in 8 measured).
+    for _ in range(_FIGHT_OPEN_ATTEMPTS):
+        if menu != "main":
+            break
+        fight = _battle_main_select(emu, BATTLE_FIGHT)
+        if not fight.get("ok"):
+            return {"ok": False, "partial": True,
+                    "reason": f"could not select FIGHT: {fight.get('reason')}",
+                    "detail": fight}
+        for _ in range(_MENU_MAX_STEPS):
+            menu = _battle_menu(emu)
+            if menu != "main":
+                break
+            emu.tick(10)
+    if menu != "moves":
+        if not _in_battle(emu):
+            return {"ok": False, "partial": True,
+                    "reason": "battle ended before a move could be issued"}
+        return {"ok": False, "partial": True,
+                "reason": f"move list is not up (menu={menu!r})"}
+
     enemy_hp0 = ram_map._be16(emu, ram_map.ENEMY_MON_HP)
-    # Select FIGHT in the main menu.
-    fight = _menu_select(emu, BATTLE_FIGHT)
-    if not fight.get("ok"):
-        return {"ok": False, "partial": True,
-                "reason": f"could not select FIGHT: {fight.get('reason')}",
-                "detail": fight}
-    emu.tick(10)
-    # Now on the move list; drive to the requested move slot.
-    max_move = emu.read(W_MAX_MENU_ITEM)
-    if move_index > max_move:
-        # Fewer than move_index+1 moves known; back out and report.
-        emu.press("b", hold=6, release=10)
-        return {"ok": False, "partial": True,
-                "reason": f"move slot {move_index} empty (only "
-                          f"{max_move + 1} moves)",
-                "max_move_item": max_move}
-    pick = _menu_select(emu, move_index)
+    pp0 = _battle_pp(emu)
+    pick = _move_list_select(emu, move_index)
     if not pick.get("ok"):
         return {"ok": False, "partial": True,
                 "reason": f"could not select move {move_index}: "
                           f"{pick.get('reason')}", "detail": pick}
-    # Move fires: page through the attack text back to an actionable state.
-    _advance_text(emu)
+    # Move fires. Tick first so the menu has actually closed and the attack text
+    # has opened — otherwise the menu registers still read "up" for a few frames
+    # and we would return before the move resolved, reading PP too early. Then
+    # page back to an actionable state, stopping at the menu rather than mashing
+    # a blind count past it into an unintended second move.
+    emu.tick(30)
+    _wait_for_battle_menu(emu)
+    pp1 = _battle_pp(emu)
     enemy_hp1 = ram_map._be16(emu, ram_map.ENEMY_MON_HP)
-    return {"ok": True, "move_index": move_index,
-            "enemy_hp_before": enemy_hp0, "enemy_hp_after": enemy_hp1,
-            "enemy_hp_changed": enemy_hp1 != enemy_hp0,
-            "still_in_battle": bool(_in_battle(emu)),
-            "fight_cursor_path": fight.get("cursor_path"),
-            "move_cursor_path": pick.get("cursor_path")}
+    spent = [i for i in range(4) if pp1[i] < pp0[i]]
+    # The verification that matters: exactly the requested slot spent PP.
+    #
+    # This decides `ok`, it does not merely annotate it. The original bug was
+    # not that battle_move failed — it was that it *reported success* while a
+    # stray A press fired whatever move the cursor happened to sit on, so a
+    # moving HP bar looked like proof and `move_index` was silently ignored.
+    # Returning ok=True alongside move_index_honoured=False rebuilds exactly
+    # that trap for any caller that checks `ok` and nothing else, which is
+    # every caller we have. Wrong move fired == failed call.
+    honoured = spent == [move_index]
+    known = _battle_moves(emu)
+    result = {"ok": honoured, "move_index": move_index,
+              "move_id": known[move_index] if move_index < len(known) else None,
+              "pp_before": pp0, "pp_after": pp1,
+              "move_index_honoured": honoured,
+              "pp_spent_slots": spent,
+              "enemy_hp_before": enemy_hp0, "enemy_hp_after": enemy_hp1,
+              "enemy_hp_changed": enemy_hp1 != enemy_hp0,
+              "still_in_battle": bool(_in_battle(emu)),
+              "fight_select": fight, "move_cursor_path": pick.get("cursor_path")}
+    if not honoured:
+        result["partial"] = True
+        result["reason"] = (
+            f"move {move_index} was selected but slot(s) {spent} spent PP"
+            if spent else
+            f"move {move_index} was selected but no slot spent PP — "
+            "the move did not fire")
+    return result
 
 
 def _run(emu) -> dict:
@@ -245,7 +561,10 @@ def _run(emu) -> dict:
     if not _in_battle(emu):
         return {"ok": False, "partial": True,
                 "reason": "not in battle (wIsInBattle == 0)"}
-    sel = _menu_select(emu, BATTLE_RUN)
+    if _battle_menu(emu) == "moves":
+        # A stray A already opened FIGHT; back out to the main menu first.
+        emu.press("b", hold=6, release=10)
+    sel = _battle_main_select(emu, BATTLE_RUN)
     if not sel.get("ok"):
         return {"ok": False, "partial": True,
                 "reason": f"could not select RUN: {sel.get('reason')}",
@@ -260,16 +579,19 @@ def _run(emu) -> dict:
 def _use_item(emu, item=None, target_index=None) -> dict:
     """Open the bag/ITEM menu and best-effort navigate.
 
-    In battle: main menu -> ITEM. In the overworld: START -> ITEM. Item lists
-    are a scrolling menu keyed by wCurrentMenuItem / wListScrollOffset; without
-    an item-id -> list-position table (which depends on live bag contents) we
-    can only best-effort scroll to `target_index` within the current window.
-    Item selection is therefore reported partial unless a concrete target_index
+    In battle: main menu -> ITEM. In the overworld: START -> ITEM (selected by
+    label — the START menu has no fixed index for it). The bag is a scrolling
+    list, so `target_index` is an absolute item position and `_bag_select`
+    resolves it through wListScrollOffset; the old code could not reach anything
+    past the third item. Without an item-id -> slot table (it depends on live bag
+    contents) selection is still reported partial unless a concrete target_index
     is given and reached.
     """
     in_battle = _in_battle(emu)
     if in_battle:
-        sel = _menu_select(emu, BATTLE_ITEM)
+        if _battle_menu(emu) == "moves":
+            emu.press("b", hold=6, release=10)
+        sel = _battle_main_select(emu, BATTLE_ITEM)
         if not sel.get("ok"):
             return {"ok": False, "partial": True,
                     "reason": f"could not open ITEM in battle: "
@@ -278,15 +600,17 @@ def _use_item(emu, item=None, target_index=None) -> dict:
         opened = _open_start_menu(emu)
         if not opened.get("ok"):
             return opened
-        # START menu: ITEM is index 2 (POKEDEX 0, POKEMON 1, ITEM 2).
-        sel = _menu_select(emu, 2)
+        sel = _start_menu_select(emu, "ITEM")
         if not sel.get("ok"):
             return {"ok": False, "partial": True,
                     "reason": f"could not open ITEM bag: {sel.get('reason')}",
                     "detail": sel}
     emu.tick(12)
-    bag_max = emu.read(W_MAX_MENU_ITEM)
-    result = {"opened_bag": True, "bag_max_item": bag_max,
+    # Report the real bag length. wMaxMenuItem reads 2 for any non-empty bag —
+    # it is the window height, and surfacing it as "bag_max_item" told the agent
+    # an 8-item bag held 3.
+    bag_count = _bag_item_count(emu)
+    result = {"opened_bag": True, "bag_count": bag_count,
               "in_battle": bool(in_battle)}
     if target_index is None:
         # Menu is open; selection deferred — not enough info to resolve an item.
@@ -294,7 +618,7 @@ def _use_item(emu, item=None, target_index=None) -> dict:
                        "reason": "bag opened; no target_index given, "
                                  "item-id->slot resolution not implemented"})
         return result
-    pick = _menu_select(emu, int(target_index))
+    pick = _bag_select(emu, int(target_index))
     if not pick.get("ok"):
         result.update({"ok": False, "partial": True,
                        "reason": f"could not select bag slot {target_index}: "
@@ -302,23 +626,35 @@ def _use_item(emu, item=None, target_index=None) -> dict:
         return result
     _advance_text(emu, presses=4)
     result.update({"ok": True, "selected_slot": int(target_index),
-                   "item": item, "cursor_path": pick.get("cursor_path")})
+                   "selected_label": pick.get("label"), "item": item,
+                   "path": pick.get("path")})
     return result
 
 
 def _switch(emu, party_index: int) -> dict:
     """PKMN (battle) or POKEMON (START) -> select party slot `party_index`.
 
-    The party list is a vertical menu keyed by wCurrentMenuItem, so the same
-    cursor-converge primitive selects the slot. In battle this brings up the
-    switch/summary sub-prompt; we press A once more to confirm SWITCH (the
-    default top option), then advance the switch-in text.
+    The party list is the one menu the plain cursor primitive is right about:
+    measured on 2- and 6-mon parties it is 0-based, never scrolls, and
+    wMaxMenuItem is a truthful count-1. Verified end-to-end against the only
+    unforgeable side effect — after switching to slot N, wBattleMonSpecies is
+    mon N. Both slots of a two-mon party were honoured, so the off-by-one that
+    broke the move list does not exist here.
+
+    Reaching the list from the overworld is what was broken: the START entry was
+    selected by a hardcoded index that only names POKéMON once the Pokédex has
+    been obtained. See `_start_menu_select`.
+
+    In battle this brings up the switch/summary sub-prompt; we press A once more
+    to confirm SWITCH (the default top option), then advance the switch-in text.
     """
     if not isinstance(party_index, int) or not (0 <= party_index <= 5):
         return {"ok": False, "error": "party_index must be 0-5"}
     in_battle = _in_battle(emu)
     if in_battle:
-        top = _menu_select(emu, BATTLE_PKMN)
+        if _battle_menu(emu) == "moves":
+            emu.press("b", hold=6, release=10)
+        top = _battle_main_select(emu, BATTLE_PKMN)
         if not top.get("ok"):
             return {"ok": False, "partial": True,
                     "reason": f"could not open PKMN: {top.get('reason')}",
@@ -327,7 +663,7 @@ def _switch(emu, party_index: int) -> dict:
         opened = _open_start_menu(emu)
         if not opened.get("ok"):
             return opened
-        top = _menu_select(emu, 1)  # POKEMON is START index 1
+        top = _start_menu_select(emu, "POKEMON")
         if not top.get("ok"):
             return {"ok": False, "partial": True,
                     "reason": f"could not open POKEMON: {top.get('reason')}",

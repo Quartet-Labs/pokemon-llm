@@ -27,6 +27,8 @@ Run:  .venv/bin/python -m emulator.server
 from __future__ import annotations
 
 import collections
+import os
+import re
 import secrets
 import threading
 
@@ -333,6 +335,139 @@ def post_reset(request: Request):
     with sess.lock:
         sess.emu.reset()
         return sess.view()
+
+
+# ── debug ────────────────────────────────────────────────────────────────────
+@app.get("/debug/ram")
+def debug_ram(request: Request):
+    """Read arbitrary WRAM addresses from a live session.
+
+    Exists because the menu-discriminator question ("is the battle main menu up,
+    or the FIGHT move list?") cannot be answered from pokered source alone — the
+    obvious candidate, wMaxMenuItem, reads 3 for BOTH. Answering it needs real
+    values from a real battle, and a battle does not survive a server restart, so
+    the probe has to be reachable on a server that is already running.
+
+      GET /debug/ram?session=X&addrs=0xCC24,0xCC25&len=1
+
+    `addrs` is a comma-separated list of hex or decimal addresses; `len` reads
+    that many consecutive bytes from each (default 1). Always returns the
+    menu/battle registers alongside, so a probe cannot forget to ask for them.
+    """
+    sess, err = _resolve_or_404(request)
+    if err:
+        return err
+    raw = request.query_params.get("addrs") or ""
+    try:
+        length = max(1, min(64, int(request.query_params.get("len") or 1)))
+    except ValueError:
+        return JSONResponse({"error": "len must be an integer"}, status_code=400)
+    addrs = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            addrs.append(int(tok, 16) if tok.lower().startswith("0x") else int(tok))
+        except ValueError:
+            return JSONResponse({"error": f"bad address {tok!r}"}, status_code=400)
+    with sess.lock:
+        out = {}
+        for a in addrs:
+            vals = sess.emu.read_range(a, length)
+            out[f"0x{a:04X}"] = vals[0] if length == 1 else vals
+        always = {
+            "wCurrentMenuItem": sess.emu.read(actions.W_CURRENT_MENU_ITEM),
+            "wMaxMenuItem": sess.emu.read(actions.W_MAX_MENU_ITEM),
+            "wMenuCursorLocation": sess.emu.read16(actions.W_MENU_CURSOR_LOCATION),
+            "wTextBoxID": sess.emu.read(actions.W_TEXT_BOX_ID),
+            "wIsInBattle": sess.emu.read(actions.W_IS_IN_BATTLE),
+        }
+    return {"session": sess.id, "read": out, "registers": always}
+
+
+@app.post("/debug/press")
+def debug_press(request: Request):
+    """Press one raw button, bypassing the action vocabulary.
+
+      POST /debug/press?session=X&button=down&n=1
+
+    The agent-facing vocabulary has no bare d-pad verb — `move` is a coordinate
+    macro that presses up to MOVE_MAX_TRIES times and reads player x/y, which is
+    meaningless inside a menu. Diagnosing menu geometry needs exactly one press
+    and then a look, so this exists for probes and tests, not for agents.
+    """
+    sess, err = _resolve_or_404(request)
+    if err:
+        return err
+    button = (request.query_params.get("button") or "").lower()
+    try:
+        n = max(1, min(32, int(request.query_params.get("n") or 1)))
+    except ValueError:
+        return JSONResponse({"error": "n must be an integer"}, status_code=400)
+    with sess.lock:
+        try:
+            for _ in range(n):
+                sess.emu.press(button, hold=6, release=10)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, "pressed": button, "n": n,
+                "wCurrentMenuItem": sess.emu.read(actions.W_CURRENT_MENU_ITEM),
+                "wMaxMenuItem": sess.emu.read(actions.W_MAX_MENU_ITEM)}
+
+
+# Named savestates live here so a probe cannot write to an arbitrary path.
+STATE_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "states")
+_STATE_NAME_OK = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _state_path(name: str):
+    if not _STATE_NAME_OK.match(name or ""):
+        return None
+    return os.path.join(STATE_DIR, f"{name}.state")
+
+
+@app.post("/debug/savestate")
+def debug_savestate(request: Request):
+    """Snapshot a session to data/states/<name>.state.
+
+    A battle does not survive a server restart, so every attempt to diagnose the
+    battle menus otherwise costs a full replay of the opening route to get back
+    to one. Snapshotting the live battle once turns that into an instant reload
+    and makes the battle macros testable at all.
+    """
+    sess, err = _resolve_or_404(request)
+    if err:
+        return err
+    name = request.query_params.get("name") or ""
+    path = _state_path(name)
+    if path is None:
+        return JSONResponse(
+            {"error": "name must match [A-Za-z0-9_-]{1,64}"}, status_code=400)
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with sess.lock:
+        sess.emu.save_state(path)
+    return {"ok": True, "name": name, "path": os.path.abspath(path),
+            "bytes": os.path.getsize(path)}
+
+
+@app.post("/debug/loadstate")
+def debug_loadstate(request: Request):
+    """Restore a session from data/states/<name>.state (see /debug/savestate)."""
+    sess, err = _resolve_or_404(request)
+    if err:
+        return err
+    name = request.query_params.get("name") or ""
+    path = _state_path(name)
+    if path is None:
+        return JSONResponse(
+            {"error": "name must match [A-Za-z0-9_-]{1,64}"}, status_code=400)
+    if not os.path.exists(path):
+        return JSONResponse({"error": f"no savestate {name!r}"}, status_code=404)
+    with sess.lock:
+        sess.emu.load_state(path)
+        sess.emu.tick(2)
+        return {"ok": True, "name": name, "state": sess.view()}
 
 
 # ── screen ───────────────────────────────────────────────────────────────────
