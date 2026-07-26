@@ -182,6 +182,59 @@ Regression tests: `python3 scripts/test_battle_menu.py` — 13 tests over a fake
 emulator that models the measured behaviour above, including the stale-register
 and 1-based-cursor traps.
 
+### Overworld menus: the same audit, one layer out (fixed 2026-07-25)
+
+The battle findings raised an obvious question — the START menu, the bag and the
+party list all still went through `_menu_select`, which assumes a 0-based cursor
+and trusts `wMaxMenuItem`, and nobody had measured any of them. So all three were
+probed the same way (`scripts/probe_menus.py`, `probe_bag_and_start.py`,
+`probe_party_switch.py`). Two were broken; the third was fine.
+
+| | START menu | bag list | party list |
+|---|---|---|---|
+| `wCurrentMenuItem` | 0-based entry | 0-based **window row**, pins at 2 | 0-based slot |
+| `wMaxMenuItem` | **count** | **window height − 1** (2 for 3 items *and* for 8) | count − 1 |
+| `wListScrollOffset` | unused | **part of the item index** | always 0 |
+| verdict | broken | broken | **correct** |
+
+1. **The START menu is built from progression flags, so it has no fixed
+   indices.** Measured on one savestate with the has-Pokédex flag (`wd74b` bit 5)
+   flipped:
+
+   | | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+   |---|---|---|---|---|---|---|---|
+   | no Pokédex | POKéMON | ITEM | \<NAME\> | SAVE | OPTION | EXIT | — |
+   | Pokédex | POKéDEX | POKéMON | ITEM | \<NAME\> | SAVE | OPTION | EXIT |
+
+   The code hardcoded "POKEMON is index 1, ITEM is index 2" — the *Pokédex* row.
+   For the whole pre-Pokédex opening, which is exactly the stretch the harvest
+   records, `switch` opened the **bag** and `use_item` opened the **trainer
+   card**. Both returned `ok: True`. Selection is now by label, read off the
+   screen at `wMenuCursorLocation`, so it holds in either layout.
+2. **The bag is a scrolling list, so the cursor is not the item.** With 8 items
+   the cursor went `0,1,2,2,2,2,2,2` while `wListScrollOffset` went
+   `0,0,0,1,2,3,4,5`. The real position is `scroll + cursor`. `_menu_select` bailed
+   at *"index 3 exceeds wMaxMenuItem 2"*, so **no item past the third was ever
+   reachable**, and `use_item` reported an 8-item bag as holding 3. `_bag_select`
+   drives both registers and bounds on `wNumBagItems`.
+3. **`wMaxMenuItem` means something different in every menu** — count here,
+   count−1 there, a window height in the bag, and pure noise in the battle menus.
+   Nothing may treat it as a generic item count.
+4. **The party list is correct and was left alone.** 0-based, honest `wMaxMenuItem`,
+   never scrolls, verified on 2- and 6-mon parties. Selection is proven against
+   the only unforgeable side effect — after switching to slot N,
+   `wBattleMonSpecies` **is** mon N — not against the list looking right. The
+   feared 1-based cursor does not exist there.
+
+**Ground truth is the drawn label, not a register.** `wMenuCursorLocation` points
+at the `wTileMap` cell holding the arrow, so `ram_map.menu_cursor_label()` reads
+back the entry the game actually drew. Every index register in this game has now
+been caught describing a menu the code merely believed it was looking at.
+
+Regression tests: `python3 scripts/test_overworld_menus.py` — 20 tests, including
+both hardcoded-index bugs reproduced against a fake that models the measured
+layouts, and the party list pinned as correct so it is not "fixed".
+
 ### Debug endpoints
 
 Diagnosing this needed a live battle, and a battle does not survive a server

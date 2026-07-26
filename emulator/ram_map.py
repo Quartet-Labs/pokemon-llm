@@ -224,6 +224,63 @@ BATTLE_MENU_TEXTBOX_ID = 11
 # Current PP of the active battler's four move slots (wBattleMonPP).
 BATTLE_MON_PP = 0xD02D
 
+# ── menu cursor readback (measured live 2026-07-25, scripts/probe_menus.py) ──
+# wMenuCursorLocation is a 2-byte LE pointer to the wTileMap cell the arrow is
+# drawn in. That cell — not any index register — is the only unambiguous answer
+# to "what is selected", which is why every menu macro verifies against it.
+#
+# What the probes measured, per menu. wMaxMenuItem means something DIFFERENT in
+# each one, so nothing may treat it as a generic item count:
+#
+#   party  cursor 0-based, wMaxMenuItem = count-1, never scrolls  (correct)
+#   bag    cursor 0-based but it is a WINDOW position capped at 2; the real item
+#          index is wListScrollOffset + wCurrentMenuItem, and wMaxMenuItem reads
+#          2 for a 3-item bag and for an 8-item bag alike
+#   START  cursor 0-based, wMaxMenuItem = count (NOT count-1), and the entry list
+#          is built from progression flags — without the Pokédex it is
+#          POKéMON/ITEM/<NAME>/SAVE/OPTION/EXIT, with it everything shifts down
+#          one. No fixed index can name an entry in both states.
+W_MENU_CURSOR_LOCATION = 0xCC30
+W_CURRENT_MENU_ITEM = 0xCC26
+W_LIST_SCROLL_OFFSET = 0xCC36
+# Visible rows in a scrolling list menu (bag/PC): wMaxMenuItem pins to this - 1.
+LIST_WINDOW_ROWS = 3
+# Bag contents: wNumBagItems is the honest item count; wMaxMenuItem is not.
+NUM_BAG_ITEMS = 0xD31D
+BAG_ITEMS = 0xD31E          # (item id, quantity) pairs, 0xFF terminator
+
+
+def menu_cursor_cell(emu):
+    """(row, col) in wTileMap that the menu arrow is drawn at, or None."""
+    ptr = emu.read16(W_MENU_CURSOR_LOCATION)
+    off = ptr - TILEMAP
+    if not (0 <= off < TILEMAP_W * TILEMAP_H):
+        return None
+    return divmod(off, TILEMAP_W)
+
+
+def menu_cursor_label(emu) -> str:
+    """The text the menu arrow is currently pointing at, decoded from wTileMap.
+
+    Ground truth for menu selection. An index register only describes a menu the
+    code already believes it understands; this reads what the game actually drew.
+    """
+    cell = menu_cursor_cell(emu)
+    if cell is None:
+        return ""
+    row, col = cell
+    tiles = emu.read_range(TILEMAP + row * TILEMAP_W, TILEMAP_W)[col + 1:]
+    return " ".join("".join(_tile_to_char(t) for t in tiles).split())
+
+
+def normalize_label(label: str) -> str:
+    """Fold a decoded menu label for comparison.
+
+    The game writes POKéMON and POKéDEX with a real 'é'; 'é'.upper() is 'É', so
+    a naive startswith("POKEMON") never matches the entry the menu just drew.
+    """
+    return label.upper().replace("É", "E").replace("é", "E")
+
 
 def battle_menu(emu) -> str | None:
     """Which battle menu is on screen and accepting input: "main", "moves", None.
