@@ -13,15 +13,21 @@ This runner:
 Usage:
   ANTHROPIC_API_KEY=... python3 scripts/llm-runner.py \
       --port 3010 --model claude-haiku-4-5-20251001 --goal-badges 1
+
+  # Sonnet, fast enough to actually use (see --persistent below):
+  python3 scripts/llm-runner.py --model claude-sonnet-4-6 --persistent
 """
 import argparse
 import json
 import os
 import re
-import subprocess
+import statistics
 import sys
 import time
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from claude_cli import make_brain  # noqa: E402
 
 SYSTEM = """You are playing a Gen-1 Pokemon game through a REST API. You see the \
 game state as JSON and reply with exactly ONE action as JSON.
@@ -66,22 +72,6 @@ def http_post(url, body, token=None):
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
-
-
-def call_model(model, system, user, timeout=90):
-    """Ask a Claude model for one action via the local `claude` CLI.
-
-    Uses the CLI (OAuth auth) rather than the raw API because the Pi has no
-    standalone ANTHROPIC_API_KEY. Prompt goes in on stdin so large JSON state
-    never hits argv length/escaping limits.
-    """
-    proc = subprocess.run(
-        ["claude", "-p", "--model", model, "--append-system-prompt", system],
-        input=user, capture_output=True, text=True, timeout=timeout,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"claude cli rc={proc.returncode}: {proc.stderr[:200]}")
-    return proc.stdout
 
 
 def extract_action(text):
@@ -134,6 +124,18 @@ def main():
     ap.add_argument("--label", default="Haiku · Boulder Badge")
     ap.add_argument("--sleep", type=float, default=0.4)
     ap.add_argument("--logfile", default="/home/carmody/.karakos/workspace/data/pokemon-haiku-run.jsonl")
+    ap.add_argument("--persistent", action="store_true",
+                    help="Drive one long-lived `claude` process over stream-json "
+                         "instead of booting `claude -p` every turn. Implies "
+                         "--factory-settings. ~8x faster per turn.")
+    ap.add_argument("--factory-settings", action="store_true",
+                    help="Boot the CLI with no MCP servers and no inherited project "
+                         "context (--strict-mcp-config). Skips loading the household "
+                         "tool surface to decide a D-pad press.")
+    ap.add_argument("--recycle-turns", type=int, default=200,
+                    help="In --persistent mode, retire and restart the process every "
+                         "N turns so conversation context stays bounded. 0 disables.")
+    ap.add_argument("--model-timeout", type=float, default=180)
     args = ap.parse_args()
 
     base = args.base.rstrip("/")
@@ -149,15 +151,22 @@ def main():
         log.write(json.dumps(obj) + "\n")
         log.flush()
 
+    mode = ("persistent" if args.persistent
+            else "cold-factory" if args.factory_settings else "cold-full")
+    brain = make_brain(args.model, SYSTEM, persistent=args.persistent,
+                       factory=args.factory_settings,
+                       recycle_turns=args.recycle_turns, timeout=args.model_timeout)
+
     record({"event": "start", "session": sid, "seed": seed, "model": args.model,
-            "spectate": f"{base}/", "budget": args.budget})
-    print(f"[runner] session={sid} seed={seed} model={args.model}", flush=True)
+            "spectate": f"{base}/", "budget": args.budget, "mode": mode})
+    print(f"[runner] session={sid} seed={seed} model={args.model} mode={mode}", flush=True)
     print(f"[runner] watch: {base}/", flush=True)
 
     history = []  # rolling (action, resulting message) memory
     reached = False
     turn = 0
     consecutive_errors = 0
+    latencies = []  # per-turn model latency, so a run reports its own speed
 
     while turn < args.max_turns:
         turn += 1
@@ -177,15 +186,29 @@ def main():
             record({"event": "goal_reached", "turn": turn, "badges": badges})
             break
 
-        hist_txt = "\n".join(
-            f"  {i+1}. did {json.dumps(h[0])} -> {h[1]}" for i, h in enumerate(history[-10:])
-        ) or "  (none yet)"
-        user = (f"Recent actions:\n{hist_txt}\n\n"
-                f"Current state:\n{json.dumps(compact_state(view))}\n\n"
-                f"Reply with ONE action as JSON.")
+        # A cold process remembers nothing, so it needs the rolling history every
+        # turn. A persistent one already holds the conversation — re-sending the
+        # last ten moves would just pay for them twice. It does need a re-seed on
+        # its first turn and after each recycle, when the history is genuinely gone.
+        needs_history = getattr(brain, "needs_history_every_turn", True) or (
+            hasattr(brain, "needs_reseed") and brain.needs_reseed())
+        if needs_history:
+            hist_txt = "\n".join(
+                f"  {i+1}. did {json.dumps(h[0])} -> {h[1]}"
+                for i, h in enumerate(history[-10:])
+            ) or "  (none yet)"
+            user = (f"Recent actions:\n{hist_txt}\n\n"
+                    f"Current state:\n{json.dumps(compact_state(view))}\n\n"
+                    f"Reply with ONE action as JSON.")
+        else:
+            user = (f"Current state:\n{json.dumps(compact_state(view))}\n\n"
+                    f"Reply with ONE action as JSON.")
 
         try:
-            reply = call_model(args.model, SYSTEM, user)
+            t_model = time.monotonic()
+            reply = brain.ask(user)
+            latency = time.monotonic() - t_model
+            latencies.append(latency)
         except Exception as e:
             record({"event": "api_error", "turn": turn, "error": str(e)})
             time.sleep(3)
@@ -221,9 +244,23 @@ def main():
 
         msg = (result.get("state") or {}).get("message") or result.get("message") or ""
         history.append((action, msg[:120]))
-        record({"event": "turn", "turn": turn, "badges": badges, "action": action, "msg": msg[:160]})
+        record({"event": "turn", "turn": turn, "badges": badges, "action": action,
+                "msg": msg[:160], "model_seconds": round(latency, 2)})
         time.sleep(args.sleep)
 
+    if latencies:
+        summary = {"event": "latency", "mode": mode, "model": args.model,
+                   "turns": len(latencies),
+                   "median_seconds": round(statistics.median(latencies), 2),
+                   "mean_seconds": round(statistics.fmean(latencies), 2),
+                   "min_seconds": round(min(latencies), 2),
+                   "max_seconds": round(max(latencies), 2)}
+        if args.persistent:
+            summary["generations"] = brain.generation
+        record(summary)
+        print(f"[runner] latency mode={mode} n={summary['turns']} "
+              f"median={summary['median_seconds']}s", flush=True)
+    brain.close()
     log.close()
     if reached:
         poke_amos(f"POKEMON RUN COMPLETE: Haiku earned the Boulder Badge in {turn} turns "
