@@ -12,8 +12,14 @@
   {"_": "North off the top edge of Pallet and into Route 1. A map boundary, not a warp — nothing appears in exits[] to aim at, so walk north until the map id says 12."},
   {"press": {"type": "move", "direction": "north"}, "until": {"area": 12}, "max": 8},
 
-  {"_": "The length of Route 1, entering around (10,35) and climbing to its north edge. Named as one destination rather than a path: the route is fenced and hedged and the viewport shows ten blocks of it at a time, so the planner walks to the visible cell nearest the goal and looks again. Two gotos because MAX_LEGS bounds one of them, and the second is a no-op when the first arrives. This is the stretch that pays for the leg — it is grass the whole way, and do_goto fights the encounters it triggers rather than stalling on them."},
-  {"goto": {"x": 10, "y": 0}},
+  {"_": "The length of Route 1, entering around (10,35) and climbing to its north edge. Staged waypoints rather than one far goto: the route is fenced, hedged and LEDGED, and the viewport shows ten blocks of it at a time. Aimed at distant (10,0) the planner wanders hunting a gap it cannot see — the 7/26 run drifted east along the y=14 ledge line into the dead-end pocket at (15,14), stalled, and the blind steps after it hopped one-way ledges into a corner (ledges read walkable going north but only permit south). Every cell below was walked by the successful 7/26 18:32 run; each hop stays near viewport range, and the (14,12) waypoint IS the y=14 ledge gap so the planner cannot miss it. Still grass the whole way — do_goto fights the encounters it triggers rather than stalling on them."},
+  {"goto": {"x": 8, "y": 28}},
+  {"goto": {"x": 12, "y": 26}},
+  {"goto": {"x": 12, "y": 20}},
+  {"goto": {"x": 9, "y": 16}},
+  {"goto": {"x": 14, "y": 12}},
+  {"goto": {"x": 10, "y": 8}},
+  {"goto": {"x": 14, "y": 2}},
   {"goto": {"x": 10, "y": 0}},
 
   {"_": "Route 1 -> Viridian City, another map-boundary step."},

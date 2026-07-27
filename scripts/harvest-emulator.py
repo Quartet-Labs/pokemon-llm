@@ -163,6 +163,32 @@ COND_KEYS = {
 }
 
 
+class RouteDesync(Exception):
+    """The world no longer matches the route.
+
+    Raised when a waypoint is unreachable or an `until` cap expires. Every row
+    recorded past that point is a scripted player flailing against a world the
+    script no longer describes — the 7/26 Route 1 run wrote 100+ such rows,
+    ramming a wall inside a battle screen, after a stalled goto was "skipped".
+    Aborting keeps them out of the SFT set and gives the caller a nonzero exit
+    to retry on, instead of a full-looking trajectory that trains wall-ramming.
+    """
+
+
+# `until` keys that describe the overworld rather than a battle. A press step
+# gated only on these did not plan for the encounter it is stuck in, so the
+# harvest may fight it out on the step's behalf (exactly as do_goto does). A
+# step that mentions battle state is *scripting* a battle — the rival fight —
+# and must be left alone.
+OVERWORLD_CONDS = frozenset({"area", "pos", "party_healthy", "has_party"})
+
+
+def encounter_interruptible(until):
+    """True when a press step's gate implies the overworld, so a wild
+    encounter is an interruption to resolve rather than the thing awaited."""
+    return bool(until) and set(until) <= OVERWORLD_CONDS
+
+
 def blocked_here(blocked, view):
     """The (x,y) cells from a run's refused-move set that apply to the map the
     player is standing on.
@@ -345,10 +371,9 @@ def main():
                 print(f"[harvest-emu] {label} reached {target}", flush=True)
                 return
             if not moves:
-                print(f"[harvest-emu] {label} no route to {target} "
-                      f"from {(view.get('player') or {}).get('position')} "
-                      f"— skipping", flush=True)
-                return
+                raise RouteDesync(
+                    f"{label} no route to {target} from "
+                    f"{(view.get('player') or {}).get('position')}")
             before = (view.get("player") or {}).get("position")
             done = run_batch(moves)
             after = (done.get("player") or {}).get("position")
@@ -361,12 +386,11 @@ def main():
             elif after == before:
                 stalls += 1
                 if stalls >= MAX_STALLS:
-                    print(f"[harvest-emu] {label} stalled at {after} "
-                          f"— skipping {target}", flush=True)
-                    return
+                    raise RouteDesync(f"{label} stalled at {after} "
+                                      f"short of {target}")
             else:
                 stalls = 0
-        print(f"[harvest-emu] {label} gave up after {MAX_LEGS} legs", flush=True)
+        raise RouteDesync(f"{label} gave up on {target} after {MAX_LEGS} legs")
 
     def do_press(action, until, cap):
         """Repeat an action — or a short cycle of them — until `until` holds.
@@ -379,21 +403,48 @@ def main():
         indistinguishable from a satisfied condition in the output.
         """
         cycle = action if isinstance(action, list) else [action]
-        for i in range(cap):
+        i = 0
+        while i < cap:
             if state["turn"] >= args.max_turns:
                 return
-            if cond_met(view_now(), until):
+            view = view_now()
+            if cond_met(view, until):
                 print(f"[harvest-emu] until {json.dumps(until)} met "
                       f"after {i} cycles", flush=True)
                 return
+            if view.get("in_battle") and encounter_interruptible(until):
+                # A wild encounter freezes the overworld, so an overworld-gated
+                # press cycle can only ram its keys into the battle screen
+                # until the cap dies (the 7/26 run spent 30 cycles doing so).
+                # Fight it out and refund the iteration — the cap budgets the
+                # scripted presses, not how many Rattata showed up.
+                resolve_battle(view)
+                continue
             for act in cycle:
                 if state["turn"] >= args.max_turns:
                     return
                 run_batch([act])
+            i += 1
         if not cond_met(view_now(), until):
-            print(f"[harvest-emu] until {json.dumps(until)} NOT met in "
-                  f"{cap} cycles — continuing anyway", flush=True)
+            raise RouteDesync(f"until {json.dumps(until)} not met "
+                              f"in {cap} cycles")
 
+    desync = None
+    try:
+        run_script(script, state, args, run_batch, do_goto, do_press, view_now)
+    except RouteDesync as e:
+        desync = str(e)
+        print(f"[harvest-emu] ROUTE DESYNC: {e} — aborting run", flush=True)
+
+    traj.log_summary(reached=False)
+    traj.close()
+    print(f"[harvest-emu] wrote {state['turn']} rows "
+          f"({state['blocked_rows']} blocked/rejected) -> {traj.path}", flush=True)
+    if desync:
+        sys.exit(2)
+
+
+def run_script(script, state, args, run_batch, do_goto, do_press, view_now):
     for entry in script:
         if state["turn"] >= args.max_turns:
             break
@@ -414,11 +465,10 @@ def main():
             at = navigate.find_exit(view, to_map_id=entry.get("exit_map"),
                                     to_name=entry.get("exit"))
             if at is None:
-                print(f"[harvest-emu] no exit matching {json.dumps(entry)} "
-                      f"in {json.dumps((view.get('map') or {}).get('exits'))}"
-                      f" — skipping", flush=True)
-            else:
-                do_goto(at, f"exit->{entry.get('exit') or entry.get('exit_map')}")
+                raise RouteDesync(
+                    f"no exit matching {json.dumps(entry)} in "
+                    f"{json.dumps((view.get('map') or {}).get('exits'))}")
+            do_goto(at, f"exit->{entry.get('exit') or entry.get('exit_map')}")
         elif "press" in entry:
             do_press(entry["press"], entry.get("until") or {},
                      int(entry.get("max", 40)))
@@ -426,11 +476,6 @@ def main():
             run_batch([entry])
         else:
             raise ValueError(f"unrecognised route step {json.dumps(entry)}")
-
-    traj.log_summary(reached=False)
-    traj.close()
-    print(f"[harvest-emu] wrote {state['turn']} rows "
-          f"({state['blocked_rows']} blocked/rejected) -> {traj.path}", flush=True)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,36 @@ class PartyHealthy(unittest.TestCase):
             harvest.cond_met(view(41), {"party_healed": True})
 
 
+class EncounterInterruptible(unittest.TestCase):
+    """Which press steps may auto-resolve a wild encounter.
+
+    A press cycle gated on overworld facts (area, pos, party HP) that gets
+    interrupted by an encounter can only ram its keys into the battle screen
+    until its cap dies — the 7/26 Route 1 run spent 30 cycles doing exactly
+    that. Those steps get the encounter fought out for them. A step whose gate
+    mentions battle state is scripting a battle (the opening's rival fight)
+    and must never have the harvest fight it on its behalf.
+    """
+
+    def test_overworld_gates_are_interruptible(self):
+        for until in ({"area": 1}, {"pos": {"x": 3, "y": 3}},
+                      {"party_healthy": True}, {"has_party": True},
+                      {"area": 0, "pos": {"x": 5, "y": 6}}):
+            self.assertTrue(harvest.encounter_interruptible(until), until)
+
+    def test_battle_gates_are_not(self):
+        for until in ({"battle_ready": True}, {"in_battle": False},
+                      {"screen": "overworld"}, {"dialogue": False}):
+            self.assertFalse(harvest.encounter_interruptible(until), until)
+
+    def test_mixed_gate_defers_to_the_battle_key(self):
+        self.assertFalse(harvest.encounter_interruptible(
+            {"area": 1, "in_battle": False}))
+
+    def test_ungated_press_is_left_alone(self):
+        self.assertFalse(harvest.encounter_interruptible({}))
+
+
 class BlockedCellScope(unittest.TestCase):
     """Refused cells are per-map.
 
