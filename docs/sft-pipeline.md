@@ -45,9 +45,12 @@ copy of the prompt template to drift. Do not inline it back into the loop.
 # 1. serve the emulator (Pi)
 PYTHONPATH=. python3 emulator/server.py            # PORT=3100 by default
 
-# 2. record a scripted real-game run
+# 2. record a scripted real-game run. --script is repeatable and the routes are
+#    concatenated in order, so a leg that continues where another ends is a
+#    second file rather than a copy of the first.
 python3 scripts/harvest-emulator.py --base http://127.0.0.1:3100 \
-    --script scripts/routes/opening.json
+    --script scripts/routes/opening.json \
+    --script scripts/routes/route1-viridian.json
 #    -> data/trajectories/<sessionId>.jsonl
 
 # 3. build training rows
@@ -62,7 +65,16 @@ real model run's. Hand-authored routes rotted on the JS engine because the engin
 kept changing; a route against a fixed ROM and a fixed savestate cannot.
 
 With no `--script` the harvest runs an 8-row smoke route around the bedroom.
-That is a wiring check, not data. `scripts/routes/opening.json` is the real one.
+That is a wiring check, not data. The real routes are:
+
+| Route | Covers | Shape of the rows |
+|---|---|---|
+| `routes/opening.json` | Red's bedroom → the rival battle | cutscene-heavy: ~7 A-presses per move |
+| `routes/route1-viridian.json` | Oak's lab → Route 1 → Viridian Centre heal | almost all walking, plus the wild encounters Route 1 rolls |
+
+They are meant to be run together, in that order. The second exists for action
+balance: on the opening alone the set is `a`×126 / `move`×36, because the stretch
+before the Pokédex is mostly text, and a model trained on that learns to press A.
 
 ## Routes
 
@@ -83,7 +95,16 @@ route is authored. So three step kinds name an intent and resolve it live.
 `until` conditions are ANDed, and an unknown key raises rather than passing —
 a condition that can never be true otherwise looks exactly like one that is
 always true. The vocabulary is `area`, `screen`, `in_battle`, `has_party`,
-`battle_ready`, `dialogue`, `pos` (`COND_KEYS` in `harvest-emulator.py`).
+`battle_ready`, `dialogue`, `pos`, `party_healthy` (`COND_KEYS` in
+`harvest-emulator.py`).
+
+`party_healthy` is the gate for a Pokémon Centre heal, and it is the same
+argument as the rest: the nurse's greeting, HEAL/CANCEL prompt and machine
+animation measured 13 A-presses, nothing fixes that number, and there is no
+"the nurse is finished" flag — the restored HP is the only fact the world
+exposes. It is false on an empty party on purpose: `all()` over nothing is
+true, which would fire the gate on the first press and skip the heal, and in
+Red's bedroom it would fire before a starter existed.
 
 `press`/`until` exists because **cutscene lengths are not constants**. Oak's
 speech plus the walk to his lab measured 37 A-presses on one run; any text-speed
@@ -129,6 +150,36 @@ running it:
 Stalling on a waypoint is often the *correct* outcome and the route says so
 where it is expected: Oak intercepts before the Route 1 mouth, and the rival
 blocks the lab door to start his battle. Both are triggers, not failures.
+
+Three more things the multi-map legs forced, all of them silent while every
+route stayed inside one building:
+
+- **Refused cells are keyed by map.** `(x,y)` is a per-map coordinate and Pallet
+  Town and Route 1 overlap almost completely, so a fence learned in one used to
+  be believed in the other — the planner then routes around open grass and
+  reports nothing, because a phantom wall is indistinguishable from terrain.
+- **`goto` fights any battle it finds itself in.** Grass is walkable on purpose
+  (the encounters are the battle rows the set is short of), but until an
+  encounter is answered the player cannot move, so `goto` saw the position
+  unchanged, counted a stall and abandoned the waypoint after two. That made
+  every step through grass a coin flip and ruled out Route 1 and everything past
+  it. Encounters are now fought out — `a` until `battle_ready`, `move_index` 0
+  until the battle ends, then the EXP text — and the legs and stalls they consume
+  are refunded, since an iteration spent in a battle reveals nothing about
+  reachability and the budget for crossing Route 1 should not be set by how many
+  Rattata showed up.
+- **`goto` does not work inside a Pokémon Centre.** Its floor decodes as `#`,
+  which `navigate.py` treats as a *definite* obstacle, so BFS finds no route and
+  the planner refuses to move. Oak's lab decodes as `.`, which is why the opening
+  never hit it. The Viridian leg walks blind north instead and gates on `pos` —
+  the counter stops Red at (3,3). Anything indoors needs the same workaround
+  until `ram_map` decodes those tiles.
+
+Regression tests: `python3 scripts/test_harvest_route.py` — 8 tests over the
+`party_healthy` gate and the per-map keying of refused cells. Both failures are
+silent: a route that walks the wrong way and a route that abandons a waypoint
+each produce a full, plausible-looking trajectory, and the only signal is in the
+rows — by which point `build_sft.py` has already consumed them.
 
 ### Battle menus: what the RAM actually does (fixed 2026-07-25)
 

@@ -76,6 +76,17 @@ MAX_LEGS = 16
 # unreachable. Two, not one: the first bump is often just a turn-to-face.
 MAX_STALLS = 2
 
+# A wild encounter interrupts a walk, and until it is answered the player cannot
+# move — so `goto` sees the position unchanged, counts a stall, and abandons the
+# waypoint after two of them. That makes every route step through grass a coin
+# flip, which rules out Route 1 and everything past it. do_goto therefore fights
+# any battle it finds itself in before re-planning. Caps below are per encounter:
+# presses to get from "in_battle" to a drawn menu, attacks to end the fight, and
+# A-presses to clear the EXP/level-up text that follows it.
+BATTLE_INTRO_PRESSES = 40
+BATTLE_MAX_ATTACKS = 25
+BATTLE_OUTRO_PRESSES = 6
+
 
 def load_runner():
     """Import emulator/runner.py for its _feedback (single source of truth for
@@ -141,7 +152,28 @@ COND_KEYS = {
     "dialogue": lambda v, want: bool((v.get("dialogue") or {}).get("text")) is bool(want),
     # exact tile
     "pos": lambda v, want: (v.get("player") or {}).get("position") == want,
+    # every party member is at full HP. The gate for a Pokémon Centre heal:
+    # the nurse's sequence is a talk, a yes/no prompt and three text boxes whose
+    # count is no more constant than Oak's speech, and the only fact the world
+    # makes observable at the end of it is the HP itself.
+    "party_healthy": lambda v, want: (
+        all(m.get("hp") == m.get("max_hp")
+            for m in ((v.get("player") or {}).get("party") or []))
+        and bool((v.get("player") or {}).get("party"))) is bool(want),
 }
+
+
+def blocked_here(blocked, view):
+    """The (x,y) cells from a run's refused-move set that apply to the map the
+    player is standing on.
+
+    The set is keyed by map because (x,y) is a per-map coordinate. Without this
+    a wall learned in Pallet Town is believed on Route 1 — the two overlap
+    heavily — and the planner routes around open grass for reasons it cannot
+    explain. Harmless while every route stayed in one building; not once a
+    route crosses four maps."""
+    here = (view.get("area") or {}).get("id")
+    return {(x, y) for (m, x, y) in blocked if m == here}
 
 
 def cond_met(view, cond):
@@ -164,9 +196,12 @@ def main():
     ap.add_argument("--session", default=None,
                     help="Reuse an existing session id. Default: create a fresh "
                          "one so the run starts from the known savestate.")
-    ap.add_argument("--script", default=None,
+    ap.add_argument("--script", action="append", default=None,
                     help="JSON route file: raw actions, action lists, and/or "
-                         "goto/exit/press steps. See scripts/routes/opening.json.")
+                         "goto/exit/press steps. See scripts/routes/opening.json. "
+                         "Repeatable — the routes are concatenated in the order "
+                         "given, so a leg that continues from where another ends "
+                         "is a second file rather than a copy of the first.")
     ap.add_argument("--out-dir", default=os.path.join(REPO, "data", "trajectories"))
     ap.add_argument("--token", default=os.environ.get("EMU_TOKEN"))
     ap.add_argument("--max-turns", type=int, default=10000)
@@ -177,8 +212,10 @@ def main():
 
     script = DEFAULT_SCRIPT
     if args.script:
-        with open(args.script) as f:
-            script = json.load(f)
+        script = []
+        for path in args.script:
+            with open(path) as f:
+                script.extend(json.load(f))
 
     # The server allocates session ids and mints a per-session write token, so we
     # take both from it rather than naming our own. Default is a FRESH session,
@@ -239,11 +276,15 @@ def main():
 
             # Remember terrain the emulator refused, so the planner stops
             # re-deriving the same illegal step (see navigate.plan_moves).
+            # Keyed by map: (x,y) is a per-map coordinate, so a wall learned in
+            # Pallet Town would otherwise be believed on Route 1 and quietly
+            # route the planner around open grass.
             at = (prev_state.get("player") or {}).get("position") or {}
             cell = navigate.blocked_cell((at.get("x"), at.get("y")),
                                          s_action, s_result)
             if cell is not None:
-                state["blocked_cells"].add(cell)
+                state["blocked_cells"].add(
+                    ((prev_state.get("area") or {}).get("id"),) + cell)
 
             print(f"[harvest-emu] t{state['turn']} {json.dumps(s_action)} -> {fb}",
                   flush=True)
@@ -252,15 +293,54 @@ def main():
         return {k: v for k, v in result_view.items()
                 if k not in ("screen_png_b64", "steps")}
 
+    def resolve_battle(view):
+        """Fight the current battle to its end. No-op when not in one.
+
+        Called from do_goto, because grass is walkable and a route that crosses
+        it will be interrupted at a tile nobody can predict. Everything it does
+        is expressed as ordinary `press`/`until` cycles, so the rows it produces
+        are the same rows the opening route's scripted rival fight produces —
+        which is the point: these encounters ARE the battle rows the SFT set is
+        short of, not an obstacle to be skipped past.
+
+        Attacks with move_index 0 and does not switch or flee: on the only leg
+        this currently serves (a level-6+ starter through Route 1) the first move
+        wins, and a policy for choosing between four is a training objective, not
+        something a harvest script should be hand-coding.
+        """
+        if not view.get("in_battle"):
+            return view
+        print("[harvest-emu] encounter — fighting it out", flush=True)
+        # in_battle goes true well before a command can be issued; battle_ready
+        # is the observable that says our mon is out and a menu is drawn.
+        do_press({"type": "a"}, {"battle_ready": True}, BATTLE_INTRO_PRESSES)
+        do_press({"type": "battle_move", "move_index": 0},
+                 {"in_battle": False}, BATTLE_MAX_ATTACKS)
+        # Faint/EXP/level-up text. A fixed count, not an `until`: {dialogue:
+        # false} is true for a frame between two boxes (see routes/opening.json).
+        for _ in range(BATTLE_OUTRO_PRESSES):
+            if state["turn"] >= args.max_turns:
+                break
+            run_batch([{"type": "a"}])
+        return view_now()
+
     def do_goto(target, label):
         """Walk to a world cell, re-planning after every leg."""
         stalls = 0
-        for leg in range(MAX_LEGS):
+        legs = 0
+        while legs < MAX_LEGS:
             if state["turn"] >= args.max_turns:
                 return
-            view = view_now()
+            before_battle = bool(view_now().get("in_battle"))
+            view = resolve_battle(view_now())
+            # MAX_LEGS bounds how long the *navigator* may flail at a waypoint.
+            # An iteration spent answering an encounter made no navigation
+            # progress and reveals nothing about reachability, so it is refunded
+            # — otherwise the budget for crossing Route 1 would be set by how
+            # many Rattata happened to show up.
+            legs += 0 if before_battle else 1
             moves, arrived = navigate.plan_moves(
-                view, target, blocked=state["blocked_cells"])
+                view, target, blocked=blocked_here(state["blocked_cells"], view))
             if arrived:
                 print(f"[harvest-emu] {label} reached {target}", flush=True)
                 return
@@ -270,8 +350,15 @@ def main():
                       f"— skipping", flush=True)
                 return
             before = (view.get("player") or {}).get("position")
-            after = (run_batch(moves).get("player") or {}).get("position")
-            if after == before:
+            done = run_batch(moves)
+            after = (done.get("player") or {}).get("position")
+            if done.get("in_battle"):
+                # An encounter on the first move of the batch leaves the player
+                # exactly where he started. That is not the terrain refusing him,
+                # so it must not count toward MAX_STALLS — two unlucky tiles in a
+                # row would otherwise abandon a waypoint that was never blocked.
+                stalls = 0
+            elif after == before:
                 stalls += 1
                 if stalls >= MAX_STALLS:
                     print(f"[harvest-emu] {label} stalled at {after} "
