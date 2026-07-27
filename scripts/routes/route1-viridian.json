@@ -24,7 +24,7 @@
   {"type": "move", "direction": "north"},
   {"type": "wait"},
 
-  {"_": "Up to the nurse's counter. A goto CANNOT be used in here: this interior decodes every walkable floor tile as '#', which navigate.py treats as a definite obstacle, so BFS finds no route and the planner refuses to move (Oak's lab decodes as '.', which is why the opening never hit this). Walking blind north is safe — the counter stops Red at y=3 — and `pos` is still a world fact rather than a press count."},
+  {"_": "Up to the nurse's counter. Walking blind north rather than a goto: safe because the counter stops Red at y=3, and `pos` is still a world fact rather than a press count. This used to be the ONLY option — the interior decoded every floor tile as '#' because classify_block demanded all four tiles of a movement block be walkable, and navigate.py treats '#' as a definite obstacle. Fixed 2026-07-26 (the engine only consults the block's bottom-left tile), so a goto plans in here now; this leg stays as-is because it works and re-verifying it costs a full route replay."},
   {"press": {"type": "move", "direction": "north"},
    "until": {"pos": {"x": 3, "y": 3}}, "max": 8},
 

@@ -504,6 +504,34 @@ def _walkable_tile_ids(emu) -> set[int]:
     return ids
 
 
+#: Order in which classify_block() builds a block's four 8x8 tiles, so the
+#: indices below read as something other than magic numbers.
+_BLOCK_TL, _BLOCK_BL, _BLOCK_TR, _BLOCK_BR = 0, 1, 2, 3
+
+
+def _block_is_walkable(ts: list[int], walkable: set[int]) -> bool:
+    """Is this 16x16 movement block one the player can step onto?
+
+    The engine does NOT ask whether all four 8x8 tiles are walkable. Gen-1
+    collision resolves a step against a SINGLE tile — the one under the player
+    sprite's feet, i.e. the block's bottom-left — and never looks at the other
+    three. Those three are free to be decorative.
+
+    Testing all four was invisible for a long time because the tilesets we
+    walked through are uniform: Red's house and Oak's lab floor every block with
+    four copies of 0x01, so "all four" and "bottom-left" agree. The Pokemon
+    Centre floor is the block [0x01, 0x11, 0x0b, 0x1b], of which only the
+    bottom-left 0x11 is in the collision list — so all-four called the entire
+    floor a wall, navigate.py treats '#' as a definite obstacle, and goto could
+    not plan a single step inside the building.
+
+    Measured on a walk of the Viridian Pokemon Centre against player_walkable()
+    (which presses the d-pad, so it is ground truth): all-four agreed on 18.8%
+    of neighbours, bottom-left on 93.8%.
+    """
+    return ts[_BLOCK_BL] in walkable
+
+
 def _map_to_screen(mx: int, my: int, px: int, py: int):
     """Map tile (mx,my) -> (col,row) in the 20x18 on-screen tilemap, using the
     player's centered anchor."""
@@ -547,7 +575,7 @@ def read_local_map(emu) -> dict:
             return _GLYPH_GRASS
         if any(t in counters for t in ts):
             return _GLYPH_COUNTER
-        if all(t in walkable for t in ts):
+        if _block_is_walkable(ts, walkable):
             return _GLYPH_PATH
         return _GLYPH_WALL
 

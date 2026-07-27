@@ -168,14 +168,28 @@ route stayed inside one building:
   are refunded, since an iteration spent in a battle reveals nothing about
   reachability and the budget for crossing Route 1 should not be set by how many
   Rattata showed up.
-- **`goto` does not work inside a Pokémon Centre.** Its floor decodes as `#`,
-  which `navigate.py` treats as a *definite* obstacle, so BFS finds no route and
-  the planner refuses to move. Oak's lab decodes as `.`, which is why the opening
-  never hit it. The Viridian leg walks blind north instead and gates on `pos` —
-  the counter stops Red at (3,3). Anything indoors needs the same workaround
-  until `ram_map` decodes those tiles.
+- **A movement block is walkable on its bottom-left tile, not on all four**
+  (fixed 2026-07-26). `classify_block` asked whether all four 8x8 tiles of a
+  16x16 block were in the tileset collision list. The engine never does that: a
+  Gen-1 step resolves against the single tile under the sprite's feet — the
+  block's bottom-left — and the other three are free to be decoration. The
+  Pokémon Centre floor is the block `[0x01, 0x11, 0x0b, 0x1b]` and only the
+  bottom-left `0x11` is listed, so the whole floor decoded as `#`, which
+  `navigate.py` treats as a *definite* obstacle: BFS found no route and `goto`
+  refused to move anywhere indoors. Red's house and Oak's lab floor every block
+  with four copies of `0x01`, which is the only reason the opening route never
+  hit it. Measured on a walk of the Viridian Centre against `player_walkable()`
+  (which presses the d-pad, so it is ground truth): all-four agreed on 58% of
+  neighbours and invented **110 false walls**; bottom-left agrees on 94% with
+  **13**. `goto` now plans inside the building — to the counter, to the exit and
+  around a corner — where before it returned no route to any target. The Viridian
+  leg still walks blind north and gates on `pos`; that workaround is now belt and
+  braces rather than the only option.
 
-Regression tests: `python3 scripts/test_harvest_route.py` — 8 tests over the
+Regression tests: `python3 scripts/test_block_walkable.py` — 6 tests pinning the
+bottom-left rule against the real Pokémon Centre and bedroom tile values, so a
+future "surely it should check more than one tile" cannot quietly re-seal every
+interior. `python3 scripts/test_harvest_route.py` — 8 tests over the
 `party_healthy` gate and the per-map keying of refused cells. Both failures are
 silent: a route that walks the wrong way and a route that abandons a waypoint
 each produce a full, plausible-looking trajectory, and the only signal is in the
