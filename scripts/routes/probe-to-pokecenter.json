@@ -1,0 +1,108 @@
+[
+  {
+    "_": "PROBE ONLY (untracked helper): route1-viridian truncated after leg 18, which leaves Red standing at the Viridian Pokemon Centre counter (map 41, tileset POKECENTER). Exists to snapshot a state INSIDE an interior whose floor misdecodes, so the tile classifier can be diagnosed without replaying the route every time."
+  },
+  {
+    "_": "Continues where routes/opening.json ends: in Oak's Lab, starter in the party, rival battle won. Run both together \u2014 `--script` is repeatable, so this file never restates the opening. Its job is action balance: the opening is cutscene-heavy and harvests ~7 A-presses per move, while this leg is almost all walking plus whatever wild encounters Route 1 rolls."
+  },
+  {
+    "_": "Lab -> outside. The rival's post-battle speech is still on screen when the opening ends \u2014 its three trailing A-presses are a hand-count and they under-fire; measured, Red is still frozen behind ': Okay! Il make my...' and EVERY move returns BLOCKED. So do not lead with a goto here. Cycle [a, south] instead, the same idiom the opening uses to leave this room the first time: while the text runs the south is a no-op and the A advances it; once Red is free the A is harmless and the south walks him down column 5 to the door, which is a bottom-edge warp, so continuing south is also what steps out of it. Gate on the map id, never on {dialogue: false} \u2014 that is true for a frame between two boxes."
+  },
+  {
+    "press": [
+      {
+        "type": "a"
+      },
+      {
+        "type": "move",
+        "direction": "south"
+      }
+    ],
+    "until": {
+      "area": 0
+    },
+    "max": 40
+  },
+  {
+    "type": "wait"
+  },
+  {
+    "_": "Pallet Town -> the Route 1 mouth at (10,1). The opening's goto to this same cell stops short because Oak intercepts; he is done now, so this one is expected to arrive."
+  },
+  {
+    "goto": {
+      "x": 10,
+      "y": 1
+    }
+  },
+  {
+    "_": "North off the top edge of Pallet and into Route 1. A map boundary, not a warp \u2014 nothing appears in exits[] to aim at, so walk north until the map id says 12."
+  },
+  {
+    "press": {
+      "type": "move",
+      "direction": "north"
+    },
+    "until": {
+      "area": 12
+    },
+    "max": 8
+  },
+  {
+    "_": "The length of Route 1, entering around (10,35) and climbing to its north edge. Named as one destination rather than a path: the route is fenced and hedged and the viewport shows ten blocks of it at a time, so the planner walks to the visible cell nearest the goal and looks again. Two gotos because MAX_LEGS bounds one of them, and the second is a no-op when the first arrives. This is the stretch that pays for the leg \u2014 it is grass the whole way, and do_goto fights the encounters it triggers rather than stalling on them."
+  },
+  {
+    "goto": {
+      "x": 10,
+      "y": 0
+    }
+  },
+  {
+    "goto": {
+      "x": 10,
+      "y": 0
+    }
+  },
+  {
+    "_": "Route 1 -> Viridian City, another map-boundary step."
+  },
+  {
+    "press": {
+      "type": "move",
+      "direction": "north"
+    },
+    "until": {
+      "area": 1
+    },
+    "max": 8
+  },
+  {
+    "_": "Viridian City -> the Pok\u00e9mon Centre door at (23,25), then one more north through the warp."
+  },
+  {
+    "exit_map": 41
+  },
+  {
+    "type": "move",
+    "direction": "north"
+  },
+  {
+    "type": "wait"
+  },
+  {
+    "_": "Up to the nurse's counter. A goto CANNOT be used in here: this interior decodes every walkable floor tile as '#', which navigate.py treats as a definite obstacle, so BFS finds no route and the planner refuses to move (Oak's lab decodes as '.', which is why the opening never hit this). Walking blind north is safe \u2014 the counter stops Red at y=3 \u2014 and `pos` is still a world fact rather than a press count."
+  },
+  {
+    "press": {
+      "type": "move",
+      "direction": "north"
+    },
+    "until": {
+      "pos": {
+        "x": 3,
+        "y": 3
+      }
+    },
+    "max": 8
+  }
+]
