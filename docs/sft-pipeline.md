@@ -186,14 +186,41 @@ route stayed inside one building:
   leg still walks blind north and gates on `pos`; that workaround is now belt and
   braces rather than the only option.
 
+Two more, forced by the 2026-07-26 overnight re-harvest, which desynchronised
+on Route 1 and then kept recording for 100+ turns:
+
+- **A desynchronised route aborts the run** (`RouteDesync`, exit 2). A stalled
+  or unroutable `goto` and an expired `until` cap used to print and *continue*;
+  every step after one is a scripted player flailing against a world the script
+  no longer describes. The 7/26 run stalled in the ledge pocket at (15,14),
+  fell through six more steps, hopped one-way ledges into a corner and rammed
+  a wall inside a battle screen for 30 cycles — 87 of its 433 rows were
+  blocked/rejected, and `build_sft.py` would have eaten all of them. The
+  trajectory still gets its summary row on abort, but the nonzero exit makes
+  the failure a retry instead of a training set.
+- **Overworld-gated `press` steps fight encounters out too.** `goto` already
+  did; a `press`/`until` step interrupted by a wild battle just kept ramming
+  its scripted key into the battle screen. A step whose `until` uses only
+  overworld facts (`area`, `pos`, `party_healthy`, `has_party`) now resolves
+  the encounter exactly as `goto` does, and the iteration is refunded. Steps
+  gated on battle state (`battle_ready`, `in_battle`, `screen`) are scripting
+  a battle — the rival fight — and are left alone.
+
+The Route 1 climb itself is now staged waypoints on cells the successful
+7/26 18:32 run walked, rather than one far `goto (10,0)`: aimed past the
+viewport the planner wanders hunting a ledge gap it cannot see, and Route 1's
+ledges read walkable northbound but only permit south, so a wrong guess is
+one-way. The `(14,12)` waypoint *is* the y=14 ledge gap.
+
 Regression tests: `python3 scripts/test_block_walkable.py` — 6 tests pinning the
 bottom-left rule against the real Pokémon Centre and bedroom tile values, so a
 future "surely it should check more than one tile" cannot quietly re-seal every
-interior. `python3 scripts/test_harvest_route.py` — 8 tests over the
-`party_healthy` gate and the per-map keying of refused cells. Both failures are
-silent: a route that walks the wrong way and a route that abandons a waypoint
-each produce a full, plausible-looking trajectory, and the only signal is in the
-rows — by which point `build_sft.py` has already consumed them.
+interior. `python3 scripts/test_harvest_route.py` — 12 tests over the
+`party_healthy` gate, the per-map keying of refused cells, and which `until`
+gates may auto-resolve an encounter. These failures are silent: a route that
+walks the wrong way and a route that abandons a waypoint each produce a full,
+plausible-looking trajectory, and the only signal is in the rows — by which
+point `build_sft.py` has already consumed them.
 
 ### Battle menus: what the RAM actually does (fixed 2026-07-25)
 
