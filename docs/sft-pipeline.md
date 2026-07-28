@@ -490,3 +490,41 @@ python3 scripts/build_sft.py                # -> data/trajectories/sft.jsonl
 
 Trajectory/SFT JSONL live under `data/trajectories/` and are gitignored run
 artifacts (reproducible from the scripts above), not committed source.
+
+## Eval — adapter vs base on the live runner
+
+`runs/sft-v1` is a PEFT/QLoRA adapter; Ollama can't load it without a
+merge-to-GGUF conversion that could silently diverge from what training
+produced. `scripts/serve_hf.py` skips the conversion: it loads the exact
+training stack (same base, same 4-bit NF4 quant, tokenizer from the adapter
+dir, adapter via PEFT) and speaks enough of Ollama's `/api/chat` for
+`emulator/runner.py` to drive it unchanged — so the eval loop IS the live loop.
+
+On the desktop (training venv), one shim per arm:
+
+```
+.venv\Scripts\python scripts\serve_hf.py --port 11435                       # base
+.venv\Scripts\python scripts\serve_hf.py --port 11436 --adapter runs/sft-v1 # SFT
+```
+
+Then run episodes against each (note `--no-think-prefix`: the SFT rows carry
+the runner's raw user prompt, so the qwen3 `/no_think` prefix would be
+off-distribution):
+
+```
+python -m emulator.runner --ollama http://localhost:11435 --model hf-base \
+    --no-think-prefix --use-benchmark --max-turns 300
+python -m emulator.runner --ollama http://localhost:11436 --model hf-sft \
+    --no-think-prefix --use-benchmark --max-turns 300
+```
+
+Each episode writes a trajectory JSONL; compare arms with:
+
+```
+python3 scripts/eval_compare.py base=data/trajectories/<b1>.jsonl \
+    base=data/trajectories/<b2>.jsonl sft=data/trajectories/<s1>.jsonl ...
+```
+
+which reports per-arm episodes, mean/median reward, turns, distinct areas,
+badges and goal-reached rate. Episodes that crashed before their summary row
+are reconstructed from turn rows and flagged, not dropped.

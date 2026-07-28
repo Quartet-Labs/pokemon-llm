@@ -351,20 +351,22 @@ def _actions_from_args(args):
     return [a for a in cleaned if a], goal
 
 
-def ollama_decide(ollama, model, system, user, timeout=300):
+def ollama_decide(ollama, model, system, user, timeout=300, think_prefix=True):
     """Ask the local model for its move(s) via a native tool call. Returns
     (actions_list, goal_or_None) — one action for submit_action, many for
     submit_actions, plus any top-level free-text goal the model set. Copied from
     scripts/ollama-runner.py: `/no_think` disables qwen3's think-chain (native
     `think:false` can't combine with `tools`), num_ctx 4096 keeps the KV cache in
-    GPU."""
+    GPU. think_prefix=False sends the raw user prompt — required when the brain
+    is the SFT model (scripts/serve_hf.py): its training rows carry the runner's
+    prompt verbatim, so the qwen3-ism prefix would be off-distribution."""
     body = {
         "model": model,
         "stream": False,
         "keep_alive": "30m",
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": "/no_think\n" + user},
+            {"role": "user", "content": ("/no_think\n" + user) if think_prefix else user},
         ],
         "tools": TOOLS,
         "options": {"temperature": 0.4, "num_ctx": 4096},
@@ -425,6 +427,11 @@ def main():
                     help="Ollama model (native tool calling required). Default qwen3:32b.")
     ap.add_argument("--claude", action="store_true",
                     help="Use the `claude` CLI instead of Ollama (fallback brain).")
+    ap.add_argument("--no-think-prefix", dest="think_prefix",
+                    action="store_false", default=True,
+                    help="Send the raw user prompt without the qwen3 '/no_think' "
+                         "prefix. Required when --ollama points at "
+                         "scripts/serve_hf.py (the SFT eval brain).")
     ap.add_argument("--claude-model", default="claude-haiku-4-5-20251001",
                     help="Model id for --claude mode.")
     ap.add_argument("--label", default=None,
@@ -497,7 +504,8 @@ def main():
             if args.claude:
                 acts, goal = claude_decide(args.claude_model, SYSTEM, user)
             else:
-                acts, goal = ollama_decide(ollama, args.model, SYSTEM, user)
+                acts, goal = ollama_decide(ollama, args.model, SYSTEM, user,
+                                           think_prefix=args.think_prefix)
         except Exception as e:
             print(f"[emu-runner] decide error t{turn}: {e}", flush=True)
             consecutive_errors += 1
