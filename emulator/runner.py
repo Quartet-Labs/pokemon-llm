@@ -367,8 +367,10 @@ def _actions_from_args(args):
 
 def ollama_decide(ollama, model, system, user, timeout=300, think_prefix=True):
     """Ask the local model for its move(s) via a native tool call. Returns
-    (actions_list, goal_or_None) — one action for submit_action, many for
-    submit_actions, plus any top-level free-text goal the model set. Copied from
+    (actions_list, goal_or_None, raw_text) — one action for submit_action, many
+    for submit_actions, plus any top-level free-text goal the model set, plus the
+    model's raw reply so a no-action turn is diagnosable instead of silent (the
+    7/28 eval-v1 base arm returned 200s for 40min with nothing logged). Copied from
     scripts/ollama-runner.py: `/no_think` disables qwen3's think-chain (native
     `think:false` can't combine with `tools`), num_ctx 4096 keeps the KV cache in
     GPU. think_prefix=False sends the raw user prompt — required when the brain
@@ -388,40 +390,43 @@ def ollama_decide(ollama, model, system, user, timeout=300, think_prefix=True):
     resp = http_post(f"{ollama}/api/chat", body, timeout=timeout)
     msg = resp.get("message", {}) or {}
     calls = msg.get("tool_calls") or []
+    content = (msg.get("content") or "").strip()
+    raw = json.dumps({"tool_calls": calls, "content": content})[:600]
     if calls:
         acts, goal = _actions_from_args(calls[0].get("function", {}).get("arguments"))
         if acts:
-            return acts, goal
+            return acts, goal, raw
     # Fallback: some models emit the action(s) as JSON text instead of a tool call.
-    content = (msg.get("content") or "").strip()
     if content:
         m = re.search(r"\{.*\}|\[.*\]", content, re.DOTALL)
         if m:
             try:
                 acts, goal = _actions_from_args(json.loads(m.group(0)))
                 if acts:
-                    return acts, goal
+                    return acts, goal, raw
             except json.JSONDecodeError:
                 pass
-    return [], None
+    return [], None, raw
 
 
 def claude_decide(model, system, user, timeout=180):
     """Ask Claude via the `claude` CLI for its move(s) (haiku_loop pattern). No API
     key needed; parses the first JSON object/array out of stdout. Returns
-    (actions_list, goal_or_None)."""
+    (actions_list, goal_or_None, raw_text) — same shape as ollama_decide."""
     out = subprocess.run(
         ["claude", "-p", "--model", model, "--append-system-prompt", system],
         input=user, capture_output=True, text=True, timeout=timeout,
     ).stdout
+    raw = (out or "").strip()[:600]
     m = re.search(r"\{.*\}|\[.*\]", out, re.DOTALL)
     if not m:
-        return [], None
+        return [], None, raw
     try:
         args = json.loads(m.group(0))
     except json.JSONDecodeError:
-        return [], None
-    return _actions_from_args(args)
+        return [], None, raw
+    acts, goal = _actions_from_args(args)
+    return acts, goal, raw
 
 
 def poke_amos(msg):
@@ -451,6 +456,11 @@ def main():
     ap.add_argument("--label", default=None,
                     help="Session label (default derives from the brain).")
     ap.add_argument("--max-turns", type=int, default=200)
+    ap.add_argument("--max-no-action", type=int, default=25,
+                    help="Abort the episode after this many consecutive decisions "
+                         "that yield no usable action. Guards the no-action branch, "
+                         "which advances no turn and so is not bounded by "
+                         "--max-turns. 0 disables the guard.")
     ap.add_argument("--goal-badges", type=int, default=1,
                     help="Stop once player.badges >= this. 0 disables the goal.")
     ap.add_argument("--sleep", type=float, default=0.3)
@@ -495,6 +505,7 @@ def main():
     history = []           # [(action, feedback_str), ...]
     reached = False
     consecutive_errors = 0
+    no_action = 0          # consecutive decisions that yielded no usable action
     turn = 0               # counts EXECUTED game steps (sub-actions), not decisions
     current_goal = ""      # last free-text goal the model set; carried forward
 
@@ -521,10 +532,10 @@ def main():
         user = build_user_prompt(view, history)
         try:
             if args.claude:
-                acts, goal = claude_decide(args.claude_model, SYSTEM, user)
+                acts, goal, raw = claude_decide(args.claude_model, SYSTEM, user)
             else:
-                acts, goal = ollama_decide(ollama, args.model, SYSTEM, user,
-                                           think_prefix=args.think_prefix)
+                acts, goal, raw = ollama_decide(ollama, args.model, SYSTEM, user,
+                                                think_prefix=args.think_prefix)
         except Exception as e:
             print(f"[emu-runner] decide error t{turn}: {e}", flush=True)
             consecutive_errors += 1
@@ -535,9 +546,25 @@ def main():
 
         if not acts:
             # No usable action from the model — log and re-request, don't fake one.
-            print(f"[emu-runner] no action t{turn}", flush=True)
+            # This branch executes no game step, so `turn` does not advance and the
+            # `turn < args.max_turns` guard can never end the episode. Left uncapped
+            # it spins until the launcher's wall-clock kill, which skips the wrap-up
+            # and therefore writes NO summary row: eval-v1's base arm burned 40min
+            # per episode and reported 0 turns / 0 areas with no explanation. Count
+            # it, print the model's actual reply so the failure is diagnosable, and
+            # bail out through the normal exit so a summary still lands.
+            no_action += 1
+            if no_action <= 3:
+                print(f"[emu-runner] no action t{turn} raw={raw}", flush=True)
+            else:
+                print(f"[emu-runner] no action t{turn} ({no_action} in a row)", flush=True)
+            if args.max_no_action and no_action >= args.max_no_action:
+                print(f"[emu-runner] ABORT — model returned no usable action "
+                      f"{no_action} times in a row; last raw={raw}", flush=True)
+                break
             time.sleep(args.sleep)
             continue
+        no_action = 0
 
         # 4) act — single action keeps the legacy body shape; a sequence posts
         # {"actions":[...]} and the server executes in order, aborting early on any

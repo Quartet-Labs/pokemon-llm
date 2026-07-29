@@ -148,7 +148,7 @@ def test_runner_think_prefix_flag(monkeypatch):
 
     monkeypatch.setattr(runner, "http_post", fake_post)
 
-    acts, _ = runner.ollama_decide("http://x", "m", "SYS", "USER", think_prefix=True)
+    acts, _, _ = runner.ollama_decide("http://x", "m", "SYS", "USER", think_prefix=True)
     assert captured["user"] == "/no_think\nUSER"
     assert acts == [{"type": "move", "direction": "north"}]
 
@@ -168,6 +168,133 @@ def test_runner_default_keeps_prefix(monkeypatch):
     monkeypatch.setattr(runner, "http_post", fake_post)
     runner.ollama_decide("http://x", "m", "SYS", "USER")
     assert captured["user"].startswith("/no_think\n")
+
+
+# ── no-action diagnosability + abort guard ───────────────────────────────────
+# eval-v1's base arm (7/28) returned HTTP 200 for 40 minutes per episode while
+# emitting nothing parseable. The runner logged a bare "no action t0" and looped
+# without advancing `turn`, so --max-turns never fired, the launcher wall-clock
+# killed the process, the wrap-up never ran, and the report showed 0 turns with
+# no explanation. These pin both halves of the fix.
+
+def test_decide_returns_raw_reply_when_unparseable(monkeypatch):
+    """A no-action decision still hands back the model's actual reply."""
+    from emulator import runner
+
+    monkeypatch.setattr(runner, "http_post", lambda *a, **k: {
+        "message": {"content": "I should probably go north eventually."}})
+
+    acts, goal, raw = runner.ollama_decide("http://x", "m", "SYS", "USER")
+    assert acts == [] and goal is None
+    assert "go north eventually" in raw
+
+
+def test_decide_raw_is_bounded(monkeypatch):
+    """Raw text is truncated — a rambling model must not flood the episode log."""
+    from emulator import runner
+
+    monkeypatch.setattr(runner, "http_post", lambda *a, **k: {
+        "message": {"content": "x" * 5000}})
+
+    _, _, raw = runner.ollama_decide("http://x", "m", "SYS", "USER")
+    assert len(raw) <= 600
+
+
+def test_decide_returns_raw_alongside_a_good_action(monkeypatch):
+    """The third element is always present, not only on the failure path."""
+    from emulator import runner
+
+    monkeypatch.setattr(runner, "http_post", lambda *a, **k: {
+        "message": {"tool_calls": [{"function": {
+            "name": "submit_action",
+            "arguments": {"type": "move", "direction": "north"}}}]}})
+
+    acts, _, raw = runner.ollama_decide("http://x", "m", "SYS", "USER")
+    assert acts == [{"type": "move", "direction": "north"}]
+    assert "move" in raw
+
+
+def _drive_runner(monkeypatch, capsys, replies, extra_argv=()):
+    """Run the REAL main() loop against a stub emulator and a scripted brain.
+
+    `replies` is the sequence of raw model messages the shim "returns"; the last
+    one repeats forever, so a runner that fails to terminate hangs the test rather
+    than quietly passing. Returns (stdout, decisions_made).
+    """
+    from emulator import runner
+
+    state = {"player": {"badges": 0, "position": {"x": 1, "y": 2}}, "map": {"id": 1}}
+    calls = {"decisions": 0}
+
+    def fake_get(url, timeout=30):
+        return dict(state)
+
+    def fake_post(url, body, token=None, timeout=300):
+        if "/session" in url or "/benchmark" in url:
+            return {"sessionId": "test-session", "token": "t"}
+        if "/api/chat" in url:
+            i = min(calls["decisions"], len(replies) - 1)
+            calls["decisions"] += 1
+            if calls["decisions"] > 5000:
+                raise AssertionError("runner never terminated")
+            return {"message": replies[i]}
+        # /action — one executed step, so `turn` advances
+        return {"steps": [{"action": body, "result": {}, "state": dict(state)}]}
+
+    monkeypatch.setattr(runner, "http_get", fake_get)
+    monkeypatch.setattr(runner, "http_post", fake_post)
+    monkeypatch.setattr(runner, "http_delete", lambda *a, **k: None)
+    monkeypatch.setattr(runner.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(runner.atexit, "register", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "argv", [
+        "runner", "--sleep", "0", "--max-turns", "5", *extra_argv])
+
+    runner.main()
+    return capsys.readouterr().out, calls["decisions"]
+
+
+_NOTHING = {"content": "I should probably go north eventually."}
+_MOVE = {"tool_calls": [{"function": {
+    "name": "submit_action", "arguments": {"type": "move", "direction": "north"}}}]}
+
+
+def test_runner_aborts_instead_of_spinning_on_no_action(monkeypatch, capsys):
+    """The eval-v1 failure: 200s with nothing parseable, forever. Must now stop."""
+    out, decisions = _drive_runner(
+        monkeypatch, capsys, [_NOTHING], extra_argv=["--max-no-action", "25"])
+
+    assert decisions == 25, f"spun {decisions} times instead of bailing at 25"
+    assert "ABORT" in out
+    assert "DONE" in out, "must exit through the wrap-up so a summary row lands"
+
+
+def test_runner_logs_the_models_actual_reply(monkeypatch, capsys):
+    """A no-action turn is diagnosable — the raw reply reaches the episode log."""
+    out, _ = _drive_runner(
+        monkeypatch, capsys, [_NOTHING], extra_argv=["--max-no-action", "3"])
+
+    assert "go north eventually" in out
+
+
+def test_runner_no_action_counter_resets_on_a_good_turn(monkeypatch, capsys):
+    """A model that recovers is not punished for earlier misses."""
+    replies = ([_NOTHING] * 2) + [_MOVE] + ([_NOTHING] * 2) + [_MOVE]
+    out, _ = _drive_runner(
+        monkeypatch, capsys, replies, extra_argv=["--max-no-action", "3"])
+
+    assert "ABORT" not in out
+    assert "ended after 5 turns" in out, out[-300:]
+
+
+def test_runner_no_action_guard_disabled_by_zero(monkeypatch, capsys):
+    """0 turns the guard off; --max-turns is then the only bound (and can't fire
+    on a pure no-action stream), so this is opt-in rope."""
+    out, decisions = _drive_runner(
+        monkeypatch, capsys, [_NOTHING] * 40 + [_MOVE] * 10,
+        extra_argv=["--max-no-action", "0"])
+
+    assert "ABORT" not in out
+    assert decisions > 25, "guard must not fire when disabled"
 
 
 # ── eval_compare ─────────────────────────────────────────────────────────────
