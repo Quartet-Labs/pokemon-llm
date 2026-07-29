@@ -1,13 +1,17 @@
-# eval_arms.ps1 — drive the SFT adapter-vs-base eval end to end on the desktop GPU.
+# eval_arms.ps1 -- drive the SFT adapter-vs-base eval end to end on the desktop GPU.
 #
 # Why a script and not a sequence of SSH commands: each arm is a shim process plus N
 # multi-minute episodes, and an SSH-session-launched child dies on disconnect. This is
 # launched ONCE via WMI Win32_Process.Create (session-detached) and does the whole
-# sequence itself — shim up, episodes, shim down, next arm, then eval_compare — so the
+# sequence itself -- shim up, episodes, shim down, next arm, then eval_compare -- so the
 # run survives the Pi hanging up and leaves a single readable report.
 #
 # Arms run SEQUENTIALLY: one 1.5B NF4 shim resident at a time (~2 GiB), so the eval
 # cannot evict the transcription worker or a concurrent verify run on the box.
+#
+# ASCII ONLY. Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI, so a UTF-8 em-dash
+# decodes into a CP1252 smart quote -- which PowerShell honours as a string delimiter
+# and the whole file fails to parse. Keep every character in this file 7-bit.
 #
 # Output: runs/eval-v1/{run.log, shim-<arm>.log, ep-<arm>-<n>.log, report.txt, DONE}
 param(
@@ -55,11 +59,10 @@ function Invoke-Arm([string]$name, [int]$port, [string]$adapter) {
     $what = 'base'
     if ($adapter) { $shimArgs += @('--adapter', $adapter); $what = "adapter=$adapter" }
     Log ("arm {0}: starting shim on :{1} {2}" -f $name, $port, $what)
-    $shim = Start-Process -FilePath $Py -ArgumentList $shimArgs -WorkingDirectory $Repo `
-        -RedirectStandardOutput $shimLog -RedirectStandardError $shimErr -PassThru -WindowStyle Hidden
+    $shim = Start-Process -FilePath $Py -ArgumentList $shimArgs -WorkingDirectory $Repo -RedirectStandardOutput $shimLog -RedirectStandardError $shimErr -PassThru -WindowStyle Hidden
 
     if (-not (Wait-Health $port 900)) {
-        Log ("arm {0}: shim FAILED to become healthy in 900s — see {1}" -f $name, $shimLog)
+        Log ("arm {0}: shim FAILED to become healthy in 900s, see {1}" -f $name, $shimLog)
         if ($shim -and -not $shim.HasExited) { Stop-Process -Id $shim.Id -Force }
         return @()
     }
@@ -68,20 +71,19 @@ function Invoke-Arm([string]$name, [int]$port, [string]$adapter) {
     $before = Snapshot-Traj
     for ($i = 1; $i -le $Episodes; $i++) {
         $epLog = Join-Path $Out ("ep-{0}-{1}.log" -f $name, $i)
+        $epErr = Join-Path $Out ("ep-{0}-{1}.err.log" -f $name, $i)
         $epArgs = @('-m', 'emulator.runner',
                     '--ollama', ("http://localhost:{0}" -f $port),
                     '--model', ("hf-{0}" -f $name),
                     '--no-think-prefix', '--use-benchmark',
                     '--max-turns', "$MaxTurns")
         Log ("arm {0}: episode {1}/{2} start" -f $name, $i, $Episodes)
-        $ep = Start-Process -FilePath $Py -ArgumentList $epArgs -WorkingDirectory $Repo `
-            -RedirectStandardOutput $epLog -RedirectStandardError ($epLog -replace '\.log$', '.err.log') `
-            -PassThru -WindowStyle Hidden
+        $ep = Start-Process -FilePath $Py -ArgumentList $epArgs -WorkingDirectory $Repo -RedirectStandardOutput $epLog -RedirectStandardError $epErr -PassThru -WindowStyle Hidden
         # A wedged episode must not eat the night: cap it, kill it, keep going. The
-        # trajectory file it already wrote is still usable — eval_compare reconstructs
-        # from turn rows when the summary row is missing.
+        # trajectory file it already wrote is still usable, since eval_compare
+        # reconstructs from turn rows when the summary row is missing.
         if (-not $ep.WaitForExit($EpisodeTimeoutMin * 60 * 1000)) {
-            Log ("arm {0}: episode {1} exceeded {2}min — killing" -f $name, $i, $EpisodeTimeoutMin)
+            Log ("arm {0}: episode {1} exceeded {2}min, killing" -f $name, $i, $EpisodeTimeoutMin)
             try { Stop-Process -Id $ep.Id -Force } catch { }
         } else {
             Log ("arm {0}: episode {1} exit {2}" -f $name, $i, $ep.ExitCode)
@@ -111,13 +113,11 @@ foreach ($f in $sftFiles)  { $cmpArgs += ("sft=data/trajectories/{0}"  -f $f) }
 
 $report = Join-Path $Out 'report.txt'
 if ($baseFiles.Count -eq 0 -and $sftFiles.Count -eq 0) {
-    Log 'no trajectories from either arm — nothing to compare'
-    Set-Content -Path $report -Value 'NO TRAJECTORIES — both arms produced nothing. See run.log / shim logs.'
+    Log 'no trajectories from either arm, nothing to compare'
+    Set-Content -Path $report -Value 'NO TRAJECTORIES: both arms produced nothing. See run.log / shim logs.'
 } else {
     Log ("eval_compare: {0}" -f ($cmpArgs -join ' '))
-    $cmp = Start-Process -FilePath $Py -ArgumentList $cmpArgs -WorkingDirectory $Repo `
-        -RedirectStandardOutput $report -RedirectStandardError (Join-Path $Out 'report.err.log') `
-        -PassThru -WindowStyle Hidden
+    $cmp = Start-Process -FilePath $Py -ArgumentList $cmpArgs -WorkingDirectory $Repo -RedirectStandardOutput $report -RedirectStandardError (Join-Path $Out 'report.err.log') -PassThru -WindowStyle Hidden
     $cmp.WaitForExit()
     Log ("eval_compare exit {0}" -f $cmp.ExitCode)
 }
