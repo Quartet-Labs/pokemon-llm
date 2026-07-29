@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import re
@@ -237,6 +238,19 @@ def http_post(url, body, token=None, timeout=300):
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)
+
+
+def http_delete(url, token=None, timeout=30):
+    """Best-effort DELETE — session cleanup must never fail an episode."""
+    req = urllib.request.Request(url, method="DELETE")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except Exception as e:
+        print(f"[emu-runner] session cleanup failed: {e}", flush=True)
+        return None
 
 
 # ── state formatting ─────────────────────────────────────────────────────────
@@ -464,6 +478,11 @@ def main():
         sess = http_post(f"{base}/session", {"label": label})
         token = sess.get("token")
     sid = sess["sessionId"]
+    # Sessions count against the server's MAX_SESSIONS cap; a leaked one blocks
+    # every later POST /benchmark with a 409. atexit covers normal exits and
+    # unhandled exceptions — a hard kill (episode timeout) still leaks, which is
+    # why eval_arms.ps1 sweeps its own labels before each episode.
+    atexit.register(http_delete, f"{base}/session?session={sid}", token=token)
     print(f"[emu-runner] session={sid} brain={brain} base={base}/", flush=True)
     print(f"[emu-runner] watch: {base}/  (session {sid})", flush=True)
 

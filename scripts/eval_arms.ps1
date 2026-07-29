@@ -50,6 +50,31 @@ function Snapshot-Traj {
     return @()
 }
 
+# Benchmark sessions count against the emulator's MAX_SESSIONS cap (4). A
+# hard-killed episode (timeout) cannot clean up its own session, and 4 leaked
+# sessions make every later POST /benchmark 409 -- the 7/29 run lost sft
+# episodes 2 and 3 to exactly this. Sweep OUR OWN arm labels before each
+# episode; never touch sessions this eval did not create.
+$EmuBase = 'https://pokemon-llm-production.up.railway.app'
+function Clear-ArmSessions {
+    try {
+        $sessions = Invoke-RestMethod -UseBasicParsing -TimeoutSec 15 -Uri ($EmuBase + '/sessions')
+    } catch {
+        Log ("session sweep: list failed: {0}" -f $_.Exception.Message)
+        return
+    }
+    foreach ($s in @($sessions)) {
+        if ($s.label -eq 'ollama:hf-base' -or $s.label -eq 'ollama:hf-sft') {
+            try {
+                Invoke-RestMethod -UseBasicParsing -Method Delete -TimeoutSec 15 -Uri ($EmuBase + '/session?session=' + $s.sessionId) | Out-Null
+                Log ("session sweep: deleted stale {0} ({1})" -f $s.sessionId, $s.label)
+            } catch {
+                Log ("session sweep: delete {0} failed: {1}" -f $s.sessionId, $_.Exception.Message)
+            }
+        }
+    }
+}
+
 # Run one arm: bring its shim up, run $Episodes episodes against it, tear it down.
 # Returns the trajectory files that appeared while it ran.
 function Invoke-Arm([string]$name, [int]$port, [string]$adapter) {
@@ -77,6 +102,7 @@ function Invoke-Arm([string]$name, [int]$port, [string]$adapter) {
                     '--model', ("hf-{0}" -f $name),
                     '--no-think-prefix', '--use-benchmark',
                     '--max-turns', "$MaxTurns")
+        Clear-ArmSessions
         Log ("arm {0}: episode {1}/{2} start" -f $name, $i, $Episodes)
         $ep = Start-Process -FilePath $Py -ArgumentList $epArgs -WorkingDirectory $Repo -RedirectStandardOutput $epLog -RedirectStandardError $epErr -PassThru -WindowStyle Hidden
         # A wedged episode must not eat the night: cap it, kill it, keep going. The
