@@ -13,17 +13,21 @@
 # decodes into a CP1252 smart quote -- which PowerShell honours as a string delimiter
 # and the whole file fails to parse. Keep every character in this file 7-bit.
 #
-# Output: runs/eval-v1/{run.log, shim-<arm>.log, ep-<arm>-<n>.log, report.txt, DONE}
+# Output: runs/<OutDir>/{run.log, shim-<arm>.log, ep-<arm>-<n>.log, report.txt, DONE}
+# OutDir was hardcoded to eval-v1 until 7/29; a re-run silently overwrote the prior
+# run's evidence, which is the last thing you want when you are re-running BECAUSE
+# the prior run failed. Pass a fresh name per attempt.
 param(
     [int]$Episodes = 3,
     [int]$MaxTurns = 300,
-    [int]$EpisodeTimeoutMin = 40
+    [int]$EpisodeTimeoutMin = 40,
+    [string]$OutDir = 'eval-v1'
 )
 
 $ErrorActionPreference = 'Continue'
 $Repo = 'C:\Users\colca\pokemon-llm'
 $Py   = Join-Path $Repo '.venv-train\Scripts\python.exe'
-$Out  = Join-Path $Repo 'runs\eval-v1'
+$Out  = Join-Path $Repo (Join-Path 'runs' $OutDir)
 $Traj = Join-Path $Repo 'data\trajectories'
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $RunLog = Join-Path $Out 'run.log'
