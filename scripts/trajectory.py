@@ -30,13 +30,23 @@ _DEFAULT_OUT_DIR = os.path.join(
 class TrajectoryLogger:
     """Append-only JSONL trajectory writer for a single episode/session."""
 
-    def __init__(self, session_id, out_dir=None, seed=None, model=None):
+    def __init__(self, session_id, out_dir=None, seed=None, model=None, tag=None):
         self.session_id = session_id
         self.seed = seed
         self.model = model
+        self.tag = tag
         out_dir = out_dir or _DEFAULT_OUT_DIR
         os.makedirs(out_dir, exist_ok=True)
-        self.path = os.path.join(out_dir, f"{session_id}.jsonl")
+        # `session_id` is assigned by the SERVER, which hands back the lowest free
+        # slot -- so every episode of a multi-episode run that cleans up after
+        # itself gets "p1" and writes the same filename, and this open(..., "w")
+        # truncates the previous episode. The 7/29 eval-v2 run lost 5 of its 6
+        # episodes that way, and eval_arms.ps1 (which detects trajectories by
+        # diffing filenames) reported "0 new trajectory file(s)" for both arms.
+        # `tag` is the caller's per-episode discriminator; pass one whenever more
+        # than one episode can be in flight against the same server.
+        stem = f"{session_id}-{tag}" if tag else str(session_id)
+        self.path = os.path.join(out_dir, f"{stem}.jsonl")
         self._fh = open(self.path, "w")
         # Running totals for the summary row.
         self._total_reward = 0.0
@@ -47,7 +57,7 @@ class TrajectoryLogger:
         # Kick the file off with a lightweight meta row so consumers know the
         # seed/model without re-deriving them (kept out of per-turn rows).
         self._write({
-            "kind": "meta", "session_id": session_id,
+            "kind": "meta", "session_id": session_id, "tag": tag,
             "seed": seed, "model": model,
         })
 

@@ -101,10 +101,20 @@ function Invoke-Arm([string]$name, [int]$port, [string]$adapter) {
     for ($i = 1; $i -le $Episodes; $i++) {
         $epLog = Join-Path $Out ("ep-{0}-{1}.log" -f $name, $i)
         $epErr = Join-Path $Out ("ep-{0}-{1}.err.log" -f $name, $i)
+        # --traj-tag is REQUIRED here, not optional polish. The trajectory filename
+        # is derived from the server-assigned session id, and the server hands back
+        # its lowest free slot -- so every episode that tears down cleanly is handed
+        # "p1" again and TrajectoryLogger truncates the previous episode's file. The
+        # 7/29 eval-v2 run played 3 full 300-turn sft episodes and kept only the
+        # last, and since the filename never changed, Snapshot-Traj's name diff
+        # below saw nothing new and reported "0 new trajectory file(s)" for both
+        # arms -- so a run with real data reported NO TRAJECTORIES.
+        $tag = "{0}-{1}-{2}" -f $OutDir, $name, $i
         $epArgs = @('-m', 'emulator.runner',
                     '--ollama', ("http://localhost:{0}" -f $port),
                     '--model', ("hf-{0}" -f $name),
                     '--no-think-prefix', '--use-benchmark',
+                    '--traj-tag', $tag,
                     '--max-turns', "$MaxTurns")
         Clear-ArmSessions
         Log ("arm {0}: episode {1}/{2} start" -f $name, $i, $Episodes)

@@ -472,6 +472,12 @@ def main():
                     help="Write per-turn reward + full-view trajectory JSONL (default on).")
     ap.add_argument("--no-log-trajectories", dest="log_trajectories",
                     action="store_false", help="Disable trajectory logging.")
+    ap.add_argument("--traj-tag", default=None,
+                    help="Discriminator appended to the trajectory filename. The "
+                         "session id comes from the server's free-slot pool, so "
+                         "sequential episodes all get 'p1' and overwrite each "
+                         "other's file. Any multi-episode driver must pass a "
+                         "unique tag per episode (e.g. eval-v2-sft-1).")
     args = ap.parse_args()
 
     base = args.base.rstrip("/")
@@ -497,7 +503,8 @@ def main():
     print(f"[emu-runner] watch: {base}/  (session {sid})", flush=True)
 
     # ── training layer ───────────────────────────────────────────────────────
-    traj = (TrajectoryLogger(sid, model=brain) if args.log_trajectories else None)
+    traj = (TrajectoryLogger(sid, model=brain, tag=args.traj_tag)
+            if args.log_trajectories else None)
     reward_tracker = RewardTracker()   # one per episode: cross-turn novelty memory
     if traj:
         print(f"[emu-runner] trajectory -> {traj.path}", flush=True)
