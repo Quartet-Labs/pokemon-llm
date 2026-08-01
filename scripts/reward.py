@@ -79,7 +79,28 @@ STEP = 0.05
 # -ILLEGAL when the action had no effect / was rejected (walked into a wall,
 # unknown direction, tree blocking, "can't go that way", or a move that left
 # position unchanged). Discourages banging on walls. Stacks with -STEP.
-ILLEGAL = 0.5
+#
+# 0.5 -> 2.0 for GRPO (2026-08-01). At 0.5 a turn spent bumping a wall cost
+# -0.55, and eval-v3 measured the SFT policy at -163.9 over 300 turns — i.e.
+# -0.546/turn, the wall-bump rate rounded to "every single turn". The weight was
+# not wrong so much as not decisive: over 100 turns a wall-bumper scored -55
+# against +20.5 for real exploration and +40 for aimless legal pacing, so the
+# worst available behaviour was only ~2.7x the magnitude of the best one. A
+# behaviour-cloned policy sitting on a wall needs the wall to be unambiguously
+# the worst thing in the space before group-relative advantage will pull it off.
+# At 2.0 the same 100 turns score -205, ~10x the best legal behaviour, while a
+# single bump (-2.05) still costs less than entering a new area (+5) and a full
+# 300-turn bumping episode stays far under BADGE's pull — so the policy is
+# pushed off the wall without being made afraid to move. Measured against the
+# real module, not estimated; see test_train_grpo.py::wall-bump, which fails if
+# this ratio regresses.
+#
+# NOT fixed by this weight, and filed separately: pacing back and forth over
+# known ground outscores genuine exploration (+40 vs +20.5 per 100 turns),
+# because _observed_tiles diffs consecutive VIEWPORTS rather than an episode
+# visited-set, so any move reveals ~15 "new" coordinates whether or not they
+# were seen before. That is a NEW_TILE/tracker problem, not an ILLEGAL one.
+ILLEGAL = 2.0
 
 # -REVISIT when the player MOVED onto a tile it had already observed/explored.
 # Small: revisiting is often necessary (backtracking through a route), we just
