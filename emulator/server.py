@@ -2,9 +2,18 @@
 
 Multi-session ("couch mode"): the server holds a dict of independent `Emu`
 instances (each its own PyBoy running the same ROM from the same overworld
-savestate), capped at 4. Every request selects its session via `?session=X`;
-a `default` session always exists so the single-agent runner keeps working with
-no session param. Endpoints mirror the existing JS game server closely enough
+savestate), capped at 4. Every request selects its session via `?session=X`.
+
+THERE IS NO IMPLICIT `default` SESSION. Startup creates nothing; slots are
+filled only by POST /session or POST /benchmark, and a request that omits
+`?session=` resolves to the id `default`, finds nothing, and 404s "unknown
+session 'default'". This paragraph promised the opposite until 2026-08-06 —
+that a default session always exists so a single-agent runner works with no
+session param — and a caller written against that promise (the GRPO rollout in
+scripts/grpo_rollout.py) 404'd on its first env call. Open a session first;
+scripts/llm-runner.py is the worked example.
+
+Endpoints mirror the existing JS game server closely enough
 that scripts/ollama-runner.py can be pointed here with
 `--base http://127.0.0.1:3100`:
 
@@ -17,8 +26,7 @@ that scripts/ollama-runner.py can be pointed here with
   GET  /screen.png?session=X current Game Boy frame as PNG
   GET  /session?session=X    a session's snapshot
   POST /session {label?,goal?}  create a new session (up to 4), return id/token
-  DELETE /session?session=X  remove a session (frees a slot); 404 if unknown,
-                             400 for the default session
+  DELETE /session?session=X  remove a session (frees a slot); 404 if unknown
   GET  /sessions             list all sessions [{sessionId,label,goal}]
   POST /benchmark            create a session and return it
 
@@ -524,9 +532,12 @@ def get_sessions():
 @app.delete("/session")
 def delete_session(request: Request):
     """Remove a session from the registry, freeing its couch slot without a
-    redeploy. 404 if the session is unknown; 400 if it's the default session
-    (which must always exist). A viewer polling a removed session just sees the
-    slot go empty on its next /sessions discovery pass."""
+    redeploy. 404 if the session is unknown — including the bare no-`?session=`
+    call, which resolves to the id `default` that nothing creates any more.
+    (This said "400 for the default session, which must always exist" until
+    2026-08-06; there is no such session and no such branch.) A viewer polling
+    a removed session just sees the slot go empty on its next /sessions
+    discovery pass."""
     sid = request.query_params.get("session") or DEFAULT_SESSION_ID
     with _sessions_lock:
         sess = _sessions.pop(sid, None)
