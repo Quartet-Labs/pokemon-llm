@@ -84,13 +84,23 @@ class FakeEnv:
     """Records every URL the rollout touches, and answers like the real server:
     a session is required, and an unknown one 404s."""
 
-    def __init__(self, turns_before_done=2, action_raises=False):
+    def __init__(self, turns_before_done=2, action_raises=False, blocked=False):
         self.calls = []
         self.live = set()
         self.next_id = 1
         self.turns = 0
         self.turns_before_done = turns_before_done
         self.action_raises = action_raises
+        self.blocked = blocked
+
+    def _view(self, x, y):
+        """The shape sess.view() really returns — verified against Railway prod
+        on 2026-08-06: area/player/map/screen/available_actions/goal, and NO
+        'state', 'ok', 'message' or 'done' anywhere."""
+        return {"screen": "overworld", "area": {"id": "route1"},
+                "player": {"party": []},
+                "map": {"position": {"x": x, "y": y}, "ascii": "..."},
+                "available_actions": ["move"], "goal": None}
 
     def _sid_of(self, url):
         return url.split("session=")[1].split("&")[0] if "session=" in url else None
@@ -110,19 +120,32 @@ class FakeEnv:
             self.next_id += 1
             self.live.add(sid)
             return {"sessionId": sid, "token": f"tok-{sid}",
-                    "state": {"area": "start"}}
+                    "state": self._view(0, 0)}
         self._require_session(url)
         if self.action_raises:
             raise RuntimeError("env exploded mid-episode")
         self.turns += 1
-        return {"ok": True, "state": {"area": "start"}, "moved": True,
-                "to": {"x": 1, "y": 1},
-                "done": self.turns >= self.turns_before_done}
+        # A real /action response: the post-action view, with action/result/
+        # steps/stopped_early laid on top. The walker advances one tile a turn
+        # unless `blocked`, which is how the emulator reports a wall.
+        y = 0 if self.blocked else self.turns
+        view = self._view(0, y)
+        step_result = ({"ok": True, "moved": False, "reason": "wall",
+                        "from": {"x": 0, "y": 0}, "to": {"x": 0, "y": 0}}
+                       if self.blocked else
+                       {"ok": True, "moved": True,
+                        "from": {"x": 0, "y": y - 1}, "to": {"x": 0, "y": y}})
+        action = {"type": "move", "direction": "up"}
+        view.update({"action": action, "result": step_result,
+                     "steps": [{"action": action, "result": step_result,
+                                "state": view}],
+                     "stopped_early": False})
+        return view
 
     def http_get(self, url, **k):
         self.calls.append(("GET", url, None))
         self._require_session(url)
-        return {"area": "start"}
+        return self._view(0, 0)
 
     def http_delete(self, url, token=None, **k):
         self.calls.append(("DELETE", url, token))
@@ -218,6 +241,77 @@ class SessionThreadingTests(unittest.TestCase):
             rollout(0, 0)
         self.assertEqual(env.urls("GET"), [])
 
+    def test_view_advances_between_turns(self):
+        """POST /action returns the post-action view ITSELF. Reading a "state"
+        key that does not exist left `view` pinned to the opening frame for the
+        whole episode — the model saw turn 1 forever."""
+        env = FakeEnv()
+        with rollout_against(env) as rollout:
+            transitions = rollout(0, 0)
+        positions = [t["result_view"]["map"]["position"]["y"] for t in transitions]
+        self.assertEqual(positions, [1, 2, 3, 4, 5])
+        for t in transitions:
+            self.assertNotEqual(t["prev_view"]["map"]["position"],
+                                t["result_view"]["map"]["position"])
+
+    def test_result_msg_comes_from_the_step_result(self):
+        """_feedback reads ok/moved/to, which live in resp["result"], not at the
+        top level. Handed the whole response it saw ok=None and called every
+        action rejected; handed nothing it produced an empty string."""
+        env = FakeEnv()
+        with rollout_against(env) as rollout:
+            transitions = rollout(0, 0)
+        for t in transitions:
+            self.assertTrue(t["result_msg"], "result_msg was empty")
+            self.assertIn("moved to", t["result_msg"])
+            self.assertNotIn("rejected", t["result_msg"])
+
+
+class RewardIntegrationTests(unittest.TestCase):
+    """The consequence of the shape bugs, measured with the real reward module.
+
+    These two numbers are the whole point. A frozen view plus an empty message
+    makes reward._is_illegal fire its "a MOVE that did not change position"
+    fallback on every single turn, so a clean walk scores exactly like a policy
+    that bumps a wall 300 times — at ILLEGAL weight 2.0. A GRPO run on that
+    signal cannot learn anything, and looks like a model problem."""
+
+    def _score(self, env):
+        import train_grpo as tg
+        with rollout_against(env) as rollout:
+            transitions = rollout(0, 0)
+        _rewards, breakdowns = tg.score_trajectory(transitions)
+        return tg.illegal_rate(breakdowns)
+
+    def test_a_clean_walk_scores_fully_legal(self):
+        self.assertEqual(self._score(FakeEnv()), 0.0)
+
+    def test_walking_into_a_wall_still_scores_fully_illegal(self):
+        """The guard against over-correcting: the fix must not make everything
+        look legal. A genuinely blocked walk is still 100% illegal."""
+        self.assertEqual(self._score(FakeEnv(blocked=True)), 1.0)
+
+    def test_blocked_move_says_so_in_the_message(self):
+        """reward._is_illegal's FIRST signal is a marker string in result_msg;
+        the position fallback is belt-and-suspenders. Keep the marker working."""
+        env = FakeEnv(blocked=True)
+        with rollout_against(env) as rollout:
+            transitions = rollout(0, 0)
+        self.assertIn("BLOCKED", transitions[0]["result_msg"])
+
+
+class EpisodeEndTests(unittest.TestCase):
+    def test_stopped_early_does_not_end_the_episode(self):
+        """`stopped_early` means a queued action SEQUENCE aborted mid-list, not
+        that the episode is over. Breaking on it would truncate every episode
+        that ever queued a sequence."""
+        env = FakeEnv()
+        with rollout_against(env) as rollout:
+            transitions = rollout(0, 0)
+        self.assertEqual(len(transitions), 5, "episode ended before max_turns")
+
+
+class SessionThreadingTailTests(unittest.TestCase):
     def test_torch_stub_does_not_escape(self):
         """Guards the guard: test_train_grpo.py asserts torch is absent from
         sys.modules, and would fail from here if the stub leaked."""

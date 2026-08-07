@@ -126,11 +126,31 @@ def make_emulator_rollout(policy, tok, max_turns=300, temperature=1.0, seed=0,
                 text = tok.decode(completion_ids, skip_special_tokens=True)
                 actions, goal = parse_action(text)
 
-                result = env_runner.http_post(
+                resp = env_runner.http_post(
                     f"{base_url}/action?session={sid}",
                     {"actions": actions, "goal": goal}, token=sess_token)
-                prev_view, view = view, result.get("state", view)
-                msg = result.get("message", "") or ""
+
+                # POST /action returns the post-action VIEW itself, with
+                # `action`, `result`, `steps` and `stopped_early` added on top —
+                # there is no "state" wrapper and no top-level "ok"/"message".
+                # Reading a `state` key that does not exist froze `view` at the
+                # opening frame for the whole episode, and an absent `message`
+                # left result_msg empty. Together those are not a cosmetic bug:
+                # reward._is_illegal falls back to "a MOVE that did not change
+                # position", and with a frozen view the position NEVER changes,
+                # so every move scored ILLEGAL at weight 2.0 for the entire run.
+                # That reads as "the policy cannot learn" and is really "the
+                # harness lied to the scorer".
+                prev_view, view = view, resp
+                step_result = resp.get("result") or {}
+                act = actions[0] if actions else None
+                # Same derivation as scripts/harvest-emulator.py, which built the
+                # SFT corpus: _feedback takes the per-step `result`, NOT the whole
+                # response, and result_msg is that feedback minus its label. Any
+                # other derivation drifts GRPO's reward inputs away from the ones
+                # the SFT data was scored with.
+                feedback = env_runner._feedback(act, step_result)
+                msg = feedback.split(": ", 1)[-1]
 
                 transitions.append({
                     "prev_view": prev_view,
@@ -141,10 +161,15 @@ def make_emulator_rollout(policy, tok, max_turns=300, temperature=1.0, seed=0,
                     "prompt_ids": prompt_ids[0].detach().cpu(),
                     "completion_ids": completion_ids.detach().cpu(),
                 })
-                history.append((actions[0] if actions else None,
-                                env_runner._feedback(actions[0] if actions else None,
-                                                     result)))
-                if result.get("done"):
+                history.append((act, feedback))
+
+                # This server signals episode end with neither `done` nor
+                # `stopped_early` — the latter only means a queued SEQUENCE
+                # aborted mid-list, which is not the episode ending, so breaking
+                # on it would truncate episodes. `halted`/`outcome` are what the
+                # live driver watches (scripts/llm-runner.py); on this backend
+                # they simply never appear and the episode runs to max_turns.
+                if resp.get("halted") or resp.get("outcome") not in (None, "ongoing"):
                     break
         finally:
             # The server caps the registry at 4 sessions and a benchmark session
